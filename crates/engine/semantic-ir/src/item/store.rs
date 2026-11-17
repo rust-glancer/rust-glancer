@@ -5,7 +5,7 @@ use rg_ir_model::{
     StaticRef, StructId, TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef,
     UnionId,
 };
-use rg_item_tree::{GenericParams, LangItem};
+use rg_item_tree::LangItem;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -126,14 +126,6 @@ impl ItemStore {
         &self.structs
     }
 
-    pub fn unions(&self) -> &Arena<UnionId, UnionData> {
-        &self.unions
-    }
-
-    pub fn enums(&self) -> &Arena<EnumId, EnumData> {
-        &self.enums
-    }
-
     pub fn traits(&self) -> &Arena<TraitId, TraitData> {
         &self.traits
     }
@@ -184,7 +176,7 @@ impl ItemStore {
         self.local_items.get(local_def).copied().flatten()
     }
 
-    pub(super) fn lang_items(&self) -> &LangItemIndex {
+    pub fn lang_items(&self) -> &LangItemIndex {
         &self.lang_items
     }
 
@@ -329,21 +321,5 @@ impl ItemStore {
                     SemanticItemData::Static(data),
                 )
             }))
-    }
-
-    pub fn type_def_name(&self, id: TypeDefId) -> Option<&str> {
-        match id {
-            TypeDefId::Struct(id) => self.struct_data(id).map(|data| data.name.as_str()),
-            TypeDefId::Enum(id) => self.enum_data(id).map(|data| data.name.as_str()),
-            TypeDefId::Union(id) => self.union_data(id).map(|data| data.name.as_str()),
-        }
-    }
-
-    pub fn generic_params_for_type_def(&self, id: TypeDefId) -> Option<&GenericParams> {
-        match id {
-            TypeDefId::Struct(id) => self.struct_data(id).map(|data| &data.generics),
-            TypeDefId::Enum(id) => self.enum_data(id).map(|data| &data.generics),
-            TypeDefId::Union(id) => self.union_data(id).map(|data| &data.generics),
-        }
     }
 }

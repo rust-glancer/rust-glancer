@@ -138,8 +138,8 @@ impl<'s> SolverInterner<'s> {
         record(&mut self.0.profile.borrow_mut());
     }
 
-    pub(crate) fn is_cancelled(self) -> bool {
-        self.0.provider.is_cancelled()
+    pub(crate) fn check_cancelled(self) {
+        self.0.provider.check_cancelled();
     }
 
     /// A named item can be known before any arguments are inferred. Preserve every parameter's
@@ -822,10 +822,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
                 break;
             }
             self.profile(|p| p.impl_candidates += 1);
-            if self.is_cancelled() {
-                self.unavailable("cancelled");
-                break;
-            }
+            self.check_cancelled();
             if !self.impl_has_resolved_self_constructor(id) {
                 continue;
             }

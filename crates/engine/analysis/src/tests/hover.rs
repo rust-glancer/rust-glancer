@@ -363,7 +363,7 @@ fn hovers_with_formatted_function_signatures() {
         ) -> Result<Option<ImplHeader>, D::Error>
         where
             D: DefMapSource,
-            I: ItemStoreSource<'query, Error = D::Error>,
+            I: SemanticItemSource<'query, Error = D::Error>,
             R: TypePathResolver<Error = D::Error>,
         {
             loop {}
@@ -383,7 +383,7 @@ fn hovers_with_formatted_function_signatures() {
                 ) -> Result<Option<ImplHeader>, D::Error>
                 where
                     D: DefMapSource,
-                    I: ItemStoreSource<'query, Error = D::Error>,
+                    I: SemanticItemSource<'query, Error = D::Error>,
                     R: TypePathResolver<Error = D::Error>,
               docs:
                 Resolves an implementation header.

@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef, TypeParamRef};
 use rg_item_tree::{TypeRef, WherePredicate};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
@@ -13,7 +13,7 @@ use crate::solver::{InferenceSubstitution as Substitution, ProjectionTy, TraitAp
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     /// Find an associated type on a trait or one of its supertraits.

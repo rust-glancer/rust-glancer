@@ -19,15 +19,12 @@ use std::{
 
 use anyhow::Context as _;
 use rg_lsp_proto::ProjectInitialization;
-use rg_project::{
-    AnalysisChangeSummary, Project, ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
-};
+use rg_project::{AnalysisChangeSummary, Project, ProjectMemoryHooks, SavedFileChange};
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
     engine::{QueuedEngineCommand, command::EngineCommand},
-    memory::{MemoryControl, ProjectMemoryReporter},
-    project_stats::{ProjectStats, log_retained_memory},
+    memory::{MemoryControl, ProjectMemoryReporter, format_bytes},
 };
 
 mod config;
@@ -170,7 +167,6 @@ impl ProjectCoordinator {
             let result = Project::builder(workspace.clone())
                 .workspace_lowering_config(configuration.workspace_lowering_config.clone())
                 .cargo_metadata_config(configuration.cargo_metadata_config.clone())
-                .package_residency_policy(rg_project::PackageResidencyPolicy::AllOffloadable)
                 .memory_hooks(Arc::clone(&self.memory_hooks))
                 .build();
             match result {
@@ -189,11 +185,8 @@ impl ProjectCoordinator {
         };
         self.project.replace_saved(project);
         self.stale_source = None;
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow initialized project snapshot")?;
-        Self::log_project_build(snapshot, "initial index");
+        let project = self.project.saved_project()?;
+        Self::log_project_build(project, "initial index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -233,11 +226,8 @@ impl ProjectCoordinator {
             }
         }
         self.stale_source = None;
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow reindexed project snapshot")?;
-        Self::log_project_build(snapshot, "manual reindex");
+        let project = self.project.saved_project()?;
+        Self::log_project_build(project, "manual reindex");
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
             stale_retries,
@@ -265,21 +255,17 @@ impl ProjectCoordinator {
         tracing::info!(
             applied_changes,
             changed_files = summary.changed_files.len(),
-            affected_packages = summary.affected_packages.len(),
             changed_crates = summary.changed_crates.len(),
             stale_retries,
             saved_project_generation = self.project.generation(),
             elapsed_ms = started.elapsed().as_millis(),
             "saved project changes finished"
         );
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project snapshot")?;
-        if summary.affected_packages.is_empty() {
-            Self::log_project_snapshot(snapshot, "after saved project changes");
+        let project = self.project.saved_project()?;
+        if summary.changed_files.is_empty() && summary.changed_crates.is_empty() {
+            Self::log_project_snapshot(project, "after saved project changes");
         } else {
-            Self::log_project_build(snapshot, "after saved project changes");
+            Self::log_project_build(project, "after saved project changes");
         }
 
         Ok(self.project.generation())
@@ -361,24 +347,8 @@ impl ProjectCoordinator {
         }
     }
 
-    pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
-        self.project
-            .saved_snapshot()
-            .context("borrow project snapshot")
-    }
-
-    pub(super) fn ensure_body_analysis(
-        &mut self,
-        crates: &[rg_ir_model::CrateRef],
-        cancellation: &rg_std::CancellationToken,
-    ) -> anyhow::Result<()> {
-        self.project
-            .mutate_saved(|project| project.ensure_body_analysis(crates, cancellation))
-    }
-
-    /// Drop source data that was loaded only for the request that just finished.
-    pub(super) fn release_query_memory(&mut self) {
-        self.project.release_query_memory();
+    pub(super) fn saved_project(&self) -> anyhow::Result<&Project> {
+        self.project.saved_project()
     }
 
     /// Return the path that blocks new queries until saved-path recovery succeeds.
@@ -420,48 +390,6 @@ impl ProjectCoordinator {
         }
     }
 
-    /// Repair invalid package artifacts after returning an error for the failed query.
-    pub(super) fn recover_after_package_cache_failure(&mut self, label: &'static str) {
-        if !self.project.is_initialized() {
-            tracing::warn!(
-                label,
-                "analysis query hit invalid package cache before project initialization"
-            );
-            return;
-        }
-
-        let started = Instant::now();
-        tracing::warn!(
-            label,
-            "analysis query hit invalid package cache; rebuilding cache before next command"
-        );
-
-        match self
-            .project
-            .mutate_saved(|project| project.recover_after_cache_load_failure())
-        {
-            Ok(()) => {
-                let snapshot = self
-                    .project
-                    .saved_snapshot()
-                    .expect("project should remain initialized after cache recovery");
-                Self::log_project_build(snapshot, "after package cache recovery");
-                tracing::info!(
-                    label,
-                    elapsed_ms = started.elapsed().as_millis(),
-                    "package cache recovery finished"
-                );
-            }
-            Err(error) => {
-                tracing::error!(
-                    label,
-                    error = %format!("{error:#}"),
-                    "package cache recovery failed"
-                );
-            }
-        }
-    }
-
     /// Recognize a source-consistency race and wait before rebuilding from the newer disk state.
     ///
     /// Only typed stale/existence errors qualify; ordinary build failures return `None` immediately.
@@ -498,15 +426,41 @@ impl ProjectCoordinator {
     }
 
     /// Log the retained project shape after a saved-state transition.
-    fn log_project_snapshot(snapshot: ProjectSnapshot<'_>, label: &'static str) {
-        ProjectStats::capture(snapshot).log_info(label);
-        log_retained_memory(snapshot, label);
+    fn log_project_snapshot(project: &Project, label: &'static str) {
+        tracing::info!(label, stats = ?project.stats(), "project stats");
+
+        if !tracing::enabled!(target: "rg_lsp_engine::memory", tracing::Level::DEBUG) {
+            return;
+        }
+
+        // Retained-memory accounting walks the retained project state. Keep it opt-in so normal editor
+        // logs get cheap counters without slowing every save.
+        let retained_bytes = rg_std::MemorySize::memory_size(project);
+        tracing::debug!(
+            target: "rg_lsp_engine::memory",
+            label,
+            retained_bytes,
+            retained = %format_bytes(retained_bytes),
+            "analysis retained memory"
+        );
     }
 
     /// Log project shape plus diagnostics produced by a newly completed def-map build.
-    fn log_project_build(snapshot: ProjectSnapshot<'_>, label: &'static str) {
-        Self::log_project_snapshot(snapshot, label);
-        ProjectStats::log_macro_expansion_limit(snapshot.macro_expansion_limit_summary(), label);
+    fn log_project_build(project: &Project, label: &'static str) {
+        Self::log_project_snapshot(project, label);
+        let summary = project.macro_expansion_limit_summary();
+        if summary.is_empty() {
+            return;
+        }
+
+        tracing::warn!(
+            label,
+            affected_crate_count = summary.affected_crate_count(),
+            skipped_macro_call_count = summary.skipped_macro_call_count(),
+            affected_crates = ?summary.listed_crates(),
+            omitted_affected_crate_count = summary.omitted_crate_count(),
+            "macro expansion was truncated after reaching the recursion limit; analysis may be incomplete; run rust-glancer analyze <path> for details"
+        );
     }
 }
 

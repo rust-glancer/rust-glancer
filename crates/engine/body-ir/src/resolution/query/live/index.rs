@@ -3,8 +3,8 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::Mutability;
 use rg_item_tree::LangItem;
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
+use rg_source::ReadError;
 use rg_ty::solver::{InferenceTable, List, Outcome, TraitApplication, Ty, TyShape};
 
 use super::LiveBodyQuery;
@@ -16,8 +16,8 @@ pub(crate) struct LiveIndexTarget<'s> {
 
 impl<'query, D, I> LiveBodyQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     /// Try receiver adjustments in order, retaining only the selected receiver's evidence.
     /// An unknown base must wait: searching impls for `?Base: Index<Idx>` would guess the
@@ -27,7 +27,7 @@ where
         base: Ty<'s>,
         index: Ty<'s>,
         table: &InferenceTable<'s>,
-    ) -> Result<Option<LiveIndexTarget<'s>>, PackageStoreError> {
+    ) -> Result<Option<LiveIndexTarget<'s>>, ReadError> {
         // A pending producer may become `!`. Wait for its answer before equating its
         // destination with the parameter, just as ordinary argument inference does.
         if table.has_pending_projection(index) {

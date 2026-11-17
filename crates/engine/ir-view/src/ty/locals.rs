@@ -283,10 +283,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        let body_item_store = self
-            .db
-            .body_ir
-            .body_item_store(scope.body)
+        let body_items = ItemStoreQuery::new(self.db)
+            .semantic_items_for_origin(DefMapRef::Body(scope.body))
             .context("read body item store for lexical names")?;
         let mut names = Vec::new();
         let mut seen_values = HashSet::<String>::new();
@@ -328,14 +326,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
                 for item_id in scope_data.source_items.iter().rev().copied() {
                     rg_std::check_cancel!(self.db, "local declaration candidates");
-                    let Some(view) = body_item_store.and_then(|items| {
-                        items.semantic_items().find(|view| {
-                            matches!(
-                                view.source().kind,
-                                ItemSourceKind::Body(source)
-                                    if source.body == scope.body && source.item == item_id
-                            )
-                        })
+                    let Some(view) = body_items.iter().find(|view| {
+                        matches!(
+                            view.source().kind,
+                            ItemSourceKind::Body(source)
+                                if source.body == scope.body && source.item == item_id
+                        )
                     }) else {
                         continue;
                     };
@@ -390,14 +386,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
             if matches!(scope.namespace, ValueOrTypeNamespace::Types) {
                 for item_id in scope_data.source_items.iter().rev().copied() {
                     rg_std::check_cancel!(self.db, "local declaration candidates");
-                    let Some(view) = body_item_store.and_then(|items| {
-                        items.semantic_items().find(|view| {
-                            matches!(
-                                view.source().kind,
-                                ItemSourceKind::Body(source)
-                                    if source.body == scope.body && source.item == item_id
-                            )
-                        })
+                    let Some(view) = body_items.iter().find(|view| {
+                        matches!(
+                            view.source().kind,
+                            ItemSourceKind::Body(source)
+                                if source.body == scope.body && source.item == item_id
+                        )
                     }) else {
                         continue;
                     };
@@ -603,10 +597,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        let body_item_store = self
-            .db
-            .body_ir
-            .body_item_store(body_ref)
+        let body_items = ItemStoreQuery::new(self.db)
+            .semantic_items_for_origin(DefMapRef::Body(body_ref))
             .context("read body item store for declarations")?;
         let mut declarations = Vec::new();
 
@@ -614,14 +606,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
             rg_std::check_cancel!(self.db, "local declaration candidates");
             for item_id in &scope.source_items {
                 rg_std::check_cancel!(self.db, "local declaration candidates");
-                let Some(view) = body_item_store.and_then(|items| {
-                    items.semantic_items().find(|view| {
-                        matches!(
-                            view.source().kind,
-                            ItemSourceKind::Body(source)
-                                if source.body == body_ref && source.item == *item_id
-                        )
-                    })
+                let Some(view) = body_items.iter().find(|view| {
+                    matches!(
+                        view.source().kind,
+                        ItemSourceKind::Body(source)
+                            if source.body == body_ref && source.item == *item_id
+                    )
                 }) else {
                     continue;
                 };

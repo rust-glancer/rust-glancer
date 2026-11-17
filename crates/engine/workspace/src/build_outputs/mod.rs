@@ -35,7 +35,7 @@ use std::{
 };
 
 use rg_cfg_eval::CfgOptions;
-use rg_std::{ExpectedUnique, MemoryRecorder, MemorySize, UniqueVec};
+use rg_std::{ExpectedUnique, MemoryRecorder, MemorySize, NativeOsString, UniqueVec};
 
 use crate::Package;
 
@@ -117,6 +117,24 @@ impl CargoBuildOutputScanStats {
 pub struct CargoGeneratedSources(Arc<CargoGeneratedSourcesData>);
 
 impl CargoGeneratedSources {
+    pub(crate) fn stamp(&self) -> ajika::Result<ajika::Stamp> {
+        let native = |path: &Path| NativeOsString::from_os_str(path.as_os_str());
+        let out_dir = native(&self.0.out_dir);
+        let compile_env: Vec<_> = self
+            .0
+            .compile_env
+            .iter()
+            .map(|entry| (entry.name.clone(), entry.value.clone()))
+            .collect();
+        let generated_files: Vec<_> = self
+            .0
+            .generated_files
+            .iter()
+            .map(|path| native(path))
+            .collect();
+        ajika::Stamp::of_value(&(out_dir, compile_env, generated_files))
+    }
+
     fn new(
         out_dir: PathBuf,
         compile_env: Vec<CargoCompileEnvVar>,

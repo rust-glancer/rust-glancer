@@ -9,7 +9,7 @@ use crate::{FileTree, lower::FileLowering};
 /// the logical directory from which the file was reached.
 #[ajika::query]
 pub fn file_declarations(
-    db: &ajika::Db<'_>,
+    db: &rg_source::QueryContext<'_>,
     package: PackageSlot,
     file: FileId,
 ) -> ajika::Result<FileTree> {

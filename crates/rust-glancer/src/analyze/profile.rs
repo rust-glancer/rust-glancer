@@ -12,21 +12,14 @@ struct ProfileAlias {
 const PROFILE_ALIASES: &[ProfileAlias] = &[
     ProfileAlias {
         name: "default",
-        description: "build checkpoints",
-        selectors: &[rg_project::BUILD_CHECKPOINTS.scope()],
+        description: "startup timings, Ajika counters, and build checkpoints",
+        // A child selector also enables the build timings and checkpoints in its parent scope.
+        selectors: &["project.build.ajika"],
     },
     ProfileAlias {
         name: "macros",
         description: "def-map macro counters, timings, and by-name expansion tables",
         selectors: &["def_map.construction", "def_map.macros.by_name"],
-    },
-    ProfileAlias {
-        name: "memory:def-map",
-        description: "build checkpoints plus the def-map memory snapshot",
-        selectors: &[
-            rg_project::BUILD_CHECKPOINTS.scope(),
-            "project.build.def_map",
-        ],
     },
 ];
 

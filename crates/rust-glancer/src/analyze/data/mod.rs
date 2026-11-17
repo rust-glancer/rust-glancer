@@ -1,5 +1,4 @@
 mod memory;
-mod package;
 mod profile;
 mod project;
 mod stages;

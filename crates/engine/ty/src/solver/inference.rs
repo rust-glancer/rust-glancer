@@ -357,9 +357,7 @@ impl<'s> InferenceTable<'s> {
             return Outcome::Unavailable;
         }
         for _ in 0..MAX_OBLIGATION_FULFILLMENT_ROUNDS {
-            if cx.is_cancelled() {
-                return Outcome::Unavailable;
-            }
+            cx.check_cancelled();
             // Work outside the RefCell borrow, retaining unfinished goals in the same buffer.
             // Successful goals have already written their evidence into the inference variables;
             // later rounds and registrations can reuse the queue's allocation.

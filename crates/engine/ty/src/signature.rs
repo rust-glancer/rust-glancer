@@ -11,7 +11,7 @@ use rg_ir_model::{
     StaticRef, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
 use rg_item_tree::FunctionQualifiers;
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
 use rustc_type_ir::TypeVisitableExt as _;
 
 use crate::{
@@ -59,7 +59,7 @@ pub struct SemanticSignatureQuery<'query, D, I, R = ItemPathQuery<'query, D, I>>
 impl<'query, D, I> SemanticSignatureQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
         Self {
@@ -72,7 +72,7 @@ where
 impl<'query, D, I, R> SemanticSignatureQuery<'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     /// Build signature queries with the path semantics of the requesting layer.
@@ -300,7 +300,7 @@ where
 impl<'query, D, I> SemanticSignatureQuery<'query, D, I>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
 {
     pub(crate) fn trait_header_from(
         item_paths: &ItemPathQuery<'query, D, I>,

@@ -14,7 +14,7 @@ use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_std::UniqueVec;
 
-use crate::{selection::subset, state::ProjectState};
+use crate::state::ProjectState;
 
 /// Builds request-local source scan surfaces for reference and rename queries.
 pub(super) struct ReferenceSearchPlanner<'a> {
@@ -64,8 +64,6 @@ impl<'a> ReferenceSearchPlanner<'a> {
         };
 
         let packages = Self::unique_crate_packages(search_crates);
-        let subset = subset::packages_only(self.state.workspace(), &packages);
-        let def_map = self.state.def_map_read_txn_for_subset(&subset);
 
         let mut files = UniqueVec::new();
         for package in packages {
@@ -86,10 +84,7 @@ impl<'a> ReferenceSearchPlanner<'a> {
                     continue;
                 }
 
-                for crate_ref in def_map
-                    .crates_for_file(package, parsed_file.file_id())
-                    .context("while attempting to find crate ownership for source file")?
-                {
+                for crate_ref in self.state.crates_for_file(package, parsed_file.file_id()) {
                     if !search_crates.contains(&crate_ref) {
                         continue;
                     }

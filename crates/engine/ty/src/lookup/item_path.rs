@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{CrateRef, ModuleRef, Path, SemanticItemRef};
 use rg_semantic_ir::{
-    GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource, TypePathContext,
+    GenericsQuery, ItemResolutionQuery, ItemStoreQuery, SemanticItemSource, TypePathContext,
     TypePathResolution,
 };
 use rg_std::UniqueVec;
@@ -18,7 +18,7 @@ pub struct ItemPathQuery<'a, D, I> {
 impl<'a, D, I> ItemPathQuery<'a, D, I>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a, Error = D::Error>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
         Self {

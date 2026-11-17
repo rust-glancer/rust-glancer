@@ -26,7 +26,7 @@ pub fn use_it(maybe: Option<User>) {
             package body_enum_pattern_fixture
 
             body_enum_pattern_fixture [lib]
-            body b0 fn body_enum_pattern_fixture[lib]::crate::use_it @ 8:1-14:2
+            fn body_enum_pattern_fixture[lib]::crate::use_it @ 8:1-14:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -87,7 +87,7 @@ pub fn destructure(
             package body_destructure_fixture
 
             body_destructure_fixture [lib]
-            body b0 fn body_destructure_fixture[lib]::crate::destructure @ 8:1-19:2
+            fn body_destructure_fixture[lib]::crate::destructure @ 8:1-19:2
             scopes
             - s0 parent <none>: v0, v1, v2, v3, v4
             - s1 parent s0: v5, v6, v7, v8, v9, v10, v11
@@ -156,7 +156,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
             package body_pattern_resolution_fixture
 
             body_pattern_resolution_fixture [lib]
-            body b0 fn body_pattern_resolution_fixture[lib]::crate::use_it @ 7:1-15:2
+            fn body_pattern_resolution_fixture[lib]::crate::use_it @ 7:1-15:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v3
@@ -184,7 +184,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
                 expr e5 path ID -> local v3 => u8 @ 14:5-14:7
 
 
-            body b1 fn body_pattern_resolution_fixture[lib]::crate::shadowed @ 17:1-22:2
+            fn body_pattern_resolution_fixture[lib]::crate::shadowed @ 17:1-22:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
@@ -206,7 +206,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
                     expr e2 literal int `0` => u8 @ 20:14-20:15
 
 
-            body b2 const body_pattern_resolution_fixture[lib]::crate::ready @ 1:1-1:25
+            const body_pattern_resolution_fixture[lib]::crate::ready @ 1:1-1:25
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -237,7 +237,7 @@ pub fn use_it(state: State) {
             package body_lowercase_unit_variant_pattern
 
             body_lowercase_unit_variant_pattern [lib]
-            body b0 fn body_lowercase_unit_variant_pattern[lib]::crate::use_it @ 6:1-11:2
+            fn body_lowercase_unit_variant_pattern[lib]::crate::use_it @ 6:1-11:2
             patterns
             - p0 binding move v0 path state `state` @ 6:15-6:20
             - p1 binding move <none> path idle `idle` @ 8:9-8:13
@@ -285,7 +285,7 @@ pub fn use_it(
             package body_pattern_shape_fixture
 
             body_pattern_shape_fixture [lib]
-            body b0 fn body_pattern_shape_fixture[lib]::crate::use_it @ 12:1-29:2
+            fn body_pattern_shape_fixture[lib]::crate::use_it @ 12:1-29:2
             patterns
             - p0 binding move v0 path tuple `tuple` @ 13:5-13:10
             - p1 binding move v1 path tuple_pair `tuple_pair` @ 14:5-14:15
@@ -344,7 +344,7 @@ pub fn use_it(by_ref: User, by_mut: User, by_at: User) {
             package body_record_shorthand_pattern_shape
 
             body_record_shorthand_pattern_shape [lib]
-            body b0 fn body_record_shorthand_pattern_shape[lib]::crate::use_it @ 10:1-17:2
+            fn body_record_shorthand_pattern_shape[lib]::crate::use_it @ 10:1-17:2
             patterns
             - p0 binding move v0 path by_ref `by_ref` @ 10:15-10:21
             - p1 binding move v1 path by_mut `by_mut` @ 10:29-10:35
@@ -383,7 +383,7 @@ pub fn use_it(value: i32) {
             package body_literal_pattern_fixture
 
             body_literal_pattern_fixture [lib]
-            body b0 fn body_literal_pattern_fixture[lib]::crate::use_it @ 4:1-10:2
+            fn body_literal_pattern_fixture[lib]::crate::use_it @ 4:1-10:2
             patterns
             - p0 binding move v0 path value `value` @ 4:15-4:20
             - p1 literal -int `-1` @ 6:9-6:11
@@ -398,12 +398,12 @@ pub fn use_it(value: i32) {
             - p10 wildcard `_` @ 8:9-8:10
 
 
-            body b1 const body_literal_pattern_fixture[lib]::crate::min_value @ 1:1-1:30
+            const body_literal_pattern_fixture[lib]::crate::min_value @ 1:1-1:30
             patterns
             <none>
 
 
-            body b2 const body_literal_pattern_fixture[lib]::crate::max_value @ 2:1-2:31
+            const body_literal_pattern_fixture[lib]::crate::max_value @ 2:1-2:31
             patterns
             <none>
         "#]],
@@ -430,7 +430,7 @@ pub fn use_it(result: Result) {
             package body_or_pattern_fixture
 
             body_or_pattern_fixture [lib]
-            body b0 fn body_or_pattern_fixture[lib]::crate::use_it @ 6:1-10:2
+            fn body_or_pattern_fixture[lib]::crate::use_it @ 6:1-10:2
             patterns
             - p0 binding move v0 path result `result` @ 6:15-6:21
             - p1 binding move v1 path value `value` @ 8:20-8:25

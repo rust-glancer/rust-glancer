@@ -1,132 +1,12 @@
-use std::{
-    collections::BTreeSet,
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
+use std::collections::BTreeSet;
 
 use expect_test::expect;
 
-use super::{
-    SourceMutationMemoryHooks,
-    utils::{HostFixture, HostObservation},
-};
+use super::utils::{HostFixture, HostObservation};
 use crate::{
-    PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange,
+    SavedFileChange,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
-
-/// Mutates one fixture path at a chosen ItemTree syntax-eviction boundary.
-///
-/// Generated discovery adds another eviction after the initial ItemTree pass. Counting those
-/// boundaries lets the race test change a late file after capture but before source validation.
-#[derive(Debug)]
-struct NthItemTreeMutationMemoryHooks {
-    remaining_item_tree_points: AtomicUsize,
-    path: PathBuf,
-    replacement: &'static str,
-}
-
-impl ProjectMemoryHooks for NthItemTreeMutationMemoryHooks {
-    fn purge(&self, point: ProjectMemoryPurgePoint) {
-        if point != ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction {
-            return;
-        }
-        let should_mutate = self
-            .remaining_item_tree_points
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .is_ok_and(|previous| previous == 1);
-        if should_mutate {
-            std::fs::write(&self.path, self.replacement)
-                .expect("late source mutation hook should replace fixture source");
-        }
-    }
-}
-
-#[test]
-fn fresh_build_rejects_generated_module_changed_during_discovery() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "generated_source_generation_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! make_late_module {
-    () => {
-        mod late;
-    };
-}
-
-make_late_module!();
-
-//- /src/late.rs
-pub struct Before;
-"#,
-    );
-    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(NthItemTreeMutationMemoryHooks {
-        remaining_item_tree_points: AtomicUsize::new(2),
-        path: fixture.path("src/late.rs"),
-        replacement: "pub struct After;\n",
-    });
-
-    let error = Project::builder(fixture.workspace_metadata())
-        .memory_hooks(hooks)
-        .build()
-        .expect_err("a generated module change during discovery should invalidate the candidate");
-    assert!(
-        error.chain().any(|cause| matches!(
-            cause.downcast_ref::<rg_source::SourceError>(),
-            Some(rg_source::SourceError::Stale { .. })
-        )),
-        "build failure should retain the late source race: {error:#}",
-    );
-}
-
-#[test]
-fn fresh_build_rejects_generated_module_created_after_missing_probe() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "generated_source_existence_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! make_late_module {
-    () => {
-        mod late;
-    };
-}
-
-make_late_module!();
-"#,
-    );
-    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(SourceMutationMemoryHooks::at_point(
-        ProjectMemoryPurgePoint::AfterDefMapBuild,
-        fixture.path("src/late.rs"),
-        "pub struct Appeared;\n",
-    ));
-
-    let error = Project::builder(fixture.workspace_metadata())
-        .memory_hooks(hooks)
-        .build()
-        .expect_err("a generated module appearing after its probe should invalidate the candidate");
-    assert!(
-        error.chain().any(|cause| matches!(
-            cause.downcast_ref::<rg_source::SourceError>(),
-            Some(rg_source::SourceError::ExistenceChanged { .. })
-        )),
-        "build failure should retain the generated source-existence cause: {error:#}",
-    );
-}
 
 #[test]
 fn macro_generated_out_of_line_modules_converge_through_real_files() {
@@ -769,9 +649,6 @@ pub struct Appeared;
             changed files
             - generated_module_update_fixture src/optional.rs
 
-            affected packages
-            - generated_module_update_fixture
-
             changed targets
             - generated_module_update_fixture[lib]
 
@@ -796,9 +673,6 @@ pub struct Renamed;
             changed files
             - generated_module_update_fixture src/optional.rs
 
-            affected packages
-            - generated_module_update_fixture
-
             changed targets
             - generated_module_update_fixture[lib]
 
@@ -822,9 +696,7 @@ pub struct RootOnly;
         expect![[r#"
             changed files
             - generated_module_update_fixture src/lib.rs
-
-            affected packages
-            - generated_module_update_fixture
+            - generated_module_update_fixture src/optional.rs
 
             changed targets
             - generated_module_update_fixture[lib]
@@ -835,81 +707,6 @@ pub struct RootOnly;
             file context `pruned generated source`
             - <none>
         "#]],
-    );
-}
-
-#[test]
-fn saved_generated_module_edits_rebuild_offloaded_reverse_dependents() {
-    let mut fixture = ProjectFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[package]
-name = "generated_reverse_app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-generated_reverse_dep = { path = "dep" }
-
-//- /src/lib.rs
-pub use generated_reverse_dep::*;
-
-//- /dep/Cargo.toml
-[package]
-name = "generated_reverse_dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-macro_rules! make_api {
-    () => {
-        pub mod api;
-    };
-}
-
-make_api!();
-pub use api::*;
-
-//- /dep/src/api.rs
-pub struct Before;
-"#,
-        PackageResidencyPolicy::AllOffloadable,
-    );
-    let app = fixture.package_slot_by_name("generated_reverse_app");
-    let dep = fixture.package_slot_by_name("generated_reverse_dep");
-
-    let summary = fixture.apply_saved_fixture(
-        r#"
-//- /dep/src/api.rs
-pub struct After;
-"#,
-    );
-    assert_eq!(
-        summary
-            .affected_packages
-            .into_iter()
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([app, dep]),
-        "editing a known generated source should rebuild its owner and reverse dependent",
-    );
-
-    let analysis = fixture
-        .project()
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("offloaded reverse-dependent analysis should reload");
-    assert!(
-        analysis
-            .workspace_symbols("Before")
-            .expect("old generated symbol query should resolve")
-            .is_empty(),
-    );
-    assert_eq!(
-        analysis
-            .workspace_symbols("After")
-            .expect("new generated symbol query should resolve")
-            .len(),
-        1,
     );
 }
 
@@ -961,34 +758,33 @@ choose_module!();
 "#,
     );
 
-    let snapshot = fixture.project().snapshot();
-    let parsed_paths = snapshot
-        .parse_db()
-        .package(0)
-        .expect("request-change fixture package should exist")
-        .parsed_files()
-        .map(|file| file.path().to_path_buf())
-        .collect::<BTreeSet<_>>();
-    assert!(!parsed_paths.contains(&first));
-    assert!(parsed_paths.contains(&second));
+    fixture.project().inspect(|snapshot| {
+        let parsed_paths = snapshot
+            .parse_db()
+            .package(0)
+            .expect("request-change fixture package should exist")
+            .parsed_files()
+            .map(|file| file.path().to_path_buf())
+            .collect::<BTreeSet<_>>();
+        assert!(!parsed_paths.contains(&first));
+        assert!(parsed_paths.contains(&second));
 
-    let analysis = snapshot
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("request-change fixture analysis should build");
-    assert!(
-        analysis
-            .workspace_symbols("First")
-            .expect("old request symbol query should resolve")
-            .is_empty(),
-    );
-    assert_eq!(
-        analysis
-            .workspace_symbols("Second")
-            .expect("new request symbol query should resolve")
-            .len(),
-        2,
-        "the replacement module and its struct should both be indexed",
-    );
+        let analysis = snapshot.analysis();
+        assert!(
+            analysis
+                .workspace_symbols("First")
+                .expect("old request symbol query should resolve")
+                .is_empty(),
+        );
+        assert_eq!(
+            analysis
+                .workspace_symbols("Second")
+                .expect("new request symbol query should resolve")
+                .len(),
+            2,
+            "the replacement module and its struct should both be indexed",
+        );
+    });
 }
 
 #[test]
@@ -1037,7 +833,7 @@ pub struct ChildItem;
         .canonicalize()
         .expect("nested generated module path should canonicalize");
     let parsed_paths = project
-        .snapshot()
+        .state
         .parse_db()
         .package(0)
         .expect("rename fixture package should exist")
@@ -1070,169 +866,23 @@ make_child!();
         .apply_change(SavedFileChange::fs_path(&lib_path))
         .expect("saving the declaring file should publish the missing generated module state");
 
-    let snapshot = project.snapshot();
-    assert_eq!(
-        snapshot
-            .parse_db()
-            .package(0)
-            .expect("deleted fixture package should exist")
-            .parsed_files()
-            .count(),
-        1,
-        "a missing generated module should not retain its historical package file",
-    );
-    assert!(
-        snapshot
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("deleted generated module analysis should build")
-            .workspace_symbols("ChildItem")
-            .expect("deleted generated symbol query should resolve")
-            .is_empty(),
-    );
-}
-
-#[test]
-fn warm_cache_restores_generated_module_files_without_rediscovery() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "generated_module_cache_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! make_cached {
-    () => {
-        pub mod cached;
-    };
-}
-
-make_cached!();
-
-//- /src/cached.rs
-pub struct CachedGenerated;
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-    let cold = Project::builder(workspace.clone())
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("cold generated module project should write its package artifact");
-    assert_eq!(
-        cold.snapshot()
-            .parse_db()
-            .package(0)
-            .expect("fixture package should exist")
-            .parsed_files()
-            .count(),
-        2,
-        "the artifact parse snapshot should include the generated-discovered file",
-    );
-    drop(cold);
-
-    let run = rg_profile::test_support::ProfileTest::start(
-        crate::profile_descriptors(),
-        "project.build.cache_probe,project.build.macro_source_files",
-    );
-    let warm = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("warm generated module project should restore from its package artifact");
-    let profile = run.finish();
-
-    profile.assert_counter_path_with_message(
-        "project.build.cache_probe.results.hits",
-        1,
-        "the generated module artifact should remain a valid startup cache hit",
-    );
-    assert_eq!(
-        profile
-            .inner()
-            .counter("project.build.macro_source_files.requests.seen")
-            .unwrap_or(0),
-        0,
-        "a valid artifact should restore the final parse table without repeating discovery",
-    );
-    assert_eq!(
-        warm.snapshot()
-            .parse_db()
-            .package(0)
-            .expect("warm fixture package should exist")
-            .parsed_files()
-            .count(),
-        2,
-    );
-    let symbols = warm
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("warm generated module analysis should load")
-        .workspace_symbols("CachedGenerated")
-        .expect("cached generated symbol query should resolve");
-    assert_eq!(symbols.len(), 1);
-
-    drop(warm);
-    fixture.write_fixture_files(
-        r#"
-//- /src/cached.rs
-pub struct RefreshedGenerated;
-"#,
-    );
-    let run = rg_profile::test_support::ProfileTest::start(
-        crate::profile_descriptors(),
-        "project.build.cache_probe",
-    );
-    let rebuilt = Project::builder(fixture.workspace_metadata())
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("editing a generated-discovered file should rebuild the stale artifact");
-    let profile = run.finish();
-    profile.assert_counter_path_with_message(
-        "project.build.cache_probe.misses.parse_restore_error",
-        1,
-        "restoring the final parse snapshot should validate generated-discovered file revisions",
-    );
-    let analysis = rebuilt
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("rebuilt generated module analysis should load");
-    assert!(
-        analysis
-            .workspace_symbols("CachedGenerated")
-            .expect("old cached symbol query should resolve")
-            .is_empty(),
-    );
-    assert_eq!(
-        analysis
-            .workspace_symbols("RefreshedGenerated")
-            .expect("refreshed generated symbol query should resolve")
-            .len(),
-        1,
-    );
-    drop(analysis);
-    drop(rebuilt);
-
-    let run = rg_profile::test_support::ProfileTest::start(
-        crate::profile_descriptors(),
-        "project.build.cache_probe",
-    );
-    let second_warm = Project::builder(fixture.workspace_metadata())
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("the rewritten generated module artifact should survive another warm restart");
-    run.finish().assert_counter_path_with_message(
-        "project.build.cache_probe.results.hits",
-        1,
-        "the replacement artifact should be reused after the edited file was rebuilt",
-    );
-    assert_eq!(
-        second_warm
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("second warm generated module analysis should load")
-            .workspace_symbols("RefreshedGenerated")
-            .expect("second warm generated symbol query should resolve")
-            .len(),
-        1,
-    );
+    project.inspect(|snapshot| {
+        assert_eq!(
+            snapshot
+                .parse_db()
+                .package(0)
+                .expect("deleted fixture package should exist")
+                .parsed_files()
+                .count(),
+            1,
+            "a missing generated module should not retain its historical package file",
+        );
+        assert!(
+            snapshot
+                .analysis()
+                .workspace_symbols("ChildItem")
+                .expect("deleted generated symbol query should resolve")
+                .is_empty(),
+        );
+    });
 }

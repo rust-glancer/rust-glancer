@@ -2,7 +2,7 @@
 
 use rg_ir_model::{TraitDefRef, TraitImplRef};
 use rg_semantic_ir::TraitImplSelfHead;
-use rg_std::UniqueVec;
+use rg_std::{Cancelled, UniqueVec};
 
 use crate::{
     Ty, TyContext,
@@ -29,18 +29,16 @@ impl TraitImplFilter {
         self,
         context: &TyContext<'_, D, I>,
         trait_ref: TraitDefRef,
-    ) -> Option<UniqueVec<TraitImplRef>> {
-        if context.cancellation().is_cancelled() {
-            return None;
-        }
+    ) -> Result<UniqueVec<TraitImplRef>, Cancelled> {
+        rg_std::check_cancel!(context, "trait impl candidates");
         let lookup = context.item_lookup();
         let candidates = match self {
             Self::All => lookup.trait_impls_for_trait(trait_ref),
             Self::Head(head) => lookup.trait_impl_candidates_for_self_head(trait_ref, Some(head)),
             Self::Fallbacks => lookup.trait_impl_candidates_for_self_head(trait_ref, None),
-            Self::NoEvidence => return Some(UniqueVec::new()),
+            Self::NoEvidence => return Ok(UniqueVec::new()),
         };
-        Some(candidates.ok()?.unwrap_or_default())
+        Ok(candidates?.unwrap_or_default())
     }
 }
 

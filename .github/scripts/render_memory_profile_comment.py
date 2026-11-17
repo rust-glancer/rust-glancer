@@ -204,13 +204,12 @@ def render_context(
     current: MemoryProfileReport,
     base: Optional[MemoryProfileReport],
 ) -> str:
-    packages = dict_value(current.project.get("packages"))
+    packages = current.project
     base_note = "available" if base is not None else "unavailable"
 
     lines = [
         f"- Fixture: `{workspace_name(current)}`",
-        f"- Packages: {packages.get('total_count', '?')} total, {packages.get('workspace_count', '?')} workspace",
-        f"- Residency: `{packages.get('residency_policy', '?')}`",
+        f"- Packages: {packages.get('package_count', '?')} total, {packages.get('workspace_package_count', '?')} workspace",
     ]
     lines.append(f"- Base result: {base_note}")
     return "\n".join(lines)
@@ -226,12 +225,6 @@ def render_metric_table(
             build_elapsed_ms,
             format_duration_ms,
             format_duration_delta_ms,
-        ),
-        (
-            "Peak allocator resident",
-            peak_allocator_resident_bytes,
-            format_bytes,
-            format_byte_delta,
         ),
         (
             "Final allocator resident",
@@ -275,16 +268,15 @@ def render_checkpoint_table(
     rows = [
         "### Build Checkpoints",
         "",
-        "| Checkpoint | Phase | Delta | RG sampled | Delta | RG total | Delta | Allocator resident | Delta |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Checkpoint | Phase | Delta | RG retained | Delta | Allocator resident | Delta |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for key, row in checkpoint_rows_by_occurrence(current_rows):
         label = row_label(row)
         base_row = base_rows.get(key)
         table_row = (
             "| {label} | {phase} | {phase_delta} | "
-            "{rg_sampled} | {rg_sampled_delta} | "
-            "{rg_total} | {rg_total_delta} | "
+            "{rg_retained} | {rg_retained_delta} | "
             "{resident} | {resident_delta} |"
         )
         rows.append(
@@ -295,18 +287,10 @@ def render_checkpoint_table(
                     row_number(row, "phase_elapsed_ms"),
                     row_number(base_row, "phase_elapsed_ms"),
                 ),
-                rg_sampled=format_optional(row_number(row, "retained_bytes"), format_bytes),
-                rg_sampled_delta=format_byte_delta(
+                rg_retained=format_optional(row_number(row, "retained_bytes"), format_bytes),
+                rg_retained_delta=format_byte_delta(
                     row_number(row, "retained_bytes"),
                     row_number(base_row, "retained_bytes"),
-                ),
-                rg_total=format_optional(
-                    row_number(row, "active_retained_bytes"),
-                    format_bytes,
-                ),
-                rg_total_delta=format_byte_delta(
-                    row_number(row, "active_retained_bytes"),
-                    row_number(base_row, "active_retained_bytes"),
                 ),
                 resident=format_optional(row_number(row, "resident_bytes"), format_bytes),
                 resident_delta=format_byte_delta(
@@ -367,15 +351,6 @@ def build_elapsed_ms(report: Optional[MemoryProfileReport]) -> Optional[float]:
     if not checkpoints:
         return None
     return checkpoints[-1].get("elapsed_ms")
-
-
-def peak_allocator_resident_bytes(report: Optional[MemoryProfileReport]) -> Optional[float]:
-    values = [
-        row_number(checkpoint, "resident_bytes")
-        for checkpoint in checkpoints_for(report)
-    ]
-    values = [value for value in values if value is not None]
-    return max(values) if values else None
 
 
 def final_allocator_resident_bytes(report: Optional[MemoryProfileReport]) -> Optional[float]:

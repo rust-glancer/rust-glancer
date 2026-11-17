@@ -4,18 +4,18 @@
 //! text. When the editor source differs, this scanner reads the path and span from current syntax
 //! and uses only the enclosing module path to select the matching saved module.
 
-use rg_def_map::{DefMapReadTxn, ImportPath};
+use rg_def_map::{DefinitionReader, ImportPath};
 use rg_ir_model::{CrateRef, FileId};
 use rg_item_tree::{FromAst as _, ImportAlias, UseItem};
-use rg_package_store::PackageStoreError;
 use rg_parse::enclosing_inline_module_path;
+use rg_source::ReadError;
 use rg_syntax::{AstNode as _, AstToken as _, SourceFile, TextSize, ast};
 
 use super::{DefinitionSourceCandidate, ModuleSourceSiteScanner};
 
 /// Finds the module-level `use` path segment under one current-source cursor.
 pub(crate) struct CurrentUsePathScanner<'source, 'txn, 'db> {
-    def_map: &'txn DefMapReadTxn<'db>,
+    def_map: &'txn DefinitionReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     source: &'source SourceFile,
@@ -24,7 +24,7 @@ pub(crate) struct CurrentUsePathScanner<'source, 'txn, 'db> {
 
 impl<'source, 'txn, 'db> CurrentUsePathScanner<'source, 'txn, 'db> {
     pub(crate) fn new(
-        def_map: &'txn DefMapReadTxn<'db>,
+        def_map: &'txn DefinitionReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         source: &'source SourceFile,
@@ -40,7 +40,7 @@ impl<'source, 'txn, 'db> CurrentUsePathScanner<'source, 'txn, 'db> {
     }
 
     /// Attach a current import spelling to the saved module that owns its namespace.
-    pub(crate) fn scan(&self) -> Result<Vec<DefinitionSourceCandidate>, PackageStoreError> {
+    pub(crate) fn scan(&self) -> Result<Vec<DefinitionSourceCandidate>, ReadError> {
         let Some(use_item) = self.use_item_at_offset() else {
             return Ok(Vec::new());
         };

@@ -59,6 +59,19 @@ impl WorkspaceGraphChanges {
             }
         }
 
+        // A deleted auto-discovered target has to leave the Cargo graph before its root can
+        // be queried again. Ordinary modules can disappear without changing Cargo metadata.
+        if !path.is_file()
+            && parse.workspace_packages().any(|package| {
+                package.targets().iter().any(|target| {
+                    target.src_path.starts_with(path)
+                        || package.file_path(target.root_file) == Some(path)
+                })
+            })
+        {
+            return Self::Changed;
+        }
+
         if path.extension() != Some(OsStr::new("rs")) || parse.contains_file_path(path) {
             return Self::Unchanged;
         }

@@ -6,7 +6,7 @@
 //!    already known to be stale.
 //! 2. Run the feature query and let expensive phases check whether the response is still wanted.
 //! 3. Tag a successful value with the project and document ids used to compute it.
-//! 4. Release data loaded only for this request and repair a recoverable package-cache failure.
+//! 4. Release the request working set. Ajika can repair its cache on the next operation.
 //!
 //! This layer does not decide whether an editor document is still current. Only server ingress
 //! owns live sessions and revisions, so the engine returns the captured ids and the server checks
@@ -54,6 +54,12 @@ impl QueryRunError {
 
 impl From<anyhow::Error> for QueryRunError {
     fn from(error: anyhow::Error) -> Self {
+        if let Some(required) = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<SaveRequired>())
+        {
+            return Self::SaveRequired(required.0.clone());
+        }
         Self::Analysis(error)
     }
 }
@@ -63,6 +69,12 @@ impl From<Cancelled> for QueryRunError {
         Self::Analysis(error.into())
     }
 }
+
+#[derive(Debug, derive_more::Display)]
+#[display("save {} before using saved-source analysis", _0.display())]
+pub(super) struct SaveRequired(pub(super) std::path::PathBuf);
+
+impl std::error::Error for SaveRequired {}
 
 /// Lets expensive query phases check whether anyone still wants the result.
 ///
@@ -218,16 +230,23 @@ impl QueryRunner<'_> {
                 Ok(value)
             })
         };
-        let cancelled_checkpoint = result
-            .as_ref()
-            .err()
-            .and_then(QueryRunError::as_error)
+        let error = result.as_ref().err().and_then(QueryRunError::as_error);
+        let runtime_error = error.and_then(|error| {
+            error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<ajika::Error>())
+        });
+        let cancelled_checkpoint = error
             .and_then(|error| {
                 error
                     .chain()
                     .find_map(|cause| cause.downcast_ref::<Cancelled>())
+                    .map(Cancelled::checkpoint)
             })
-            .map(Cancelled::checkpoint);
+            .or_else(|| match runtime_error.map(ajika::Error::kind) {
+                Some(ajika::ErrorKind::Cancelled(cancelled)) => Some(cancelled.checkpoint()),
+                _ => None,
+            });
         let stale_path = if cancelled_checkpoint.is_some() {
             None
         } else {
@@ -245,12 +264,13 @@ impl QueryRunner<'_> {
             self.project.record_stale_source(label, stale_path);
         }
         let query_elapsed = started.elapsed();
-        let should_recover = cancelled_checkpoint.is_none()
-            && result
-                .as_ref()
-                .err()
-                .and_then(QueryRunError::as_error)
-                .is_some_and(Project::is_recoverable_cache_load_failure);
+        let repair_pending = matches!(
+            runtime_error.map(ajika::Error::kind),
+            Some(ajika::ErrorKind::Persistence(_))
+        ) && self
+            .project
+            .saved_project()
+            .is_ok_and(Project::query_recovery_pending);
         if let Some(checkpoint) = cancelled_checkpoint {
             tracing::debug!(
                 query = label,
@@ -290,13 +310,18 @@ impl QueryRunner<'_> {
                     );
                 }
                 Err(QueryRunError::Analysis(error)) => {
+                    let cycle = match runtime_error.map(ajika::Error::kind) {
+                        Some(ajika::ErrorKind::Cycle(cycle)) => Some(cycle),
+                        _ => None,
+                    };
                     let error = format!("{error:#}");
                     tracing::warn!(
                         query = label,
                         queued_ms = queue_elapsed.as_millis(),
                         elapsed_ms = query_elapsed.as_millis(),
                         status = "error",
-                        recoverable_cache_failure = should_recover,
+                        repair_pending,
+                        ?cycle,
                         error = %error,
                         "analysis query completed"
                     );
@@ -309,10 +334,8 @@ impl QueryRunner<'_> {
             // query error or an empty feature result, so there is deliberately nothing to publish.
         } else if saved_source_changed {
             let _ = respond_to.send(Err(QueryError::SavedSourceChanged));
-        } else if should_recover {
-            // Lazy package loads can fail when an offloaded artifact becomes stale between
-            // indexing and a query. The next command sees a repaired project; this request remains
-            // explicitly unavailable instead of pretending the feature found no result.
+        } else if repair_pending {
+            // The next Ajika run attempts one repair before serving its callback.
             let _ = respond_to.send(Err(QueryError::TemporarilyUnavailable));
         } else {
             let result = match result {
@@ -325,14 +348,7 @@ impl QueryRunner<'_> {
             let _ = respond_to.send(result);
         }
 
-        // Publication wakes the RPC task immediately. Request-owned loads and allocator pages are
-        // still released synchronously before this dispatcher accepts another command, but that
-        // housekeeping no longer delays a result that is already complete and safe to publish.
-        self.project.release_query_memory();
         MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
-        if should_recover {
-            self.project.recover_after_package_cache_failure(label);
-        }
     }
 }
 

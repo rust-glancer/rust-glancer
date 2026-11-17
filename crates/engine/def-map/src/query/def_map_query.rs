@@ -25,7 +25,7 @@ use crate::{
 
 /// Routes DefMap-origin refs and crate-level facts to concrete storage.
 ///
-/// Crate-only callers usually delegate to `DefMapReadTxn`; body-aware callers can additionally
+/// Crate-only callers usually delegate to `DefinitionReader`; body-aware callers can additionally
 /// route the active body origin to its local DefMap without changing the lookup algorithm.
 pub trait DefMapSource {
     type Error;

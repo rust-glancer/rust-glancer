@@ -11,8 +11,8 @@ description.workspace = true
 [dependencies]
 ajika.workspace = true
 blake3.workspace = true
+rg_ir_model.workspace = true
 rg_std.workspace = true
-wincode.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

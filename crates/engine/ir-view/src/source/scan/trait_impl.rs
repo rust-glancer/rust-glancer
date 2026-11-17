@@ -5,8 +5,9 @@
 //! shape to completion.
 
 use rg_def_map::DefMapSource as _;
-use rg_ir_model::{CrateRef, FileId, ImplRef, TraitDefRef};
-use rg_package_store::PackageStoreError;
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ImplRef, SemanticItemRef, TraitDefRef};
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
+use rg_source::ReadError;
 
 use super::NarrowestSourceSite;
 use crate::IndexedViewDb;
@@ -48,28 +49,37 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
     }
 
     /// Search both crate-level and body-local semantic item stores.
-    pub(crate) fn site(&self) -> Result<Option<TraitImplSourceSite>, PackageStoreError> {
+    pub(crate) fn site(&self) -> Result<Option<TraitImplSourceSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
-        if let Some(items) = self.db.semantic_ir.items(self.crate_ref)? {
-            self.scan_store(items, &mut best)?;
-        }
+        let items = ItemStoreQuery::new(self.db);
+        self.scan_items(
+            items.semantic_items_for_origin(DefMapRef::Crate(self.crate_ref))?,
+            &mut best,
+        )?;
 
         // Rust permits item declarations inside bodies, including trait implementations. Loading
         // only bodies from this file preserves the store's normal file-granular residency.
         for (body_ref, _) in self.db.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
-            if let Some(items) = self.db.body_ir.body_item_store(body_ref)? {
-                self.scan_store(items, &mut best)?;
-            }
+            self.scan_items(
+                items.semantic_items_for_origin(DefMapRef::Body(body_ref))?,
+                &mut best,
+            )?;
         }
         Ok(best.finish())
     }
 
-    fn scan_store(
+    fn scan_items(
         &self,
-        items: &rg_semantic_ir::ItemStore,
+        items: Vec<SemanticItemView<'_>>,
         best: &mut NarrowestSourceSite<TraitImplSourceSite>,
-    ) -> Result<(), PackageStoreError> {
-        for (impl_ref, data) in items.impls_with_refs() {
+    ) -> Result<(), ReadError> {
+        for item in items {
+            let SemanticItemRef::Impl(impl_ref) = item.item() else {
+                continue;
+            };
+            let Some(data) = item.impl_data() else {
+                continue;
+            };
             let Some(trait_ref) = data.resolved_trait_ref.as_option().copied() else {
                 continue;
             };

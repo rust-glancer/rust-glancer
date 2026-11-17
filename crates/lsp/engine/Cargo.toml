@@ -9,6 +9,7 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
+ajika.workspace = true
 anyhow.workspace = true
 cargo_metadata.workspace = true
 derive_more = { workspace = true, features = ["debug", "display"] }

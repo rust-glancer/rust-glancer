@@ -26,7 +26,7 @@ pub fn use_it() {
             package body_generic_fixture
 
             body_generic_fixture [lib]
-            body b0 fn body_generic_fixture[lib]::crate::use_it @ 11:1-14:2
+            fn body_generic_fixture[lib]::crate::use_it @ 11:1-14:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -73,7 +73,7 @@ pub fn use_it(value: ItemOf<Iter<User>>) {
             package body_alias_projection_fixture
 
             body_alias_projection_fixture [lib]
-            body b0 fn body_alias_projection_fixture[lib]::crate::use_it @ 14:1-16:2
+            fn body_alias_projection_fixture[lib]::crate::use_it @ 14:1-16:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -118,7 +118,7 @@ where
             package body_bound_projection_fixture
 
             body_bound_projection_fixture [lib]
-            body b0 fn impl CollectionReader<Coll>::read @ 18:5-20:6
+            fn impl CollectionReader<Coll>::read @ 18:5-20:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -151,7 +151,7 @@ pub fn use_it<T: Derived>(value: T::Item) {
             package body_recursive_supertrait_projection_fixture
 
             body_recursive_supertrait_projection_fixture [lib]
-            body b0 fn body_recursive_supertrait_projection_fixture[lib]::crate::use_it @ 7:1-9:2
+            fn body_recursive_supertrait_projection_fixture[lib]::crate::use_it @ 7:1-9:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>

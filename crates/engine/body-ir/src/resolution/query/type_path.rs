@@ -8,8 +8,8 @@ use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, TypeAliasRef,
 };
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
+use rg_semantic_ir::{SemanticItemSource, TypePathContext, TypePathResolution};
+use rg_source::ReadError;
 use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, Ty};
 
@@ -24,8 +24,8 @@ pub struct BodyTypePathQuery<'query, D, I> {
 
 impl<'query, D, I> BodyTypePathQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -39,7 +39,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<TypePathResolution, PackageStoreError> {
+    ) -> Result<TypePathResolution, ReadError> {
         // `Type::Alias` is selected from impls rather than a DefMap module entry. Resolve it before
         // applying the ordinary lexical/module lookup order below.
         if let Some((prefix, name)) = path.split_prefix_name() {
@@ -105,7 +105,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<Option<EnumVariantRef>, PackageStoreError> {
+    ) -> Result<Option<EnumVariantRef>, ReadError> {
         let from = ModuleRef {
             origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
@@ -144,7 +144,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<TypePathResolution, PackageStoreError> {
+    ) -> Result<TypePathResolution, ReadError> {
         if path.is_self_type() {
             return self.context.item_paths().resolve_type_path(context, path);
         }
@@ -193,7 +193,7 @@ where
     fn enum_variant_from_defs(
         &self,
         defs: Vec<DefId>,
-    ) -> Result<Option<EnumVariantRef>, PackageStoreError> {
+    ) -> Result<Option<EnumVariantRef>, ReadError> {
         let source = self.context.def_map_source();
         let item_query = self.context.item_query();
         let mut variants = ExpectedUnique::new();
@@ -218,7 +218,7 @@ where
         &self,
         ty: &AdtTy,
         name: &str,
-    ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
+    ) -> Result<Option<TypeAliasRef>, ReadError> {
         let receiver_ty = Ty::adt(ty.clone());
         // Resolving `Self::Id` inside a bound must not first prove that bound. Discover the alias
         // using the impl header; ordinary item selection proves predicates after lowering ends.

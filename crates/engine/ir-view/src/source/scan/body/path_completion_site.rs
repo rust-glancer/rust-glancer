@@ -13,10 +13,10 @@
 //! model::$0                  qualifier `model`, empty replacement span
 //! ```
 
-use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind};
+use rg_body_ir::{BodyPath, BodyReader, BodyView, ExprKind, PatData, PatKind};
 use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span};
 use rg_item_tree::TypePath;
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 
 use super::{
     BodyAssociatedTypeBindingSite, BodyQualifiedPathContext, PathCompletionSite,
@@ -33,7 +33,7 @@ use crate::source::scan::{
 /// constructors request types, while ordinary expression and tuple/unit pattern paths request
 /// values.
 pub(crate) struct PathCompletionSiteScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    body_ir: &'txn BodyReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -41,7 +41,7 @@ pub(crate) struct PathCompletionSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        body_ir: &'txn BodyReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -55,7 +55,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Returns the smallest type or value path whose segment prefix accepts completions.
-    pub(crate) fn site_at_path(&self) -> Result<Option<PathCompletionSite>, PackageStoreError> {
+    pub(crate) fn site_at_path(&self) -> Result<Option<PathCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
@@ -77,7 +77,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     /// this site can replace ordinary type-argument completion.
     pub(crate) fn associated_type_binding_site_at(
         &self,
-    ) -> Result<Option<BodyAssociatedTypeBindingSite>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedTypeBindingSite>, ReadError> {
         self.associated_type_binding_site_at_with(AssociatedTypeBindingSyntax::explicit_at)
     }
 
@@ -87,14 +87,14 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     /// overlay and retain the normal type candidates for `It`.
     pub(crate) fn implicit_associated_type_binding_site_at(
         &self,
-    ) -> Result<Option<BodyAssociatedTypeBindingSite>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedTypeBindingSite>, ReadError> {
         self.associated_type_binding_site_at_with(AssociatedTypeBindingSyntax::implicit_at)
     }
 
     fn associated_type_binding_site_at_with(
         &self,
         site_at: impl Fn(&TypePath, u32) -> Option<AssociatedTypeBindingSyntax>,
-    ) -> Result<Option<BodyAssociatedTypeBindingSite>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedTypeBindingSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {

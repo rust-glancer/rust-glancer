@@ -10,8 +10,8 @@
 //!
 //! The first expansion names a child file but does not contain it. The second names a file left by
 //! a Cargo build script. In both cases DefMap understands what the Rust construct means, but the
-//! project layer owns path lookup, source capture, and ItemTree lowering. DefMap calls an injected
-//! [`MacroSourceFileLoader`] with a complete request batch, then collects the loaded files before
+//! target source reader owns path lookup, source capture, and ItemTree lowering. DefMap sends
+//! a complete request batch, then collects the loaded files before
 //! continuing its macro queue. Semantic state stays on the construction call stack during loading.
 //!
 //! The shared loading boundary should not hide the semantic difference between the examples. A `mod`
@@ -26,115 +26,37 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use rg_ir_model::{FileId, PackageSlot};
-use rg_item_tree::{IncludePathExpression, ItemTreeDb};
-use rg_parse::{ModuleFileContext, ParseDb};
+use rg_ir_model::FileId;
+use rg_item_tree::IncludePathExpression;
+use rg_parse::ModuleFileContext;
 
-/// Captures and lowers a complete batch of real files needed by macro expansion.
-///
-/// Return one resolution per request, in the same order. A found file must already be captured in
-/// Parse and lowered in ItemTree under the requested module context. This boundary owns source
-/// access only; name resolution and collection remain inside DefMap construction.
-pub trait MacroSourceFileLoader {
-    fn load_files(
-        &mut self,
-        parse: &mut ParseDb,
-        item_tree: &mut ItemTreeDb,
-        requests: &[MacroSourceFileRequest],
-    ) -> anyhow::Result<Vec<MacroSourceFileResolution>>;
-}
-
-/// One coalesced project-layer lookup requested while DefMap is collecting expanded syntax.
-///
-/// Request identity contains everything needed for source lookup. Equal requests
-/// can share one answer even when more than one expansion reached them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MacroSourceFileRequest {
     /// Resolves an out-of-line `mod name;` produced by a macro.
     ///
-    /// `parent_context` is the directory interpretation at the macro call site. The project uses
+    /// `parent_context` is the directory interpretation at the macro call site. The target uses
     /// it with the generated name and optional `#[path]`, then returns both the file and the child
     /// context that nested `mod` declarations must inherit.
     Module {
-        package: PackageSlot,
         parent_context: Arc<ModuleFileContext>,
         module_name: String,
         path_override: Option<String>,
     },
-    /// Resolves an `include!(...)` call that only became visible after macro expansion.
+    /// Resolves an `include!(...)` call after macro lookup selects the builtin.
     ///
     /// `origin_file` is where relative include paths start. `module_file_context` is deliberately
     /// separate: included items stay in the caller's semantic module, so a nested `mod child;`
     /// uses the caller's module directory rather than a directory derived from the included file.
     Include {
-        package: PackageSlot,
         origin_file: FileId,
         module_file_context: Arc<ModuleFileContext>,
         path: IncludePathExpression,
     },
 }
 
-impl MacroSourceFileRequest {
-    pub(crate) fn module(
-        package: PackageSlot,
-        parent_context: Arc<ModuleFileContext>,
-        module_name: String,
-        path_override: Option<String>,
-    ) -> Self {
-        Self::Module {
-            package,
-            parent_context,
-            module_name,
-            path_override,
-        }
-    }
-
-    pub(crate) fn include(
-        package: PackageSlot,
-        origin_file: FileId,
-        module_file_context: Arc<ModuleFileContext>,
-        path: IncludePathExpression,
-    ) -> Self {
-        Self::Include {
-            package,
-            origin_file,
-            module_file_context,
-            path,
-        }
-    }
-
-    pub fn package(&self) -> PackageSlot {
-        match self {
-            Self::Module { package, .. } | Self::Include { package, .. } => *package,
-        }
-    }
-
-    pub(crate) fn description(&self) -> String {
-        match self {
-            Self::Module {
-                package,
-                module_name,
-                ..
-            } => format!(
-                "macro-generated module {module_name} for package {}",
-                package.0
-            ),
-            Self::Include {
-                package,
-                origin_file,
-                ..
-            } => format!(
-                "macro-generated include from file {} for package {}",
-                origin_file.as_raw(),
-                package.0
-            ),
-        }
-    }
-}
-
-/// Settled project-layer result for one macro source-file request.
+/// Settled result for one macro source-file request.
 ///
-/// Absence from the surrounding map means that the project has not handled the request yet.
+/// Absence from the surrounding map means that the target has not handled the request yet.
 /// [`MacroSourceFileResolution::Missing`] means the lookup did finish but no usable source exists.
 /// Construction retains these results to coalesce repeated requests across expansion batches.
 #[derive(Debug, Clone, PartialEq, Eq)]

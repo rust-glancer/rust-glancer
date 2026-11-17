@@ -11,9 +11,12 @@ use std::{
 };
 
 use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Sysroot crates that rust-glancer can model as ordinary library roots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, MemorySize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, MemorySize, SchemaRead, SchemaWrite,
+)]
 #[memsize(leaf)]
 pub enum SysrootCrate {
     Core,

@@ -1,31 +1,21 @@
-//! Phase storage behind one saved `Project` generation.
+//! Metadata published together with one accepted saved-source revision.
 
 use std::{
-    path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::DefMapDb;
+use rg_def_map::MacroExpansionLimitReport;
 use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_parse::ParseDb;
-use rg_semantic_ir::SemanticIrDb;
 use rg_std::MemorySize;
-use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
+use rg_workspace::WorkspaceMetadata;
 
-use crate::{
-    PackageResidencyPolicy, ProjectMemoryHooks,
-    stats::{MacroExpansionLimitBuildSummary, ProjectStats},
-    storage::cache::{Fingerprint, PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
-};
+use crate::{MacroExpansionLimitBuildSummary, ProjectStats};
 
 /// Identifies one saved version of a [`Project`](crate::Project).
 ///
-/// Publishing a source or workspace change gives the project a new id. Completing a target
-/// excluded by the eager build policy preserves the saved source identity.
+/// Only publishing a source or workspace change gives the project a new id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
 pub struct ProjectGenerationId(u64);
@@ -41,108 +31,64 @@ impl ProjectGenerationId {
     }
 }
 
-/// Owns the saved source and analysis for one version of [`Project`](crate::Project).
-///
-/// Package slots are the coherence key across resident and offloaded phases. Parse metadata stays
-/// resident for every package so source locations remain addressable, while DefMap, Semantic IR,
-/// and Body IR may store a package either resident in memory or offloaded behind the same cache
-/// artifact.
-#[derive(Debug, Clone, MemorySize)]
+/// Routing stays available between operations. Ajika owns all declaration and body results.
+#[derive(Debug, MemorySize)]
 pub(crate) struct ProjectState {
     pub(crate) generation_id: ProjectGenerationId,
     pub(crate) workspace: WorkspaceMetadata,
-    #[memsize(skip)]
-    pub(crate) workspace_lowering_config: WorkspaceLoweringConfig,
-    pub(crate) cargo_metadata_config: CargoMetadataConfig,
-    pub(crate) cache_plan: WorkspaceCachePlan,
-    #[memsize(skip)]
-    pub(crate) cache_instance: PackageCacheInstance,
-    #[memsize(skip)]
-    pub(crate) cache_store: PackageCacheStore,
-    pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,
-    pub(crate) body_ir_policy: BodyIrBuildPolicy,
-    pub(crate) package_residency_policy: PackageResidencyPolicy,
-    #[memsize(skip)]
-    pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
-    /// Candidate updates share immutable source entries until their file inventory changes.
-    pub(crate) parse: Arc<ParseDb>,
+    pub(crate) parse: ParseDb,
+    pub(crate) targets: Vec<CrateRef>,
+    pub(crate) module_files: HashMap<CrateRef, Vec<FileId>>,
+    pub(crate) reports: Vec<MacroExpansionLimitReport>,
     pub(crate) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,
-    pub(crate) def_map: DefMapDb,
-    pub(crate) semantic_ir: SemanticIrDb,
-    pub(crate) body_ir: BodyIrDb,
+    pub(crate) prefilled_bodies: usize,
 }
 
 impl ProjectState {
-    pub(crate) fn generation_id(&self) -> ProjectGenerationId {
-        self.generation_id
-    }
-
-    /// Returns the normalized workspace metadata this project was built from.
     pub(crate) fn workspace(&self) -> &WorkspaceMetadata {
         &self.workspace
     }
 
-    /// Returns the parse database built for this project.
     pub(crate) fn parse_db(&self) -> &ParseDb {
         &self.parse
     }
 
-    /// Returns coarse status counters without exposing raw phase databases.
     pub(crate) fn stats(&self) -> ProjectStats {
-        ProjectStats::capture(self)
+        ProjectStats {
+            package_count: self.parse.package_count(),
+            workspace_package_count: self.parse.workspace_packages().count(),
+            target_count: self.module_files.len(),
+            file_count: self
+                .parse
+                .packages()
+                .iter()
+                .map(|package| package.parsed_files().count())
+                .sum(),
+            prefilled_body_count: self.prefilled_bodies,
+        }
     }
 
-    pub(crate) fn parse_db_mut(&mut self) -> &mut ParseDb {
-        Arc::make_mut(&mut self.parse)
-    }
-
-    /// Iterates over non-sysroot package slots from the current Cargo graph.
-    ///
-    /// Phase payloads may be offloaded, but package slots remain the stable ids that connect
-    /// workspace metadata, parse metadata, and user-visible change summaries.
-    pub(crate) fn non_sysroot_package_slots(&self) -> impl Iterator<Item = PackageSlot> + '_ {
-        self.workspace
-            .packages()
-            .iter()
-            .zip(self.parse.packages())
-            .enumerate()
-            .filter(|(_, (package, _))| !package.origin.is_sysroot())
-            .map(|(package_idx, _)| PackageSlot(package_idx))
-    }
-
-    /// Returns all semantic crates declared by the given package slot.
-    pub(crate) fn crate_refs_for_package(&self, package: PackageSlot) -> Vec<CrateRef> {
-        let Some(parsed_package) = self.parse.package(package.0) else {
-            return Vec::new();
-        };
-
-        parsed_package
-            .targets()
-            .iter()
-            .enumerate()
-            .map(|(crate_idx, _)| CrateRef {
-                package,
-                crate_id: CrateId(crate_idx),
-            })
-            .collect()
-    }
-
-    /// Returns all parsed files matching a canonical filesystem path.
-    pub(crate) fn file_refs_for_path(&self, canonical_path: &Path) -> Vec<ProjectFileRef> {
+    pub(crate) fn crate_refs_for_package(
+        &self,
+        package: PackageSlot,
+    ) -> impl Iterator<Item = CrateRef> + '_ {
         self.parse
-            .file_refs_for_path(canonical_path)
+            .package(package.0)
             .into_iter()
-            .map(|file| ProjectFileRef {
-                package: PackageSlot(file.package),
-                file: file.file,
+            .flat_map(move |parsed| {
+                parsed.targets().iter().map(move |target| CrateRef {
+                    package,
+                    crate_id: CrateId(target.id.0),
+                })
             })
-            .collect()
     }
-}
 
-/// One package-local parsed file in the project graph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ProjectFileRef {
-    pub(crate) package: PackageSlot,
-    pub(crate) file: FileId,
+    pub(crate) fn crates_for_file(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+    ) -> impl Iterator<Item = CrateRef> + '_ {
+        self.crate_refs_for_package(package)
+            .filter(move |krate| self.module_files[krate].binary_search(&file).is_ok())
+    }
 }

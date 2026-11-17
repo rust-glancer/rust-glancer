@@ -86,7 +86,6 @@ jobs:
           mkdir -p .ci/memory/current
           target/release/rust-glancer analyze test_targets/bench_fixtures/rust-analyzer \
             --memory \
-            --package-residency all-offloadable \
             --format json > .ci/memory/current/result.json
 
       - name: Render memory profile section

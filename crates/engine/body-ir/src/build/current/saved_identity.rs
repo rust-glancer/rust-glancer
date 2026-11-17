@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{BodyRef, ConstRef, CrateRef, DefMapRef, FileId, Span, StaticRef};
-use rg_semantic_ir::ItemStore;
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, SemanticItemRef, Span};
+use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::BodyOwner;
@@ -25,43 +25,22 @@ pub(super) struct SavedRootOwnerIndex {
 }
 
 impl SavedRootOwnerIndex {
-    pub(super) fn new(items: Option<&ItemStore>, crate_ref: CrateRef, file: FileId) -> Self {
+    pub(super) fn new(items: &[SemanticItemView<'_>], file: FileId) -> Self {
         let mut owners = HashMap::<Span, ExpectedUnique<BodyOwner>>::new();
-        let Some(items) = items else {
-            return Self { owners };
-        };
-
-        for (function_ref, data) in items.functions_with_refs() {
-            if data.source.file_id == file {
-                owners
-                    .entry(data.span)
-                    .or_default()
-                    .push(BodyOwner::Function(function_ref));
+        for item in items {
+            if item.source().file_id != file {
+                continue;
+            }
+            let owner = match item.item() {
+                SemanticItemRef::Function(function) => BodyOwner::Function(function),
+                SemanticItemRef::Const(konst) => BodyOwner::Const(konst),
+                SemanticItemRef::Static(static_ref) => BodyOwner::Static(static_ref),
+                _ => continue,
+            };
+            if let Some(span) = item.span() {
+                owners.entry(span).or_default().push(owner);
             }
         }
-        for (id, data) in items.consts().iter_with_ids() {
-            if data.source.file_id == file {
-                owners
-                    .entry(data.span)
-                    .or_default()
-                    .push(BodyOwner::Const(ConstRef {
-                        origin: DefMapRef::Crate(crate_ref),
-                        id,
-                    }));
-            }
-        }
-        for (id, data) in items.statics().iter_with_ids() {
-            if data.source.file_id == file {
-                owners
-                    .entry(data.span)
-                    .or_default()
-                    .push(BodyOwner::Static(StaticRef {
-                        origin: DefMapRef::Crate(crate_ref),
-                        id,
-                    }));
-            }
-        }
-
         Self { owners }
     }
 
@@ -83,7 +62,7 @@ pub(super) struct SavedNestedBodyIndex {
 
 impl SavedNestedBodyIndex {
     pub(super) fn new(
-        saved_body_ir: &crate::BodyIrReadTxn<'_>,
+        saved_body_ir: &crate::BodyReader<'_>,
         crate_ref: CrateRef,
         file: FileId,
         saved_bodies: &[(BodyRef, crate::BodyView<'_>)],
@@ -122,15 +101,8 @@ impl SavedNestedBodyIndex {
         let mut next = 0;
         while let Some(body_ref) = worklist.as_slice().get(next).copied() {
             next += 1;
-            let Some(items) = saved_body_ir.body_local_items(body_ref)? else {
-                continue;
-            };
-            index.record_body_local_items(
-                items.item_store(),
-                file,
-                &bodies_by_owner,
-                &mut worklist,
-            );
+            let items = saved_body_ir.all_items(DefMapRef::Body(body_ref))?;
+            index.record_body_local_items(&items, file, &bodies_by_owner, &mut worklist);
         }
 
         Ok(index)
@@ -138,45 +110,23 @@ impl SavedNestedBodyIndex {
 
     fn record_body_local_items(
         &mut self,
-        items: &ItemStore,
+        items: &[SemanticItemView<'_>],
         file: FileId,
         bodies_by_owner: &HashMap<rg_ir_model::identity::DeclarationRef, ExpectedUnique<BodyRef>>,
         worklist: &mut UniqueVec<BodyRef>,
     ) {
-        for (function, data) in items.functions_with_refs() {
-            if data.source.file_id == file {
-                self.record_body_owner(
-                    data.span,
-                    BodyOwner::Function(function),
-                    bodies_by_owner,
-                    worklist,
-                );
+        for item in items {
+            if item.source().file_id != file {
+                continue;
             }
-        }
-        for (id, data) in items.consts().iter_with_ids() {
-            if data.source.file_id == file {
-                self.record_body_owner(
-                    data.span,
-                    BodyOwner::Const(ConstRef {
-                        origin: items.origin(),
-                        id,
-                    }),
-                    bodies_by_owner,
-                    worklist,
-                );
-            }
-        }
-        for (id, data) in items.statics().iter_with_ids() {
-            if data.source.file_id == file {
-                self.record_body_owner(
-                    data.span,
-                    BodyOwner::Static(StaticRef {
-                        origin: items.origin(),
-                        id,
-                    }),
-                    bodies_by_owner,
-                    worklist,
-                );
+            let owner = match item.item() {
+                SemanticItemRef::Function(function) => BodyOwner::Function(function),
+                SemanticItemRef::Const(konst) => BodyOwner::Const(konst),
+                SemanticItemRef::Static(static_ref) => BodyOwner::Static(static_ref),
+                _ => continue,
+            };
+            if let Some(span) = item.span() {
+                self.record_body_owner(span, owner, bodies_by_owner, worklist);
             }
         }
     }

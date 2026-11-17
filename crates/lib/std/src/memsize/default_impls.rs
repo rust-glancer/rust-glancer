@@ -96,9 +96,11 @@ impl MemorySize for Arc<str> {
 
 impl MemorySize for Arc<Path> {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        let payload = self.as_os_str().as_encoded_bytes().len();
-        recorder.record_heap::<Path>(payload);
-        recorder.record_approximate::<Arc<Path>>(approximate_allocation_overhead(payload));
+        if recorder.visit_shared_allocation(Arc::as_ptr(self).cast::<()>()) {
+            let payload = self.as_os_str().as_encoded_bytes().len();
+            recorder.record_heap::<Path>(payload);
+            recorder.record_approximate::<Arc<Path>>(approximate_allocation_overhead(payload));
+        }
     }
 }
 
@@ -520,16 +522,17 @@ mod tests {
     }
 
     #[test]
-    fn arc_path_records_exact_payload_without_spare_capacity() {
-        let value: Arc<Path> = Arc::from(Path::new("/crate"));
+    fn arc_path_records_shared_payload_once_without_spare_capacity() {
+        let path: Arc<Path> = Arc::from(Path::new("/crate"));
+        let handles = [Arc::clone(&path), path];
 
         let mut recorder = MemoryRecorder::new("path");
-        value.record_memory_size(&mut recorder);
+        handles.record_memory_size(&mut recorder);
         let totals = recorder.totals_by_kind();
 
         assert_eq!(
             totals.get(&MemoryRecordKind::Shallow),
-            Some(&mem::size_of::<Arc<Path>>())
+            Some(&mem::size_of::<[Arc<Path>; 2]>())
         );
         assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&6));
         assert_eq!(

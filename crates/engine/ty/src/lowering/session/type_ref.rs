@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, OpaqueTyId, OpaqueTyRef, TypeParamRef};
 use rg_item_tree::{ConstExpr, TypeBound, TypeRef};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
 use rustc_type_ir as ir;
 
 use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
@@ -15,7 +15,7 @@ use crate::{
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     /// Lower a source type, treating `impl Trait` as an opaque type occurrence.

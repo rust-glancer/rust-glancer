@@ -1,5 +1,3 @@
-use std::{mem, sync::Arc};
-
 use rg_ir_model::Span;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -49,9 +47,9 @@ impl LineEndings {
 #[derive(Debug, Clone, MemorySize)]
 pub struct LineIndex {
     line_endings: LineEndings,
-    pub(crate) lines: LineIndexStorage<LineInfo>,
-    pub(crate) non_ascii_lines: LineIndexStorage<LineUtf16Metrics>,
-    pub(crate) non_ascii_ranges: LineIndexStorage<LineCharRange>,
+    pub(crate) lines: Vec<LineInfo>,
+    pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
+    pub(crate) non_ascii_ranges: Vec<LineCharRange>,
 }
 
 impl LineIndex {
@@ -59,9 +57,9 @@ impl LineIndex {
     pub fn new(source: &str) -> Self {
         let mut index = Self {
             line_endings: LineEndings::Lf,
-            lines: LineIndexStorage::new(),
-            non_ascii_lines: LineIndexStorage::new(),
-            non_ascii_ranges: LineIndexStorage::new(),
+            lines: Vec::new(),
+            non_ascii_lines: Vec::new(),
+            non_ascii_ranges: Vec::new(),
         };
         let mut line_start = 0;
         let mut line = 0;
@@ -86,45 +84,6 @@ impl LineIndex {
         self.line_endings
     }
 
-    pub(crate) fn pack_many(indexes: &mut [&mut Self]) {
-        let mut lines = Vec::new();
-        let mut non_ascii_lines = Vec::new();
-        let mut non_ascii_ranges = Vec::new();
-        let mut ranges = Vec::with_capacity(indexes.len());
-
-        // Copy every file-local line table into package-local buffers. The resulting shared
-        // buffers keep file offsets stable while replacing many small per-file allocations with a
-        // few package-level allocations.
-        for index in indexes.iter() {
-            ranges.push(index.append_to_packed_buffers(
-                &mut lines,
-                &mut non_ascii_lines,
-                &mut non_ascii_ranges,
-            ));
-        }
-
-        let lines = Arc::<[LineInfo]>::from(lines.into_boxed_slice());
-        let non_ascii_lines = Arc::<[LineUtf16Metrics]>::from(non_ascii_lines.into_boxed_slice());
-        let non_ascii_ranges = Arc::<[LineCharRange]>::from(non_ascii_ranges.into_boxed_slice());
-
-        for (index, range) in indexes.iter_mut().zip(ranges) {
-            let line_endings = index.line_endings;
-            **index = Self {
-                line_endings,
-                lines: LineIndexStorage::shared(lines.clone(), range.lines),
-                non_ascii_lines: LineIndexStorage::shared(
-                    non_ascii_lines.clone(),
-                    range.non_ascii_lines,
-                ),
-                non_ascii_ranges: LineIndexStorage::shared(
-                    non_ascii_ranges.clone(),
-                    range.non_ascii_ranges,
-                ),
-            };
-        }
-    }
-
-    /// Converts a byte offset into a zero-based line/column position.
     pub fn position(&self, offset: u32) -> Position {
         let offset = usize::try_from(offset).expect("offset should fit into usize");
         let line_index = self.line_for_offset(offset);
@@ -256,154 +215,10 @@ impl LineIndex {
             byte_len: u32::try_from(line_text.len()).expect("line length should fit into u32"),
         });
 
-        if let Some(metrics) =
-            LineUtf16Metrics::new(line, line_text, self.non_ascii_ranges.owned_vec_mut())
-        {
+        if let Some(metrics) = LineUtf16Metrics::new(line, line_text, &mut self.non_ascii_ranges) {
             self.non_ascii_lines.push(metrics);
         }
     }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.lines.shrink_to_fit();
-        self.non_ascii_lines.shrink_to_fit();
-        self.non_ascii_ranges.shrink_to_fit();
-    }
-
-    fn append_to_packed_buffers(
-        &self,
-        lines: &mut Vec<LineInfo>,
-        non_ascii_lines: &mut Vec<LineUtf16Metrics>,
-        non_ascii_ranges: &mut Vec<LineCharRange>,
-    ) -> PackedLineIndexRanges {
-        let line_range = LineIndexRange::new(lines.len(), self.lines.len());
-        lines.extend_from_slice(self.lines.as_slice());
-
-        let non_ascii_range =
-            LineIndexRange::new(non_ascii_ranges.len(), self.non_ascii_ranges.len());
-        non_ascii_ranges.extend_from_slice(self.non_ascii_ranges.as_slice());
-
-        let metrics_range = LineIndexRange::new(non_ascii_lines.len(), self.non_ascii_lines.len());
-        let old_non_ascii_start = self.non_ascii_ranges.start();
-        for metrics in self.non_ascii_lines.as_slice() {
-            let mut metrics = *metrics;
-            let local_range_start = usize::try_from(metrics.range_start)
-                .expect("range start should fit into usize")
-                .saturating_sub(old_non_ascii_start);
-            metrics.range_start = u32::try_from(local_range_start)
-                .expect("local non-ASCII range start should fit into u32");
-            non_ascii_lines.push(metrics);
-        }
-
-        PackedLineIndexRanges {
-            lines: line_range,
-            non_ascii_lines: metrics_range,
-            non_ascii_ranges: non_ascii_range,
-        }
-    }
-}
-
-#[derive(Debug, Clone, MemorySize)]
-#[memsize(with = "Self::record_memory", bound = "T: MemorySize")]
-pub(crate) enum LineIndexStorage<T> {
-    Owned(Vec<T>),
-    Shared {
-        items: Arc<[T]>,
-        range: LineIndexRange,
-    },
-}
-
-impl<T> LineIndexStorage<T> {
-    fn new() -> Self {
-        Self::Owned(Vec::new())
-    }
-
-    fn shared(items: Arc<[T]>, range: LineIndexRange) -> Self {
-        Self::Shared { items, range }
-    }
-
-    pub(crate) fn as_slice(&self) -> &[T] {
-        match self {
-            Self::Owned(items) => items.as_slice(),
-            Self::Shared { items, range } => {
-                let start = range.start;
-                &items[start..start + range.len]
-            }
-        }
-    }
-
-    pub(crate) fn start(&self) -> usize {
-        match self {
-            Self::Owned(_) => 0,
-            Self::Shared { range, .. } => range.start,
-        }
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.as_slice().len()
-    }
-
-    fn push(&mut self, item: T) {
-        match self {
-            Self::Owned(items) => items.push(item),
-            Self::Shared { .. } => {
-                unreachable!("shared line index storage should not be mutated")
-            }
-        }
-    }
-
-    fn owned_vec_mut(&mut self) -> &mut Vec<T> {
-        match self {
-            Self::Owned(items) => items,
-            Self::Shared { .. } => {
-                unreachable!("shared line index storage should not be mutated")
-            }
-        }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        if let Self::Owned(items) = self {
-            items.shrink_to_fit();
-        }
-    }
-
-    fn record_memory(storage: &Self, recorder: &mut rg_std::MemoryRecorder)
-    where
-        T: MemorySize,
-    {
-        match storage {
-            Self::Owned(items) => MemorySize::record_memory_children(items, recorder),
-            Self::Shared { .. } => {
-                let items = storage.as_slice();
-                recorder.scope("items", |recorder| {
-                    // Shared packed buffers should report this file's logical slice, not the whole
-                    // package-level allocation that may be referenced by many files.
-                    recorder.record_heap::<T>(items.len().saturating_mul(mem::size_of::<T>()));
-                    for item in items {
-                        MemorySize::record_memory_children(item, recorder);
-                    }
-                });
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct LineIndexRange {
-    pub(crate) start: usize,
-    pub(crate) len: usize,
-}
-
-impl LineIndexRange {
-    fn new(start: usize, len: usize) -> Self {
-        Self { start, len }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PackedLineIndexRanges {
-    lines: LineIndexRange,
-    non_ascii_lines: LineIndexRange,
-    non_ascii_ranges: LineIndexRange,
 }
 
 /// Per-line byte facts needed for offset conversion.
@@ -604,58 +419,6 @@ mod tests {
                 index.offset_from_utf16_position(expected),
                 Some(offset),
                 "{label}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_line_indexes_preserve_file_local_conversions() {
-        let mut first = LineIndex::new("é\n𝄞a");
-        let mut second = LineIndex::new("prefix\r\n𝄞a\n");
-        let first_offsets = [0, 2, 3, 7, 8].map(|offset| (offset, first.utf16_position(offset)));
-        let second_offsets =
-            [0, 6, 8, 12, 13, 14].map(|offset| (offset, second.utf16_position(offset)));
-        let second_positions = [
-            Position { line: 0, column: 6 },
-            Position { line: 1, column: 0 },
-            Position { line: 1, column: 3 },
-            Position { line: 2, column: 0 },
-        ]
-        .map(|position| (position, second.offset_from_utf16_position(position)));
-        let line_endings = [first.line_endings(), second.line_endings()];
-
-        LineIndex::pack_many(&mut [&mut first, &mut second]);
-
-        assert!(matches!(
-            &second.non_ascii_ranges,
-            super::LineIndexStorage::Shared { .. }
-        ));
-        assert_eq!([first.line_endings(), second.line_endings()], line_endings);
-        for (offset, position) in first_offsets {
-            assert_eq!(first.utf16_position(offset), position, "first file offset");
-            assert_eq!(
-                first.offset_from_utf16_position(position),
-                Some(offset),
-                "first file position"
-            );
-        }
-        for (offset, position) in second_offsets {
-            assert_eq!(
-                second.utf16_position(offset),
-                position,
-                "second file offset"
-            );
-            assert_eq!(
-                second.offset_from_utf16_position(position),
-                Some(offset),
-                "second file position"
-            );
-        }
-        for (position, offset) in second_positions {
-            assert_eq!(
-                second.offset_from_utf16_position(position),
-                offset,
-                "second file line-boundary position"
             );
         }
     }

@@ -15,7 +15,7 @@ use rg_std::CancellationToken;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_text::Name;
 
-use crate::{DefMapQuery, DefMapReadTxn, MacroDefinitionView, NameResolutionEnv};
+use crate::{DefMapQuery, DefinitionReader, MacroDefinitionView, NameResolutionEnv};
 
 mod call;
 mod expanded;
@@ -55,14 +55,14 @@ impl Drop for BodyMacroExpansionScope {
 /// Declarative macros return generated syntax. Compiler builtins use the same lookup path, but
 /// dispatch to builtin behavior after resolution proves that the callee is a builtin definition.
 pub struct BodyMacroExpander<'db, 'txn> {
-    def_maps: &'txn DefMapReadTxn<'db>,
+    def_maps: &'txn DefinitionReader<'db>,
     runtime: MacroExpansionRuntime,
     depth: Rc<Cell<usize>>,
     cancellation: CancellationToken,
 }
 
 impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
-    pub fn new(def_maps: &'txn DefMapReadTxn<'db>, cancellation: CancellationToken) -> Self {
+    pub fn new(def_maps: &'txn DefinitionReader<'db>, cancellation: CancellationToken) -> Self {
         Self {
             def_maps,
             runtime: MacroExpansionRuntime::default(),
@@ -262,7 +262,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     }
 
     fn resolve_body_macro_call<'a>(
-        query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
+        query: &'a DefMapQuery<&DefinitionReader<'_>>,
         site: &BodyMacroCallSite<'_>,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ResolvedBodyMacroCall<'a>>> {
@@ -342,7 +342,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     }
 
     fn resolve_macro_definition<'a>(
-        query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
+        query: &'a DefMapQuery<&DefinitionReader<'_>>,
         module: ModuleRef,
         path: &Path,
     ) -> anyhow::Result<Option<MacroDefinitionView<'a>>> {
@@ -369,7 +369,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     }
 
     fn resolve_single_name_macro<'a>(
-        query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
+        query: &'a DefMapQuery<&DefinitionReader<'_>>,
         crate_ref: CrateRef,
         module: ModuleId,
         name: &Name,

@@ -3,8 +3,12 @@ use std::path::{Path, PathBuf};
 use rg_cfg_eval::CfgOptions;
 use rg_std::MemorySize;
 use rg_text::RustEdition;
+use wincode::{SchemaRead, SchemaWrite};
 
-use super::{dependency::PackageDependency, target::CargoTarget};
+use super::{
+    dependency::PackageDependency,
+    target::{CargoTarget, TargetKind},
+};
 use crate::{CargoGeneratedSources, SysrootCrate};
 
 /// Stable package identifier inside a normalized workspace metadata snapshot.
@@ -19,7 +23,7 @@ impl PackageId {
 }
 
 /// Where one normalized package came from.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize, SchemaRead, SchemaWrite)]
 pub enum PackageOrigin {
     Workspace,
     Dependency,
@@ -55,6 +59,14 @@ pub struct Package {
 }
 
 impl Package {
+    /// The filtered order defines target slots in parsing and semantic queries.
+    pub fn analyzed_targets(&self) -> impl Iterator<Item = &CargoTarget> {
+        self.targets.iter().filter(|target| {
+            self.is_workspace_member
+                || matches!(target.kind, TargetKind::Lib | TargetKind::ProcMacro)
+        })
+    }
+
     /// Returns the package root directory, modeled as the parent of `Cargo.toml`.
     pub fn root_dir(&self) -> &Path {
         self.manifest_path

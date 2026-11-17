@@ -1,8 +1,7 @@
-mod db;
 mod discovery;
+mod file_tree;
 mod item;
 mod lower;
-mod package;
 mod query;
 
 #[doc(hidden)]
@@ -16,7 +15,8 @@ pub use rg_ir_model::Mutability;
 pub use rg_text::Name;
 
 pub use self::{
-    db::{IncrementalItemTreeLowering, ItemTreeDb},
+    discovery::{TargetSources, target_sources},
+    file_tree::{FileTree, ItemTrees},
     item::{
         BuiltinDeriveKind, BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, CfgSelectArmItem,
         CfgSelectArmPayload, ConstExpr, ConstExprData, ConstItem, ConstParamData, DeriveAttrs,
@@ -34,6 +34,5 @@ pub use self::{
         UseImportKind, UseItem, UsePath, UsePathSegment, UsePathSegmentKind, UserFacingAttrs,
         VisibilityLevel, WherePredicate,
     },
-    package::{FileTree, Package, TargetRoot},
     query::file_declarations,
 };

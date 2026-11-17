@@ -22,7 +22,10 @@ pub use self::{
     const_value::EvaluatedConstValue,
     field::FieldKey,
     ids::{
-        body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
+        body::{
+            BindingId, BodyBindingRef, BodyId, BodyKey, BodyRef, BodyRoot, ExprId, PatId,
+            SavedBodyOwner, ScopeId, StmtId,
+        },
         def_map::{
             CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef,
             LocalEnumVariantId, LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId,

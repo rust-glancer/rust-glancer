@@ -44,8 +44,7 @@ pub(super) use self::{
     builtin_derive::BuiltinDeriveExpansion,
     expand::expand_expansion_attempts,
     generated::{
-        GeneratedOrigin, PendingGeneratedInclude, PendingGeneratedModule,
-        apply_pending_macro_source_files,
+        GeneratedOrigin, PendingGeneratedModule, PendingInclude, apply_pending_macro_source_files,
     },
     limits::{MAX_MACRO_EXPANSION_DEPTH, PendingMacroExpansionLimitReport},
     textual_scope::TextualMacroScopes,

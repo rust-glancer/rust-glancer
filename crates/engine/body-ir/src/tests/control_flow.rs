@@ -32,7 +32,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             package body_if_let_fixture
 
             body_if_let_fixture [lib]
-            body b0 fn body_if_let_fixture[lib]::crate::choose @ 14:1-20:2
+            fn body_if_let_fixture[lib]::crate::choose @ 14:1-20:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
@@ -67,7 +67,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
                         expr e7 path fallback -> local v1 => nominal struct body_if_let_fixture[lib]::crate::UserId @ 18:9-18:17
 
 
-            body b1 fn impl UserId::is_valid @ 4:5-6:6
+            fn impl UserId::is_valid @ 4:5-6:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -114,7 +114,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             package body_let_else_guard_fixture
 
             body_let_else_guard_fixture [lib]
-            body b0 fn body_let_else_guard_fixture[lib]::crate::choose @ 14:1-23:2
+            fn body_let_else_guard_fixture[lib]::crate::choose @ 14:1-23:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2
@@ -151,7 +151,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
                     expr e8 path fallback -> local v2 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 21:24-21:32
 
 
-            body b1 fn impl UserId::is_valid @ 4:5-6:6
+            fn impl UserId::is_valid @ 4:5-6:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -196,7 +196,7 @@ pub fn walk(input: Maybe, items: Items) {
             package body_control_flow_fixture
 
             body_control_flow_fixture [lib]
-            body b0 fn body_control_flow_fixture[lib]::crate::walk @ 9:1-21:2
+            fn body_control_flow_fixture[lib]::crate::walk @ 9:1-21:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
@@ -276,7 +276,7 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::use_it @ 4:1-17:2
+            fn app[lib]::crate::use_it @ 4:1-17:2
             scopes
             - s0 parent <none>: v0, v1, v2
             - s1 parent s0: <none>
@@ -381,7 +381,7 @@ pub fn use_iter(def_map: &DefMap) {
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::use_direct @ 3:1-7:2
+            fn app[lib]::crate::use_direct @ 3:1-7:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -404,7 +404,7 @@ pub fn use_iter(def_map: &DefMap) {
                         expr e2 path import -> local v1 => &nominal struct storage[lib]::crate::ImportData @ 5:9-5:15
 
 
-            body b1 fn app[lib]::crate::use_iter @ 9:1-13:2
+            fn app[lib]::crate::use_iter @ 9:1-13:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -447,7 +447,7 @@ pub fn use_iter(def_map: &DefMap) {
             package storage
 
             storage [lib]
-            body b0 fn impl DefMap::imports @ 6:5-8:6
+            fn impl DefMap::imports @ 6:5-8:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -480,7 +480,7 @@ pub fn choose(value: UserId) -> UserId {
             package body_labeled_block_fixture
 
             body_labeled_block_fixture [lib]
-            body b0 fn body_labeled_block_fixture[lib]::crate::choose @ 3:1-7:2
+            fn body_labeled_block_fixture[lib]::crate::choose @ 3:1-7:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>

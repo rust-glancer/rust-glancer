@@ -1,19 +1,18 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, OnceLock},
 };
 
 use rg_ir_model::{FileId, Span};
-use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
+use rg_source::SourceEntry;
 use rg_std::MemorySize;
 use rg_syntax::{
     AstNode as _, Edition, LexedStr, Parse as SyntaxParse, SourceFile, SyntaxKind, SyntaxToken, ast,
 };
 use rg_text::RustEdition;
-use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{PackageParseSnapshot, fs, line_index::LineIndex};
+use crate::line_index::LineIndex;
 
 /// Parse source text with the Rust edition of its owning package.
 ///
@@ -69,100 +68,28 @@ pub fn syntax_edition(edition: RustEdition) -> Edition {
     }
 }
 
-/// Internal parsed representation used by the parser cache.
+/// Source entry and the lazily computed coordinate map.
 #[derive(Debug, Clone, MemorySize)]
 pub(crate) struct ParsedFileData {
-    /// Source backing used when syntax has to be rebuilt after eviction.
-    #[memsize(skip)]
+    /// The exact saved revision used by analysis.
     pub(crate) source: Arc<SourceEntry>,
     /// Line-start index used to convert byte offsets into line/column coordinates.
-    pub(crate) line_index: LineIndexState,
-    /// Rust parse result produced by `rg_syntax`.
-    ///
-    /// This is retained only while AST-consuming phases are lowering. Query-time state keeps
-    /// paths and line indexes, but can evict parse trees to keep memory bounded.
-    ///
-    /// `rg_syntax::SourceFile` is a traversal cursor over an immutable parse tree. Keeping the
-    /// parse result lets each AST-consuming phase create a fresh local cursor instead of sharing
-    /// cursor internals across package or thread boundaries.
-    #[memsize(with = "Self::record_syntax_memory")]
-    pub(crate) syntax: Option<SyntaxParse<SourceFile>>,
+    #[memsize(with = "Self::record_line_index_memory")]
+    line_index: OnceLock<LineIndex>,
 }
 
 impl ParsedFileData {
-    fn record_syntax_memory(
-        syntax: &Option<SyntaxParse<SourceFile>>,
+    fn record_line_index_memory(
+        index: &OnceLock<LineIndex>,
         recorder: &mut rg_std::MemoryRecorder,
     ) {
-        if let Some(syntax) = syntax {
-            // The parse cache owns one retained syntax tree per parsed file. Count it here
-            // explicitly so cloned parse handles and AST cursors do not look like owners.
-            let usage = syntax.retained_tree_memory_usage();
-
-            // `rg_syntax` exposes storage facts without knowing about memory reports; this is the
-            // parse-cache boundary where those facts become retained-memory accounting.
-            recorder.scope("tree", |recorder| {
-                recorder.scope("source", |recorder| {
-                    recorder.record_heap::<str>(usage.source_bytes);
-                });
-                recorder.scope("nodes", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::NodeData",
-                        usage.node_table_bytes,
-                    );
-                });
-                recorder.scope("tokens", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::TokenData",
-                        usage.token_table_bytes,
-                    );
-                });
-                recorder.scope("children", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::ElementId",
-                        usage.child_table_bytes,
-                    );
-                });
-                recorder.scope("errors", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::SyntaxError",
-                        usage.error_bytes,
-                    );
-                });
-            });
+        if let Some(index) = index.get() {
+            index.record_memory_children(recorder);
         }
-    }
-
-    fn parse_snapshot(&self, id: FileId) -> ParsedFileSnapshot {
-        ParsedFileSnapshot {
-            id,
-            source: self.source.descriptor().clone(),
-        }
-    }
-
-    fn from_parse_snapshot(snapshot: ParsedFileSnapshot, source: Arc<SourceEntry>) -> Self {
-        debug_assert_eq!(snapshot.source, *source.descriptor());
-        Self {
-            source,
-            line_index: LineIndexState::Offloaded(OnceLock::new()),
-            syntax: None,
-        }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.line_index.shrink_to_fit();
     }
 }
 
-/// Borrowed view over one cached source file.
-///
-/// Later phases need syntax and source coordinates, but they should not know that parsing is backed
-/// by a mutable file cache. This view is the stable boundary between `parse` and AST-consuming
-/// phases.
+/// Borrowed view over one saved source revision.
 #[derive(Debug, Clone, Copy)]
 pub struct ParsedFile<'a> {
     file_id: FileId,
@@ -189,27 +116,13 @@ impl<'a> ParsedFile<'a> {
         self.data.source.path()
     }
 
-    /// Resolves a Rust string literal path relative to this file's directory.
-    ///
-    /// Absolute paths are accepted as-is, while relative paths start next to this source file.
-    /// Missing or empty paths return `None` so callers can ignore unsupported syntax without
-    /// inventing a file identity.
-    pub fn resolve_path(&self, path_literal: &str) -> Option<PathBuf> {
-        let parent_dir = self.path().parent()?;
-        fs::resolve_path_literal(parent_dir, path_literal)
-    }
-
     /// Returns the line index used for byte-offset to line/column conversion.
     pub fn line_index(&self) -> anyhow::Result<&'a LineIndex> {
-        self.data.line_index.get(&self.data.source)
-    }
-
-    /// Returns a local syntax cursor over the retained parse tree.
-    ///
-    /// This does not reparse source text. It creates a fresh typed root over the immutable parse
-    /// tree so callers can traverse AST without sharing `rg_syntax` cursor state.
-    pub fn syntax(&self) -> Option<SourceFile> {
-        self.data.syntax.as_ref().map(|syntax| syntax.tree())
+        if let Some(index) = self.data.line_index.get() {
+            return Ok(index);
+        }
+        let text = self.data.source.text()?;
+        Ok(self.data.line_index.get_or_init(|| LineIndex::new(&text)))
     }
 
     /// Returns a freshly parsed syntax tree without storing it in the parse database.
@@ -242,138 +155,33 @@ impl<'a> ParsedFile<'a> {
     }
 }
 
-/// Serializable file metadata retained after syntax trees are evicted.
-///
-/// Cache-backed startup checks that a canonical file ID still names the captured source.
-/// Line indexes are derived from revision-validated source and remain lazy after restoration.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub struct ParsedFileSnapshot {
-    pub(crate) id: FileId,
-    pub(crate) source: SourceDescriptor,
-}
-
-impl ParsedFileSnapshot {
-    pub fn path(&self) -> &Path {
-        self.source.path()
-    }
-
-    pub fn source_descriptor(&self) -> &SourceDescriptor {
-        &self.source
-    }
-}
-
-/// Shared parse cache that owns filesystem-backed source files and syntax trees.
-///
-/// `FileDb` deduplicates parsing across targets, so shared modules are parsed once
-/// and reused during multiple target traversals.
+/// Routes source identities for one package and edition.
 #[derive(Debug, Clone, MemorySize)]
 pub(super) struct FileDb {
     pub(crate) edition: RustEdition,
     pub(crate) parsed_files: BTreeMap<FileId, ParsedFileData>,
-    #[memsize(skip)]
-    interner: ajika::Interner,
-    pub(crate) file_ids_by_path: HashMap<SourcePath, FileId>,
+    pub(crate) file_ids_by_path: HashMap<Arc<Path>, FileId>,
 }
 
 impl FileDb {
-    pub(super) fn new(edition: RustEdition, interner: ajika::Interner) -> Self {
+    pub(super) fn new(edition: RustEdition) -> Self {
         Self {
             edition,
             parsed_files: BTreeMap::new(),
-            interner,
             file_ids_by_path: HashMap::new(),
         }
     }
 
-    /// Returns an existing `FileId` for `file_path` or parses and caches the file.
-    pub(super) fn get_or_parse_file(
-        &mut self,
-        sources: &SourceInventory,
-        file_path: &Path,
-    ) -> anyhow::Result<FileId> {
-        let source = sources.capture_saved(file_path)?;
-        let canonical_file_path = source.source_path().clone();
-
-        if let Some(file_id) = self.file_ids_by_path.get(source.path()).copied() {
-            self.ensure_file_syntax(file_id)?;
-            return Ok(file_id);
-        }
-
-        let source_text = source.text()?;
-        let file_id = FileId::for_path(&self.interner, source.path())?;
-        self.parsed_files.insert(
-            file_id,
-            Self::parse_source(&source_text, self.edition, source),
-        );
-        self.file_ids_by_path.insert(canonical_file_path, file_id);
-
-        Ok(file_id)
+    pub(super) fn insert_captured(&mut self, id: FileId, source: Arc<SourceEntry>) {
+        self.file_ids_by_path.insert(source.shared_path(), id);
+        self.parsed_files
+            .entry(id)
+            .or_insert_with(|| ParsedFileData {
+                source,
+                line_index: OnceLock::new(),
+            });
     }
 
-    /// Reparses an already known saved file from source read before mutation started.
-    pub(super) fn reparse_saved_file_from_source(
-        &mut self,
-        file_path: &Path,
-        source: Arc<SourceEntry>,
-    ) -> Option<FileId> {
-        let file_id = self.file_ids_by_path.get(file_path).copied()?;
-        let source_text = source
-            .text()
-            .expect("freshly replaced saved source should remain resident");
-        self.parsed_files.insert(
-            file_id,
-            Self::parse_source(&source_text, self.edition, source),
-        );
-        Some(file_id)
-    }
-
-    /// Ensures that syntax for an already known file is available for AST-consuming lowering.
-    pub(super) fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
-        let Some(parsed_file) = self.parsed_files.get(&file_id) else {
-            anyhow::bail!("unknown file id {:?}", file_id);
-        };
-        if parsed_file.syntax.is_some() {
-            return Ok(());
-        }
-
-        let source = parsed_file.source.text()?;
-        let source_backing = parsed_file.source.clone();
-        self.parsed_files.insert(
-            file_id,
-            Self::parse_source(&source, self.edition, source_backing),
-        );
-        Ok(())
-    }
-
-    /// Drops retained syntax trees while keeping source coordinates and file identity.
-    pub(super) fn evict_syntax_trees(&mut self) {
-        for parsed_file in self.parsed_files.values_mut() {
-            parsed_file.syntax = None;
-        }
-    }
-
-    pub(super) fn shrink_to_fit(&mut self) {
-        self.file_ids_by_path.shrink_to_fit();
-        for parsed_file in self.parsed_files.values_mut() {
-            parsed_file.shrink_to_fit();
-        }
-    }
-
-    pub(super) fn collect_line_indexes<'a>(&'a mut self, indexes: &mut Vec<&'a mut LineIndex>) {
-        for parsed_file in self.parsed_files.values_mut() {
-            if let Ok(line_index) = parsed_file.line_index.get_mut(&parsed_file.source) {
-                indexes.push(line_index);
-            }
-        }
-    }
-
-    pub(super) fn offload_line_indexes(&mut self) {
-        for parsed_file in self.parsed_files.values_mut() {
-            parsed_file.line_index.offload();
-        }
-    }
-
-    /// Returns the cached parsed file for a previously known `FileId`.
     pub(super) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.parsed_files
             .get(&file_id)
@@ -392,155 +200,9 @@ impl FileDb {
         self.file_ids_by_path.get(file_path).copied()
     }
 
-    pub(super) fn parse_snapshot(&self) -> Vec<ParsedFileSnapshot> {
-        self.parsed_files
-            .iter()
-            .map(|(&id, file)| file.parse_snapshot(id))
-            .collect()
-    }
-
-    pub(super) fn restore_snapshot(
-        &mut self,
-        snapshot: PackageParseSnapshot,
-        sources: &SourceInventory,
-    ) -> anyhow::Result<()> {
-        let mut parsed_files = BTreeMap::new();
-        let mut file_ids_by_path = HashMap::with_capacity(snapshot.files.len());
-        for file in snapshot.files {
-            let source = sources.capture_descriptor(file.source_descriptor())?;
-            let id = FileId::for_path(&self.interner, source.path())?;
-            anyhow::ensure!(
-                id == file.id,
-                "package artifact belongs to a different source interner"
-            );
-            file_ids_by_path.insert(source.source_path().clone(), id);
-            parsed_files.insert(id, ParsedFileData::from_parse_snapshot(file, source));
-        }
-        anyhow::ensure!(
-            snapshot
-                .target_root_files
-                .iter()
-                .all(|file| parsed_files.contains_key(file)),
-            "package artifact is missing a target root"
-        );
-        self.parsed_files = parsed_files;
-        self.file_ids_by_path = file_ids_by_path;
-        Ok(())
-    }
-
-    /// Returns the canonical path associated with `file_id`.
     pub(super) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.parsed_files
             .get(&file_id)
             .map(|parsed_file| parsed_file.source.path())
-    }
-
-    fn parse_source(
-        source: &str,
-        edition: RustEdition,
-        source_backing: Arc<SourceEntry>,
-    ) -> ParsedFileData {
-        let line_index = LineIndex::new(source);
-        let parsed_file = parse_source_file(source, edition);
-
-        ParsedFileData {
-            source: source_backing,
-            line_index: LineIndexState::resident(line_index),
-            syntax: Some(parsed_file),
-        }
-    }
-}
-
-/// Lazily resident source map for a parsed file.
-///
-/// File paths and file ids stay resident because they define package inventory. The heavier line
-/// tables can be dropped after package artifacts are durable and reconstructed from the saved source
-/// file when an LSP range conversion actually needs them.
-#[derive(Debug, MemorySize)]
-#[memsize(with = "Self::record_memory")]
-pub(crate) enum LineIndexState {
-    Resident(LineIndex),
-    Offloaded(OnceLock<LineIndex>),
-}
-
-impl LineIndexState {
-    fn resident(line_index: LineIndex) -> Self {
-        Self::Resident(line_index)
-    }
-
-    fn get(&self, source: &SourceEntry) -> anyhow::Result<&LineIndex> {
-        match self {
-            Self::Resident(line_index) => Ok(line_index),
-            Self::Offloaded(line_index) => {
-                if let Some(line_index) = line_index.get() {
-                    return Ok(line_index);
-                }
-
-                let source = source.text()?;
-                let _ = line_index.set(LineIndex::new(&source));
-                Ok(line_index
-                    .get()
-                    .expect("offloaded line index should be initialized after successful load"))
-            }
-        }
-    }
-
-    fn get_mut(&mut self, source: &SourceEntry) -> anyhow::Result<&mut LineIndex> {
-        if matches!(self, Self::Offloaded(_)) {
-            let source = source.text()?;
-            *self = Self::Resident(LineIndex::new(&source));
-        }
-
-        match self {
-            Self::Resident(line_index) => Ok(line_index),
-            Self::Offloaded(_) => unreachable!("offloaded line index was made resident above"),
-        }
-    }
-
-    fn offload(&mut self) {
-        *self = Self::Offloaded(OnceLock::new());
-    }
-
-    fn shrink_to_fit(&mut self) {
-        if let Ok(line_index) = self.get_mut_without_loading() {
-            line_index.shrink_to_fit();
-        }
-    }
-
-    fn get_mut_without_loading(&mut self) -> Result<&mut LineIndex, ()> {
-        match self {
-            Self::Resident(line_index) => Ok(line_index),
-            Self::Offloaded(line_index) => line_index.get_mut().ok_or(()),
-        }
-    }
-
-    fn record_memory(state: &Self, recorder: &mut rg_std::MemoryRecorder) {
-        match state {
-            Self::Resident(line_index) => recorder.scope("resident", |recorder| {
-                MemorySize::record_memory_children(line_index, recorder);
-            }),
-            Self::Offloaded(line_index) => {
-                if let Some(line_index) = line_index.get() {
-                    recorder.scope("loaded", |recorder| {
-                        MemorySize::record_memory_children(line_index, recorder);
-                    });
-                }
-            }
-        }
-    }
-}
-
-impl Clone for LineIndexState {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Resident(line_index) => Self::Resident(line_index.clone()),
-            Self::Offloaded(line_index) => {
-                let cloned = OnceLock::new();
-                if let Some(line_index) = line_index.get() {
-                    let _ = cloned.set(line_index.clone());
-                }
-                Self::Offloaded(cloned)
-            }
-        }
     }
 }

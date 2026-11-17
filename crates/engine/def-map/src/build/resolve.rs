@@ -15,38 +15,36 @@ use std::{mem, sync::Arc};
 
 use anyhow::Context as _;
 use rg_ir_model::{ModuleId, ModuleRef, Path};
-use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::MacroExpansionRuntime;
-use rg_parse::ParseDb;
 use rg_std::UniqueVec;
 use rg_workspace::{PackageOrigin, SysrootCrate};
 
 use super::{
     MacroSourceFileResolutions,
-    crates::{CrateBuilder, KnownModuleFiles},
+    crates::CrateBuilder,
     imports::ImportCollector,
     macros::{
         BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_DEPTH, MacroExpansionScan,
         PendingMacroExpansionLimitReport, apply_expansion_attempts,
         apply_pending_macro_source_files, collect_expansion_attempts, expand_expansion_attempts,
     },
-    output::CompletedCrateStore,
     resolution_env::BuildResolutionEnv,
+    target::TargetCrateSources,
 };
 use crate::{
-    DefMapReadTxn, MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
-    NameResolver,
+    CrateResolutionEnv, MacroDefinitionEnv, NameResolver,
     profile::{metric, record_import_resolution_run},
 };
 
 // Let local chains advance cheaply, but give generated imports and waiting calls a turn after
 // this many passes. This is a scheduling boundary; it never discards remaining work.
 const MAX_EXPANSION_BATCH_PASSES: usize = 32;
+const MAX_REPORTED_MACRO_GROUPS: usize = 64;
 
 /// Dependencies are frozen before this lookup, so their edition-prelude paths already have
 /// their final module structure. `std` and `core` first look for their own local prelude.
 pub(crate) fn select_prelude(
-    env: &BuildResolutionEnv<'_>,
+    env: &impl CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>,
     state: &CrateBuilder,
     origin: &PackageOrigin,
 ) -> anyhow::Result<Option<ModuleRef>> {
@@ -80,31 +78,28 @@ pub(crate) fn select_prelude(
 /// Source discovery completes inside the requesting pass. After loading, collect the real
 /// module/include before continuing its generated calls. Each bounded burst then yields to imports
 /// and retries, even if some chains keep generating more work.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn resolve_crate(
-    baseline: &DefMapReadTxn<'_>,
-    completed: &CompletedCrateStore,
-    parse: &mut ParseDb,
-    item_tree: &mut ItemTreeDb,
+pub(super) fn resolve_crate<E>(
+    dependencies: &E,
+    sources: &mut TargetCrateSources<'_>,
     state: &mut CrateBuilder,
-    macro_runtime: &mut MacroExpansionRuntime,
-    macro_source_file_resolutions: &mut MacroSourceFileResolutions,
-    remaining_report_groups: &mut usize,
-    source_loader: &mut impl MacroSourceFileLoader,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static> + MacroDefinitionEnv,
+{
     metric::MACRO_RECURSION_LIMIT.record_count(MAX_MACRO_EXPANSION_DEPTH);
 
     // Import scheduling belongs to this crate; recursion belongs to each invocation's ancestry.
-    // The caller shares the macro runtime and source answers across crates.
+    let mut macro_runtime = MacroExpansionRuntime::new();
+    let mut macro_source_file_resolutions = MacroSourceFileResolutions::new();
     let mut import_collector = ImportCollector::default();
     let mut import_resolution_runs = 0;
 
     'construction: loop {
+        sources.check_cancelled()?;
         metric::ROUNDS.inc();
         let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
         collect_imports(
-            baseline,
-            completed,
+            dependencies,
             state,
             &mut import_collector,
             &mut import_resolution_runs,
@@ -117,16 +112,15 @@ pub(crate) fn resolve_crate(
         // Advance a bounded burst of direct expansions before refreshing imports. A recursive
         // chain cannot keep an independent call waiting for a generated `use` indefinitely.
         for _ in 0..MAX_EXPANSION_BATCH_PASSES {
+            sources.check_cancelled()?;
             metric::EXPANSION_PASSES.inc();
 
             // Prepare a batch against the active builder. Its borrows end before runtime
-            // jobs execute or the source loader is allowed to grow Parse and ItemTree.
+            // jobs execute or discovery can add item trees.
             let timer = metric::TIMING_COLLECT_EXPANSION_ATTEMPTS.start_timer();
-            let package = item_tree
-                .package(state.crate_ref.package.0)
-                .expect("active crate has an item-tree package");
+            let package = sources.trees();
             let mut expansion_attempts = {
-                let env = BuildResolutionEnv::new(baseline, completed, state);
+                let env = BuildResolutionEnv::new(dependencies, state);
                 // The first pass in a round visits all pending macro calls. Follow-up passes only
                 // visit calls appended by the previous expansion, because older unresolved calls
                 // need another import refresh before their answer can change.
@@ -135,11 +129,10 @@ pub(crate) fn resolve_crate(
                     .unwrap_or(MacroExpansionScan::AllPending);
                 collect_expansion_attempts(
                     &env,
-                    package,
                     state,
                     scan,
-                    macro_runtime,
-                    macro_source_file_resolutions,
+                    &mut macro_runtime,
+                    &macro_source_file_resolutions,
                 )?
             };
             timer.finish();
@@ -150,7 +143,7 @@ pub(crate) fn resolve_crate(
             {
                 // The runtime owns the worker pool and creates it lazily, so projects without
                 // expandable declarative macros do not pay its setup cost.
-                expand_expansion_attempts(macro_runtime, &mut expansion_attempts)?;
+                expand_expansion_attempts(&mut macro_runtime, &mut expansion_attempts)?;
             }
 
             // Apply results in original attempt order. Capture the queue boundary first so both
@@ -167,7 +160,7 @@ pub(crate) fn resolve_crate(
                     package,
                     state,
                     expansion_attempts,
-                    macro_source_file_resolutions,
+                    &macro_source_file_resolutions,
                 )
             };
             timer.finish();
@@ -177,51 +170,27 @@ pub(crate) fn resolve_crate(
                 state.censor_proc_macro_exports();
             }
 
-            // All lookup and item borrows have ended before the loader can grow Parse/ItemTree.
+            // All lookup and item borrows have ended before discovery can add item trees.
             // Complete this batch before collecting real source into the requesting scopes.
             let requests = mem::take(&mut state.macro_source_file_requests)
                 .into_iter()
                 .collect::<UniqueVec<_>>()
                 .into_vec();
             if !requests.is_empty() {
-                let resolutions = source_loader
-                    .load_files(parse, item_tree, &requests)
-                    .context("load macro source files")?;
-                anyhow::ensure!(
-                    resolutions.len() == requests.len(),
-                    "macro source loader must return one result per request",
-                );
-                for (request, resolution) in requests.into_iter().zip(resolutions) {
-                    anyhow::ensure!(
-                        matches!(
-                            (&request, &resolution),
-                            (_, MacroSourceFileResolution::Missing)
-                                | (
-                                    MacroSourceFileRequest::Module { .. },
-                                    MacroSourceFileResolution::Module { .. }
-                                )
-                                | (
-                                    MacroSourceFileRequest::Include { .. },
-                                    MacroSourceFileResolution::Include { .. }
-                                )
-                        ),
-                        "macro source loader returned the wrong file kind for {}",
-                        request.description(),
-                    );
+                for request in requests {
+                    let resolution = sources
+                        .load_file(&request)
+                        .context("load macro source file")?;
                     macro_source_file_resolutions.insert(request, resolution);
                 }
                 // Reborrow the package after loading: its ItemTree may have grown, and no
                 // borrowed input from the preceding expansion batch survives this boundary.
-                let package = item_tree
-                    .package(state.crate_ref.package.0)
-                    .expect("active crate has an item-tree package");
-                state.known_module_files = Arc::new(KnownModuleFiles::from_package(
-                    parse
-                        .package(state.crate_ref.package.0)
-                        .expect("active package remains parsed"),
-                    package,
-                ));
-                apply_pending_macro_source_files(package, state, macro_source_file_resolutions)?;
+                state.known_module_files = Arc::new(sources.known_module_files());
+                apply_pending_macro_source_files(
+                    sources.trees(),
+                    state,
+                    &macro_source_file_resolutions,
+                )?;
                 state.censor_proc_macro_exports();
 
                 // Even a missing result belongs to a batch that may have added declarations.
@@ -253,16 +222,17 @@ pub(crate) fn resolve_crate(
 
     // Only recursion-limited invocations belong in the report. Ordinary lookup misses remain
     // unresolved, and sibling calls have had the opportunity to finish before we get here.
-    state.macro_expansion_limit =
-        PendingMacroExpansionLimitReport::collect(&state.macro_directives, remaining_report_groups);
+    let mut remaining_report_groups = MAX_REPORTED_MACRO_GROUPS;
+    state.macro_expansion_limit = PendingMacroExpansionLimitReport::collect(
+        &state.macro_directives,
+        &mut remaining_report_groups,
+    );
 
     // Derives add impls without changing module bindings. Run them once after imports and
     // ordinary expansion have settled.
-    let package = item_tree
-        .package(state.crate_ref.package.0)
-        .expect("active crate has an item-tree package");
+    let package = sources.trees();
     let derives = BuiltinDeriveExpansion::collect(
-        &BuildResolutionEnv::new(baseline, completed, state),
+        &BuildResolutionEnv::new(dependencies, state),
         state,
         package,
     )
@@ -278,9 +248,8 @@ pub(crate) fn resolve_crate(
 /// Only modules with imports need to move: other modules can supply names through the environment
 /// without receiving imported bindings. While these buffers are out, the collector overlays them
 /// on environment reads. Return both scopes and reports before the next macro batch can use them.
-fn collect_imports(
-    baseline: &DefMapReadTxn<'_>,
-    completed: &CompletedCrateStore,
+fn collect_imports<E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>>(
+    dependencies: &E,
     state: &mut CrateBuilder,
     import_collector: &mut ImportCollector,
     import_resolution_runs: &mut usize,
@@ -302,8 +271,7 @@ fn collect_imports(
             ));
         }
     }
-    let result =
-        import_collector.collect(&BuildResolutionEnv::new(baseline, completed, state), scopes)?;
+    let result = import_collector.collect(&BuildResolutionEnv::new(dependencies, state), scopes)?;
     record_import_resolution_run(state.crate_ref, *import_resolution_runs, result.metrics);
     for module in result.modules {
         state.def_map_builder.apply_module_imports(

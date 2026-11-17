@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ItemOwner, TypeAliasRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathAnchor, TypeRef};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathResolution};
+use rg_semantic_ir::{GenericParamSource, SelfTypeOwner, SemanticItemSource, TypePathResolution};
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     pub(crate) fn lower_type_path(

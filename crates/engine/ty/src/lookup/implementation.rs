@@ -6,7 +6,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, GenericDefRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_std::{ExpectedUnique, OperationError, UniqueVec};
 
 use super::TraitImplFilter;
@@ -23,7 +23,7 @@ pub struct ImplementationQuery<'query, D, I> {
 impl<'query, D, I> ImplementationQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
 {
     /// Creates implementation lookup in one crate-scoped type-query environment.
     pub fn new(context: TyContext<'query, D, I>) -> Self {
@@ -85,12 +85,8 @@ where
         // Start with saved impls whose receiver shape could match, then include body-local
         // impls. This only narrows the search: `Wrapper<User>` and `Wrapper<Account>` have the same
         // outer shape, so their generic arguments and bounds still need to be checked.
-        let Some(mut candidates) =
-            TraitImplFilter::from(receiver).candidates(&self.context, trait_ref)
-        else {
-            rg_std::check_cancel!(self.context, "selected call implementation");
-            return Ok(None);
-        };
+        let mut candidates =
+            TraitImplFilter::from(receiver).candidates(&self.context, trait_ref)?;
         candidates.extend(
             scope
                 .local_trait_impls(trait_ref)
@@ -101,29 +97,27 @@ where
         // scope. Self is the receiver type already chosen for this call, including any
         // dereferencing. Trying more receiver adjustments here could choose another method.
         let declarations = SemanticDeclarations::new(&self.context, scope);
-        let implementation = declarations
-            .with_table(|table, params| {
-                let cx = table.interner();
-                let callbacks = cx.track_callbacks();
-                let application = TraitApplication {
-                    def: trait_ref,
-                    args: cx.lower_args(&args, params),
-                };
-                if callbacks.failure().is_some() {
-                    return None;
+        let implementation = declarations.with_table(|table, params| {
+            let cx = table.interner();
+            let callbacks = cx.track_callbacks();
+            let application = TraitApplication {
+                def: trait_ref,
+                args: cx.lower_args(&args, params),
+            };
+            if callbacks.failure().is_some() {
+                return None;
+            }
+            match table.select_trait_impl(
+                application,
+                &[],
+                candidates.into_iter().map(|candidate| candidate.impl_ref),
+            ) {
+                ExpectedUnique::One(selected) if selected.outcome == Outcome::Proven => {
+                    Some(selected.impl_ref)
                 }
-                match table.select_trait_impl(
-                    application,
-                    &[],
-                    candidates.into_iter().map(|candidate| candidate.impl_ref),
-                ) {
-                    ExpectedUnique::One(selected) if selected.outcome == Outcome::Proven => {
-                        Some(selected.impl_ref)
-                    }
-                    _ => None,
-                }
-            })
-            .map_err(OperationError::Source)?;
+                _ => None,
+            }
+        })?;
         rg_std::check_cancel!(self.context, "selected call implementation");
         let Some(implementation) = implementation else {
             return Ok(None);

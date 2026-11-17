@@ -37,7 +37,7 @@ use rg_ir_model::{
     AssocItemId, ConstRef, EnumVariantRef, FunctionRef, TraitApplicability, TraitDefRef,
     TypeAliasRef, TypeDefId,
 };
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 
 use crate::{
     AdtTy, Clause, TraitApplication, Ty, TyContext,
@@ -89,7 +89,7 @@ pub struct AssociatedItemQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
 impl<'query, D, I> AssociatedItemQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let impls = ImplQuery::new(context.clone());
@@ -100,7 +100,7 @@ where
 impl<'query, D, I, R> AssociatedItemQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
     R: SolverScope<Error = D::Error>,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
@@ -116,17 +116,13 @@ where
     pub fn candidates_for_ty(
         &self,
         receiver_ty: &Ty,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
-        // This layer shares the solver's source-error-only interface. A cancelled discovery
-        // supplies no candidates; the analysis or inference owner checks the same token before
-        // accepting any result. The lookup itself leaves no unfinished cache entry behind.
-        let Ok(traits) = self.context.item_lookup().traits_with_associated_items() else {
-            return Ok(Vec::new());
-        };
+    ) -> Result<Vec<AssociatedItemCandidateRef>, rg_std::OperationError<D::Error>> {
+        let traits = self.context.item_lookup().traits_with_associated_items()?;
         let matches = self
             .impls
             .matches_for_receiver_with_traits(receiver_ty, traits)?;
         self.candidates_for_matches(receiver_ty, &matches)
+            .map_err(rg_std::OperationError::Source)
     }
 
     /// Expand already-matched impls into stable associated-item declarations.

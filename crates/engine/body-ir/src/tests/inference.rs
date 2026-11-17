@@ -22,7 +22,7 @@ pub fn use_it(user: User) {
             package body_assignment_inference_fixture
 
             body_assignment_inference_fixture [lib]
-            body b0 fn body_assignment_inference_fixture[lib]::crate::missing @ 3:1-3:28
+            fn body_assignment_inference_fixture[lib]::crate::missing @ 3:1-3:28
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -31,7 +31,7 @@ pub fn use_it(user: User) {
             expr e0 block s1 => () @ 3:26-3:28
 
 
-            body b1 fn body_assignment_inference_fixture[lib]::crate::id @ 4:1-4:31
+            fn body_assignment_inference_fixture[lib]::crate::id @ 4:1-4:31
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -41,7 +41,7 @@ pub fn use_it(user: User) {
             expr e0 block s1 => () @ 4:29-4:31
 
 
-            body b2 fn body_assignment_inference_fixture[lib]::crate::use_it @ 6:1-10:2
+            fn body_assignment_inference_fixture[lib]::crate::use_it @ 6:1-10:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -94,7 +94,7 @@ pub fn use_it(user: User) {
             package body_solved_binding_member_fixture
 
             body_solved_binding_member_fixture [lib]
-            body b0 fn body_solved_binding_member_fixture[lib]::crate::identity @ 7:1-7:44
+            fn body_solved_binding_member_fixture[lib]::crate::identity @ 7:1-7:44
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -106,7 +106,7 @@ pub fn use_it(user: User) {
                 expr e0 path value -> local v0 => param T @ 7:37-7:42
 
 
-            body b1 fn body_solved_binding_member_fixture[lib]::crate::use_it @ 9:1-13:2
+            fn body_solved_binding_member_fixture[lib]::crate::use_it @ 9:1-13:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -132,7 +132,7 @@ pub fn use_it(user: User) {
                     expr e5 path inferred -> local v1 => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 12:5-12:13
 
 
-            body b2 fn impl User::id @ 4:5-4:39
+            fn impl User::id @ 4:5-4:39
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -180,7 +180,7 @@ pub fn use_it() {
             package body_late_receiver_refinement
 
             body_late_receiver_refinement [lib]
-            body b0 fn body_late_receiver_refinement[lib]::crate::make_pair @ 14:1-14:40
+            fn body_late_receiver_refinement[lib]::crate::make_pair @ 14:1-14:40
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -189,7 +189,7 @@ pub fn use_it() {
             expr e0 block s1 => () @ 14:38-14:40
 
 
-            body b1 fn body_late_receiver_refinement[lib]::crate::require_u8_pair @ 15:1-15:44
+            fn body_late_receiver_refinement[lib]::crate::require_u8_pair @ 15:1-15:44
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -198,7 +198,7 @@ pub fn use_it() {
             expr e0 block s1 => () @ 15:42-15:44
 
 
-            body b2 fn body_late_receiver_refinement[lib]::crate::use_it @ 17:1-22:2
+            fn body_late_receiver_refinement[lib]::crate::use_it @ 17:1-22:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -230,7 +230,7 @@ pub fn use_it() {
                   expr e8 path found -> local v1 => nominal struct body_late_receiver_refinement[lib]::crate::Found @ 21:20-21:25
 
 
-            body b3 fn impl Pair<T, T>::same @ 9:5-11:6
+            fn impl Pair<T, T>::same @ 9:5-11:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -267,7 +267,7 @@ pub fn use_it() {
             package body_imported_enum_variant_inference
 
             body_imported_enum_variant_inference [lib]
-            body b0 fn body_imported_enum_variant_inference[lib]::crate::use_it @ 8:1-13:2
+            fn body_imported_enum_variant_inference[lib]::crate::use_it @ 8:1-13:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -318,7 +318,7 @@ pub fn use_it(user: User) {
             package body_static_assoc_fn_impl_generic_inference
 
             body_static_assoc_fn_impl_generic_inference [lib]
-            body b0 fn body_static_assoc_fn_impl_generic_inference[lib]::crate::use_it @ 11:1-14:2
+            fn body_static_assoc_fn_impl_generic_inference[lib]::crate::use_it @ 11:1-14:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -338,7 +338,7 @@ pub fn use_it(user: User) {
                 expr e3 path singleton -> local v1 => nominal struct body_static_assoc_fn_impl_generic_inference[lib]::crate::Vec<nominal struct body_static_assoc_fn_impl_generic_inference[lib]::crate::User> @ 13:5-13:14
 
 
-            body b1 fn impl Vec<T>::singleton @ 8:5-8:42
+            fn impl Vec<T>::singleton @ 8:5-8:42
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -371,7 +371,7 @@ where
             package body_impl_clause_self_type
 
             body_impl_clause_self_type [lib]
-            body b0 fn impl Wrapper<T>::keep @ 8:5-10:6
+            fn impl Wrapper<T>::keep @ 8:5-10:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -422,7 +422,7 @@ pub fn expected_destination(def_map: &DefMap) {
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::explicit_destination @ 3:1-6:2
+            fn app[lib]::crate::explicit_destination @ 3:1-6:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -444,7 +444,7 @@ pub fn expected_destination(def_map: &DefMap) {
                 expr e4 path imports -> local v1 => nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> @ 5:5-5:12
 
 
-            body b1 fn app[lib]::crate::expected_destination @ 8:1-11:2
+            fn app[lib]::crate::expected_destination @ 8:1-11:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -484,7 +484,7 @@ pub fn expected_destination(def_map: &DefMap) {
             package storage
 
             storage [lib]
-            body b0 fn impl DefMap::imports @ 6:5-8:6
+            fn impl DefMap::imports @ 6:5-8:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -555,7 +555,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
             package body_conservative_trait_obligation_solving
 
             body_conservative_trait_obligation_solving [lib]
-            body b0 fn body_conservative_trait_obligation_solving[lib]::crate::missing @ 35:1-35:28
+            fn body_conservative_trait_obligation_solving[lib]::crate::missing @ 35:1-35:28
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -564,7 +564,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
             expr e0 block s1 => () @ 35:26-35:28
 
 
-            body b1 fn body_conservative_trait_obligation_solving[lib]::crate::bounded_collect @ 37:1-40:2
+            fn body_conservative_trait_obligation_solving[lib]::crate::bounded_collect @ 37:1-40:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -582,7 +582,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
                 expr e2 path collected -> local v1 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 39:5-39:14
 
 
-            body b2 fn body_conservative_trait_obligation_solving[lib]::crate::unrelated_collect @ 42:1-45:2
+            fn body_conservative_trait_obligation_solving[lib]::crate::unrelated_collect @ 42:1-45:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -600,7 +600,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
                 expr e2 path collected -> local v1 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 44:5-44:14
 
 
-            body b3 fn impl Iter<T>::collect @ 14:5-19:6
+            fn impl Iter<T>::collect @ 14:5-19:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -614,7 +614,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
                     expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing<<unknown>> @ 18:9-18:16
 
 
-            body b4 fn impl NotIterator<T>::collect @ 27:5-29:6
+            fn impl NotIterator<T>::collect @ 27:5-29:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -650,7 +650,7 @@ pub fn use_it(flag: bool, user: User) -> User {
             package body_never_branch_result_inference
 
             body_never_branch_result_inference [lib]
-            body b0 fn body_never_branch_result_inference[lib]::crate::use_it @ 3:1-10:2
+            fn body_never_branch_result_inference[lib]::crate::use_it @ 3:1-10:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2
@@ -736,7 +736,7 @@ pub fn use_match(guess: Guess) {
             package body_self_referential_branch_inference
 
             body_self_referential_branch_inference [lib]
-            body b0 fn body_self_referential_branch_inference[lib]::crate::use_if @ 22:1-30:2
+            fn body_self_referential_branch_inference[lib]::crate::use_if @ 22:1-30:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -778,7 +778,7 @@ pub fn use_match(guess: Guess) {
                 expr e13 path value -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 29:5-29:10
 
 
-            body b1 fn body_self_referential_branch_inference[lib]::crate::use_match @ 32:1-43:2
+            fn body_self_referential_branch_inference[lib]::crate::use_match @ 32:1-43:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -853,7 +853,7 @@ pub fn use_it() {
             package body_cyclic_dyn_candidate_fixture
 
             body_cyclic_dyn_candidate_fixture [lib]
-            body b0 fn body_cyclic_dyn_candidate_fixture[lib]::crate::call @ 7:1-7:46
+            fn body_cyclic_dyn_candidate_fixture[lib]::crate::call @ 7:1-7:46
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -862,7 +862,7 @@ pub fn use_it() {
             expr e0 block s1 => () @ 7:44-7:46
 
 
-            body b1 fn body_cyclic_dyn_candidate_fixture[lib]::crate::use_it @ 9:1-11:2
+            fn body_cyclic_dyn_candidate_fixture[lib]::crate::use_it @ 9:1-11:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0

@@ -17,7 +17,7 @@ use wincode::{SchemaRead, SchemaWrite};
 /// semantic item. The vector also preserves duplicate declarations so malformed input becomes an
 /// ambiguous identity instead of whichever declaration happened to be lowered first.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(super) struct LangItemIndex {
+pub struct LangItemIndex {
     entries: Vec<(LangItem, ItemId)>,
 }
 

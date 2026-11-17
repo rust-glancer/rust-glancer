@@ -4,20 +4,24 @@
 //! grow its source context without replacing its module scopes. Finishing consumes the builder,
 //! keeping frozen crate data and generated declarations while dropping the build-only queues.
 
-use std::{collections::HashMap, mem, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    mem,
+    sync::Arc,
+};
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{CrateRef, DefId, FileId, LocalDefId, ModuleId, ModuleRef};
-use rg_item_tree::Package as ItemTreePackage;
-use rg_parse::{CargoTargetId, ModuleFileContext, Package};
+use rg_parse::{CargoTargetId, ModuleFileContext};
+use rg_std::NativeOsString;
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
 
 use super::{
     macros::{
         MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-        MacroUseImport, PendingGeneratedInclude, PendingGeneratedModule,
-        PendingMacroExpansionLimitReport, TextualMacroScopes,
+        MacroUseImport, PendingGeneratedModule, PendingInclude, PendingMacroExpansionLimitReport,
+        TextualMacroScopes,
     },
     output::CrateBuildOutput,
 };
@@ -61,7 +65,7 @@ pub(crate) struct CrateBuilder {
     /// other items it produced.
     pub(crate) pending_generated_modules: Vec<PendingGeneratedModule>,
     /// Builtin includes waiting for the project boundary to capture their source files.
-    pub(crate) pending_generated_includes: Vec<PendingGeneratedInclude>,
+    pub(crate) pending_includes: Vec<PendingInclude>,
     pub(crate) macro_expansion_limit: Option<PendingMacroExpansionLimitReport>,
 }
 
@@ -77,7 +81,7 @@ impl CrateBuilder {
                     groups: report.groups,
                     omitted_call_count: report.omitted_call_count,
                 });
-        // Const arithmetic must retain the compilation target's width after Parse is offloaded.
+        // Const arithmetic uses the analyzed target's pointer width.
         let target_pointer_width = self
             .cfg_options
             .key_values()
@@ -96,7 +100,6 @@ impl CrateBuilder {
             def_map,
         );
         CrateBuildOutput {
-            crate_ref: self.crate_ref,
             data,
             generated_items,
             macro_expansion_limit,
@@ -234,29 +237,11 @@ impl ExternPreludeBuilder {
     }
 }
 
-/// Canonical package paths used to connect syntax-only module declarations to parsed files.
-pub(crate) struct KnownModuleFiles {
-    by_path: HashMap<PathBuf, FileId>,
-}
+/// Module spellings reached by source discovery, mapped to canonical files.
+#[derive(Clone)]
+pub(crate) struct KnownModuleFiles(pub(super) BTreeMap<NativeOsString, FileId>);
 
 impl KnownModuleFiles {
-    pub(crate) fn from_package(package: &Package, item_tree_package: &ItemTreePackage) -> Self {
-        Self {
-            // Parse retains stable ids for historical files across saved rebuilds. Only files with
-            // a current ItemTree belong to this generation's reachable module graph.
-            by_path: item_tree_package
-                .files()
-                .map(|file| {
-                    let path = package
-                        .file_path(file.file)
-                        .expect("lowered file should have a parsed path")
-                        .to_path_buf();
-                    (path, file.file)
-                })
-                .collect(),
-        }
-    }
-
     fn resolve(
         &self,
         context: &ModuleFileContext,
@@ -265,10 +250,9 @@ impl KnownModuleFiles {
     ) -> Option<(FileId, Arc<ModuleFileContext>)> {
         context
             .resolve_known_module_name(module_name, path_override, |path| {
-                self.by_path.get(path).copied().or_else(|| {
-                    let canonical_path = path.canonicalize().ok()?;
-                    self.by_path.get(&canonical_path).copied()
-                })
+                self.0
+                    .get(&NativeOsString::from_os_str(path.as_os_str()))
+                    .copied()
             })
             .map(|(file_id, context)| (file_id, Arc::new(context)))
     }

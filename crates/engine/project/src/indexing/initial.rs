@@ -1,121 +1,122 @@
-//! Assembles the initial project state from its workspace and configured indexing phases.
+//! Demand the roots of a saved project and restore its routing from their manifests.
 
-use std::sync::Arc;
+use std::collections::HashSet;
 
-use anyhow::Context as _;
-use rg_body_ir::BodyIrBuildPolicy;
-use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
+use rg_body_ir::saved_body;
+use rg_ir_model::{BodyKey, CrateRef};
+use rg_parse::ParseDb;
+use rg_profile::ProfileMeasurement;
+use rg_semantic_ir::target_declarations;
+use rg_source::{QueryDatabase, SourceInput};
+use rg_workspace::WorkspaceMetadata;
 
-use super::phases;
 use crate::{
-    PackageResidencyPolicy, ProjectMemoryHooks, StartupCacheLoad,
-    profile::{BuildMemorySampler, metric},
+    MacroExpansionLimitBuildSummary,
+    profile::metric,
     state::{ProjectGenerationId, ProjectState},
-    storage::cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_state(
-    database: &mut ajika::Database,
+    database: &mut QueryDatabase,
     workspace: WorkspaceMetadata,
-    workspace_lowering_config: WorkspaceLoweringConfig,
-    cargo_metadata_config: CargoMetadataConfig,
-    cache_instance: PackageCacheInstance,
-    body_ir_policy: BodyIrBuildPolicy,
-    package_residency_policy: PackageResidencyPolicy,
-    startup_cache_load: StartupCacheLoad,
-    memory_hooks: Arc<dyn ProjectMemoryHooks>,
-    memory_sampler: &mut BuildMemorySampler,
-) -> anyhow::Result<ProjectState> {
-    // Workspace lowering already scanned passive Cargo build outputs because recovered cfg and
-    // compile-time environment must be present before Parse and ItemTree. Replay its bounded totals
-    // into the project profile here; the scan itself is not repeated during project construction.
-    let cargo_build_outputs = workspace.cargo_build_output_stats();
-    metric::CARGO_BUILD_OUTPUT_TARGET_DIRECTORIES.add(
-        cargo_build_outputs
-            .target_directories()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_DEPS_DIRECTORIES.add(
-        cargo_build_outputs
-            .deps_directories()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_DEP_INFO_FILES.add(
-        cargo_build_outputs
-            .dep_info_files()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_BUILD_SCRIPT_PACKAGES.add(
-        cargo_build_outputs
-            .build_script_packages()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_MATCHED_RUSTC_UNITS.add(
-        cargo_build_outputs
-            .matched_rustc_units()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_CANDIDATES.add(
-        cargo_build_outputs
-            .build_output_candidates()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_SELECTED_PACKAGES.add(
-        cargo_build_outputs
-            .selected_packages()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_GENERATED_FILES.add(
-        cargo_build_outputs
-            .generated_files()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    metric::CARGO_BUILD_OUTPUT_GENERATED_BYTES.add(cargo_build_outputs.generated_bytes());
-    metric::CARGO_BUILD_OUTPUT_SCAN.record(cargo_build_outputs.scan_duration());
+    targets: Vec<CrateRef>,
+) -> ajika::Result<ProjectState> {
+    let inputs = database.inputs().clone();
+    let operation = metric::QUERY_OPERATION.start_timer();
+    let (parse, module_files, reports, prefilled_bodies) =
+        database.run(|db| {
+            // Targets appear in dependency-first order. Concurrent demands share Ajika's completed
+            // results while a target's import fixed point keeps its unfinished scopes local.
+            let timer = metric::DECLARATIONS.start_timer();
+            let declarations = db.parallel_map(&targets, |db, &target| {
+                let declarations = target_declarations(db, target)?;
+                let metadata = declarations.metadata.value(db)?;
+                Ok((declarations, metadata))
+            })?;
+            timer.finish();
+            let parse = ParseDb::from_target_manifests(
+                &workspace,
+                &inputs,
+                targets
+                    .iter()
+                    .copied()
+                    .zip(declarations.iter().map(|(_, metadata)| &metadata.sources)),
+            )?;
 
-    let cache_plan = WorkspaceCachePlan::build(&workspace);
-    let cache_store = PackageCacheStore::for_instance(&cache_plan, &cache_instance);
-    cache_store
-        .recover_incomplete_update()
-        .context("while attempting to recover an incomplete package cache update")?;
-    database.update_inputs(|update| workspace.write_inputs(update))?;
-    let phases = phases::build(
-        database,
-        &workspace,
-        body_ir_policy,
-        package_residency_policy,
-        &cache_plan,
-        &cache_store,
-        startup_cache_load,
-        memory_hooks.as_ref(),
-        memory_sampler,
-    )?;
+            // Keep the interactive startup selection at this boundary. Requests can independently
+            // demand any owner, including owners in targets the startup policy skipped.
+            let timer = metric::PREFILL_BODIES.start_timer();
+            let mut prefill = Vec::new();
+            for (&krate, (declaration, _)) in targets.iter().zip(&declarations) {
+                let package = &parse.packages()[krate.package.0];
+                if package.is_workspace_member()
+                    && package.targets()[krate.crate_id.0]
+                        .kind
+                        .is_primary_analysis_target()
+                {
+                    prefill.extend(declaration.body_owners.value(db)?.iter().map(|owner| {
+                        BodyKey {
+                            krate,
+                            owner: owner.owner,
+                        }
+                    }));
+                }
+            }
+            let prefilled_bodies = db
+                .parallel_map(&prefill, |db, &key| Ok(saved_body(db, key)?.is_some()))?
+                .into_iter()
+                .filter(|present| *present)
+                .count();
+            timer.finish();
 
+            // Warm replay can capture inputs while checking old dependencies. Validate the resulting
+            // view inside the operation, before Ajika can checkpoint it.
+            let timer = metric::SOURCE_VALIDATION.start_timer();
+            SourceInput::validate_saved(&inputs, &db.interner())?;
+            timer.finish();
+            let module_files = targets
+                .iter()
+                .copied()
+                .zip(
+                    declarations
+                        .iter()
+                        .map(|(_, metadata)| metadata.module_files.clone()),
+                )
+                .collect();
+            let reports = declarations
+                .iter()
+                .filter_map(|(_, metadata)| metadata.macro_expansion_limit.clone())
+                .collect::<Vec<_>>();
+            Ok((parse, module_files, reports, prefilled_bodies))
+        })?;
+    operation.finish();
+
+    // Take the operation's counters after checkpointing so writes appear in the same report.
+    let stats = database.statistics();
+    metric::EXECUTED.add(stats.executed);
+    metric::VALIDATED.add(stats.validated);
+    metric::HITS.add(stats.hits);
+    metric::DECODED.add(stats.decoded);
+    metric::METADATA_READS.add(stats.metadata_reads);
+    metric::PAYLOAD_BYTES_READ.record(ProfileMeasurement::Bytes(stats.bytes_read));
+    metric::PAYLOAD_BYTES_WRITTEN.record(ProfileMeasurement::Bytes(stats.bytes_written));
+    metric::METADATA_BYTES_WRITTEN.record(ProfileMeasurement::Bytes(stats.metadata_bytes_written));
+
+    let retained: HashSet<_> = parse
+        .packages()
+        .iter()
+        .flat_map(|package| package.parsed_files().map(|file| file.file_id()))
+        .collect();
+    SourceInput::retire_detached_sources(database, |file| retained.contains(&file))?;
+    SourceInput::evict_saved_text(database.inputs());
     Ok(ProjectState {
         generation_id: ProjectGenerationId::fresh(),
         workspace,
-        workspace_lowering_config,
-        cargo_metadata_config,
-        cache_plan,
-        cache_instance,
-        cache_store,
-        package_source_fingerprints: phases.package_source_fingerprints,
-        body_ir_policy,
-        package_residency_policy,
-        memory_hooks,
-        parse: Arc::new(phases.parse),
-        macro_expansion_limit_summary: phases.macro_expansion_limit_summary,
-        def_map: phases.def_map,
-        semantic_ir: phases.semantic_ir,
-        body_ir: phases.body_ir,
+        parse,
+        targets,
+        module_files,
+        macro_expansion_limit_summary: MacroExpansionLimitBuildSummary::capture(&reports),
+        reports,
+        prefilled_bodies,
     })
 }

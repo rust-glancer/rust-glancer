@@ -1,12 +1,12 @@
+//! Keep these phase names in this file so CodSpeed can compare them with the existing series.
+//! Each sample uses a fresh in-memory database. Earlier phases are prepared outside the timer.
+
 mod shared;
 
-use divan::{
-    Bencher, black_box, black_box_drop,
-    counter::{BytesCount, ItemsCount},
-};
-use rg_parse::ParseDb;
+use divan::{Bencher, black_box_drop};
+use rg_body_ir::saved_body;
 
-use self::shared::{BenchFixture, BenchTarget, bench_targets};
+use self::shared::{BenchTarget, BenchWorkspace, bench_targets};
 
 fn main() {
     divan::main();
@@ -14,98 +14,94 @@ fn main() {
 
 #[divan::bench(args = bench_targets(), sample_count = 10, sample_size = 1)]
 fn parse_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
-    let fixture = BenchFixture::get(target);
+    let workspace = BenchWorkspace::load(target);
     bencher
-        .counter(BytesCount::new(fixture.source_bytes))
-        .counter(ItemsCount::new(fixture.source_files))
-        .bench_local(|| {
-            let parse = ParseDb::build(black_box(&fixture.workspace), Default::default())
-                .expect("parse db should build");
+        .with_inputs(|| workspace.database())
+        .bench_local_refs(|database| {
+            let inputs = database.inputs().clone();
+            let parse = database
+                .run(|db| workspace.parse_roots(db, &inputs))
+                .expect("target roots should parse");
             black_box_drop(parse);
         });
 }
 
 #[divan::bench(args = bench_targets(), sample_count = 10, sample_size = 1)]
 fn item_tree_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
-    let fixture = BenchFixture::get(target);
+    let workspace = BenchWorkspace::load(target);
     bencher
-        .counter(ItemsCount::new(fixture.item_tree_items))
         .with_inputs(|| {
-            let phases = fixture.file_phases();
-            phases.reset_queries(&phases.workspace_inputs);
-            let parse = phases.parse.clone();
-            (phases, parse)
+            let mut database = workspace.database();
+            let inputs = database.inputs().clone();
+            database
+                .run(|db| workspace.parse_roots(db, &inputs))
+                .expect("capture target roots");
+            database
         })
-        .bench_local_values(|(phases, mut parse)| {
-            let item_tree = rg_project::bench_support::build_item_tree(
-                &mut phases.database.borrow_mut(),
-                &mut parse,
-            )
-            .expect("item tree should build");
-            black_box_drop(item_tree);
+        .bench_local_refs(|database| {
+            // Root text is captured, but syntax is transient. Discovery reparses it just as an
+            // independent Ajika operation would.
+            let trees = database
+                .run(|db| workspace.item_trees(db))
+                .expect("item trees should build");
+            black_box_drop(trees);
         });
 }
 
 #[divan::bench(args = bench_targets(), sample_count = 10, sample_size = 1)]
 fn def_map_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
-    let fixture = BenchFixture::get(target);
+    let workspace = BenchWorkspace::load(target);
     bencher
-        .counter(ItemsCount::new(fixture.def_map_imports))
         .with_inputs(|| {
-            let phases = fixture.file_phases();
-            phases.reset_queries(&phases.def_map_inputs);
-            let parse = phases.parse_before_def_map.clone();
-            let item_tree = phases.item_tree_before_def_map.clone();
-            (phases, parse, item_tree)
+            let mut database = workspace.database();
+            database
+                .run(|db| workspace.item_trees(db))
+                .expect("prepare ordinary item trees");
+            database
         })
-        .bench_local_values(|(phases, mut parse, mut item_tree)| {
-            let def_map = rg_project::bench_support::build_def_map(
-                &mut phases.database.borrow_mut(),
-                &fixture.workspace,
-                &mut parse,
-                &mut item_tree,
-            )
-            .expect("def map should build");
-            black_box_drop(def_map);
+        .bench_local_refs(|database| {
+            let scopes = database
+                .run(|db| workspace.scopes(db))
+                .expect("definition scopes should build");
+            black_box_drop(scopes);
         });
 }
 
 #[divan::bench(args = bench_targets(), sample_count = 10, sample_size = 1)]
 fn semantic_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
-    let fixture = BenchFixture::get(target);
+    let workspace = BenchWorkspace::load(target);
     bencher
-        .counter(ItemsCount::new(fixture.semantic_items))
         .with_inputs(|| {
-            (
-                fixture.item_tree_after_def_map.clone(),
-                fixture.def_map.clone(),
-                fixture.generated_items.clone(),
-            )
+            let mut database = workspace.database();
+            let scopes = database
+                .run(|db| workspace.scopes(db))
+                .expect("prepare definition scopes");
+            (database, scopes)
         })
-        .bench_local_values(|(item_tree, def_map, generated_items)| {
-            let semantic_ir = rg_project::bench_support::build_semantic_ir(
-                &item_tree,
-                &def_map,
-                &generated_items,
-            )
-            .expect("semantic IR should build");
-            black_box_drop(semantic_ir);
+        .bench_local_values(|(mut database, scopes)| {
+            let declarations = database
+                .run(|db| scopes.build_items(db))
+                .expect("semantic items and lookup indexes should build");
+            black_box_drop(declarations);
+            database
         });
 }
 
 #[divan::bench(args = bench_targets(), sample_count = 10, sample_size = 1)]
 fn body_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
-    let fixture = BenchFixture::get(target);
+    let workspace = BenchWorkspace::load(target);
     bencher
-        .counter(ItemsCount::new(fixture.body_expressions))
-        .with_inputs(|| fixture.parse_after_def_map.clone())
-        .bench_local_values(|parse| {
-            let body_ir = rg_project::bench_support::build_body_ir(
-                &parse,
-                &fixture.def_map,
-                &fixture.semantic_ir,
-            )
-            .expect("body IR should build");
-            black_box_drop(body_ir);
+        .with_inputs(|| {
+            let mut database = workspace.database();
+            let owners = database
+                .run(|db| workspace.body_owners(db))
+                .expect("prepare declarations and select primary workspace bodies");
+            (database, owners)
+        })
+        .bench_local_refs(|(database, owners)| {
+            let bodies = database
+                .run(|db| db.parallel_map(owners, |db, &key| db.query::<saved_body>(key)))
+                .expect("saved bodies should build");
+            black_box_drop(bodies);
         });
 }

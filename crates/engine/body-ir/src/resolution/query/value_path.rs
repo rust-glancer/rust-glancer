@@ -12,8 +12,8 @@ use rg_ir_model::{
     LocalEnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef,
     TypeDefRef, identity::DeclarationRef,
 };
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
+use rg_semantic_ir::{SemanticItemSource, TypePathResolution};
+use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
     lowering::TypeLoweringQuery,
@@ -29,8 +29,8 @@ pub struct BodyValuePathQuery<'query, D, I> {
 
 impl<'query, D, I> BodyValuePathQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -41,7 +41,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<Vec<DeclarationRef>, PackageStoreError> {
+    ) -> Result<Vec<DeclarationRef>, ReadError> {
         let (resolution, _) = self.resolve_nonlocal_path_expr(scope, path)?;
         Ok(resolution.declarations(self.context.body_ref()))
     }
@@ -51,7 +51,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<rg_ty::Ty, PackageStoreError> {
+    ) -> Result<rg_ty::Ty, ReadError> {
         let (_, ty) = self.resolve_nonlocal_path_expr(scope, path)?;
         Ok(ty)
     }
@@ -61,7 +61,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<(BodyResolution, rg_ty::Ty), PackageStoreError> {
+    ) -> Result<(BodyResolution, rg_ty::Ty), ReadError> {
         let paths = self.context.item_paths();
         TypeLoweringQuery::new(&paths, &self.context).with_storage(|cx| {
             let (resolution, ty) = self.resolve_path_expr(scope, path, None, cx)?;
@@ -77,7 +77,7 @@ where
         expr: ExprId,
         path: &BodyPath,
         cx: SolverInterner<'s>,
-    ) -> Result<(BodyResolution, Ty<'s>), PackageStoreError> {
+    ) -> Result<(BodyResolution, Ty<'s>), ReadError> {
         let expr_data = self.context.body().expr_unchecked(expr);
         // Preserve associated-item syntax such as `<T as Trait>::VALUE` before trying ordinary
         // lexical lookup, which only understands a DefMap path and its visible local bindings.
@@ -114,7 +114,7 @@ where
         scope: ScopeId,
         path: &BodyPath,
         table: &InferenceTable<'s>,
-    ) -> Result<(BodyResolution, Ty<'s>), PackageStoreError> {
+    ) -> Result<(BodyResolution, Ty<'s>), ReadError> {
         let cx = table.interner();
         let Some(def_map_path) = path.as_def_map_path() else {
             return Ok((BodyResolution::Unknown, cx.unknown()));
@@ -182,7 +182,7 @@ where
         path: &BodyPath,
         type_def: TypeDefRef,
         table: &InferenceTable<'s>,
-    ) -> Result<AdtTy<'s>, PackageStoreError> {
+    ) -> Result<AdtTy<'s>, ReadError> {
         let generics = self
             .context
             .item_paths()
@@ -210,7 +210,7 @@ where
         path: &Path,
         visible_bindings: Option<usize>,
         cx: SolverInterner<'s>,
-    ) -> Result<(BodyResolution, Ty<'s>), PackageStoreError> {
+    ) -> Result<(BodyResolution, Ty<'s>), ReadError> {
         // Single-segment paths are the only ones that can resolve to local bindings. They also
         // need lexical item lookup, so handle them before type-shaped paths.
         if let Some(name) = path.single_name()
@@ -290,7 +290,7 @@ where
         name: &str,
         visible_bindings: Option<usize>,
         cx: SolverInterner<'s>,
-    ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
+    ) -> Result<Option<(BodyResolution, Ty<'s>)>, ReadError> {
         // Value lookup is scope-ordered: an inner const/function shadows an outer binding just as
         // surely as an inner binding shadows an outer item.
         let from = ModuleRef {
@@ -339,10 +339,7 @@ where
     }
 
     /// Look up a path from the body owner module, then the fallback module.
-    fn resolve_path_from_owner_modules(
-        &self,
-        path: &Path,
-    ) -> Result<ResolvePathResult, PackageStoreError> {
+    fn resolve_path_from_owner_modules(&self, path: &Path) -> Result<ResolvePathResult, ReadError> {
         let owner_module = self.context.body().owner_module();
         let def_maps = self.context.def_map_query();
         let result =
@@ -369,7 +366,7 @@ where
         scope: ScopeId,
         path: &Path,
         cx: SolverInterner<'s>,
-    ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
+    ) -> Result<Option<(BodyResolution, Ty<'s>)>, ReadError> {
         let from = ModuleRef {
             origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
@@ -393,7 +390,7 @@ where
     fn value_candidates_for_defs(
         &self,
         defs: impl IntoIterator<Item = DefId>,
-    ) -> Result<UniqueVec<BodyValueCandidate>, PackageStoreError> {
+    ) -> Result<UniqueVec<BodyValueCandidate>, ReadError> {
         let mut candidates = UniqueVec::new();
         for def in defs {
             match def {
@@ -446,7 +443,7 @@ where
         &self,
         value_name: BodyValueName,
         cx: SolverInterner<'s>,
-    ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
+    ) -> Result<Option<(BodyResolution, Ty<'s>)>, ReadError> {
         match value_name {
             BodyValueName::Binding(binding) => {
                 // A local path reports identity only. Its consumer links the binding's live
@@ -517,7 +514,7 @@ where
     fn enum_variant_candidate(
         &self,
         variant_def: LocalEnumVariantRef,
-    ) -> Result<Option<BodyValueCandidate>, PackageStoreError> {
+    ) -> Result<Option<BodyValueCandidate>, ReadError> {
         let def_maps = self.context.def_map_source();
         let item_query = self.context.item_query();
         if let Some(variant_def_data) = def_maps.local_enum_variant_data(variant_def)?

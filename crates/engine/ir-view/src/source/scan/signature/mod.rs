@@ -179,12 +179,10 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SignatureCompletionSite>> {
-        let Some(items) = db.item_store_for_origin(origin)? else {
-            return Ok(None);
-        };
+        let items = ItemStoreQuery::new(db).semantic_items_for_origin(origin)?;
         let collector = SignatureItemWalker::new(
             db,
-            items,
+            &items,
             origin,
             SignatureCompletionCollector::new(file_id, offset),
         )
@@ -218,12 +216,10 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SignatureCompletionSite>> {
-        let Some(items) = db.item_store_for_origin(origin)? else {
-            return Ok(None);
-        };
+        let items = ItemStoreQuery::new(db).semantic_items_for_origin(origin)?;
         let collector = SignatureItemWalker::new(
             db,
-            items,
+            &items,
             origin,
             ImplicitAssociatedTypeBindingCollector::new(file_id, offset),
         )
@@ -252,16 +248,14 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SignatureTypePathScope>> {
-        let Some(items) = db.item_store_for_origin(origin)? else {
-            return Ok(None);
-        };
+        let items = ItemStoreQuery::new(db).semantic_items_for_origin(origin)?;
         let Some(def_map) = db.def_map_for_origin(origin)? else {
             return Ok(None);
         };
         let item_query = ItemStoreQuery::new(db);
         let mut best = super::NarrowestSourceSite::new();
 
-        for item in items.semantic_items() {
+        for item in items {
             if item.source().file_id != file_id {
                 continue;
             }
@@ -312,12 +306,10 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
 
     /// Collect the source facts owned by each semantic item family in the selected store.
     pub(crate) fn scan(self) -> anyhow::Result<Vec<SignatureSourceCandidate>> {
-        let Some(items) = self.db.item_store_for_origin(self.origin)? else {
-            return Ok(Vec::new());
-        };
+        let items = ItemStoreQuery::new(self.db).semantic_items_for_origin(self.origin)?;
         let collector = SignatureItemWalker::new(
             self.db,
-            items,
+            &items,
             self.origin,
             SignatureOccurrenceCollector::new(self.file_id, self.offset),
         )

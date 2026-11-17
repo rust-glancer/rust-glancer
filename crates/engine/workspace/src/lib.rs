@@ -17,7 +17,7 @@ mod tests;
 pub use self::{
     build_outputs::{CargoBuildOutputScanStats, CargoGeneratedSources},
     cargo::{CargoMetadataConfig, CargoMetadataTarget, LoadedCargoMetadata},
-    inputs::{PackageInput, WorkspaceInput},
+    inputs::{PackageInput, TargetInput, WorkspaceInput},
     lower::WorkspaceLoweringConfig,
     model::{
         CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, TargetKind,

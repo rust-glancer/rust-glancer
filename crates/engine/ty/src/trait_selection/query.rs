@@ -5,8 +5,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability, TraitImplRef};
-use rg_semantic_ir::ItemStoreSource;
-use rg_std::ExpectedUnique;
+use rg_semantic_ir::SemanticItemSource;
+use rg_std::{ExpectedUnique, OperationError};
 use rg_text::Name;
 
 use super::TraitGoal;
@@ -84,7 +84,7 @@ pub struct TraitSelectionQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
 impl<'query, D, I> TraitSelectionQuery<'query, D, I>
 where
     D: DefMapSource<Error = I::Error> + Clone,
-    I: ItemStoreSource<'query> + Clone,
+    I: SemanticItemSource<'query> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let resolver = context.item_paths().clone();
@@ -95,7 +95,7 @@ where
 impl<'query, D, I, R> TraitSelectionQuery<'query, D, I, R>
 where
     D: DefMapSource<Error = I::Error>,
-    I: ItemStoreSource<'query>,
+    I: SemanticItemSource<'query>,
     R: SolverScope<Error = I::Error>,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
@@ -106,7 +106,7 @@ where
     fn with_table<T>(
         &self,
         run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [GenericParamRef]) -> T,
-    ) -> Result<T, I::Error> {
+    ) -> Result<T, OperationError<I::Error>> {
         let declarations = SemanticDeclarations::new(&self.context, &self.resolver);
         declarations.with_table(run)
     }
@@ -117,7 +117,7 @@ where
         &self,
         impl_ref: ImplRef,
         receiver: &Ty,
-    ) -> Result<Option<Substitution>, I::Error> {
+    ) -> Result<Option<Substitution>, OperationError<I::Error>> {
         let declarations = SemanticDeclarations::new(&self.context, &self.resolver);
         declarations.with_solver(|solver| {
             let cx = solver.interner();
@@ -144,7 +144,7 @@ where
         &self,
         impl_ref: ImplRef,
         receiver: &Ty,
-    ) -> Result<Option<SelectedImpl>, I::Error> {
+    ) -> Result<Option<SelectedImpl>, OperationError<I::Error>> {
         if matches!(receiver, Ty::Unknown) {
             return Ok(None);
         }
@@ -159,12 +159,12 @@ where
     /// Selection retains distinct source impls even when they produce identical type arguments.
     /// General trait proof in the live solver can also succeed from bounds or builtin rules and
     /// therefore does not use this source-selection API.
-    pub fn probe(&self, goal: &TraitGoal) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
-        let Some(candidates) =
-            TraitImplFilter::from(goal.self_ty()).candidates(&self.context, goal.trait_ref())
-        else {
-            return Ok(ExpectedUnique::Empty);
-        };
+    pub fn probe(
+        &self,
+        goal: &TraitGoal,
+    ) -> Result<ExpectedUnique<TraitSelection>, OperationError<I::Error>> {
+        let candidates =
+            TraitImplFilter::from(goal.self_ty()).candidates(&self.context, goal.trait_ref())?;
         self.with_table(|table, params| {
             let cx = table.interner();
             let application = solver::TraitApplication {
@@ -201,7 +201,7 @@ where
     /// Resolve associated types where the available bounds and impls provide an answer.
     /// Keep the original type if solving fails or needs unavailable information; callers can
     /// still display a projection such as `T::Item` instead of losing the whole type.
-    pub fn normalize_ty(&self, ty: &Ty) -> Result<Ty, I::Error> {
+    pub fn normalize_ty(&self, ty: &Ty) -> Result<Ty, OperationError<I::Error>> {
         self.with_table(|table, params| {
             let callbacks = table.interner().track_callbacks();
             let lowered = table.interner().lower_ty(ty, params);
@@ -225,7 +225,7 @@ where
         &self,
         goal: &TraitGoal,
         name: &str,
-    ) -> Result<Option<AssocProjectionResult>, I::Error> {
+    ) -> Result<Option<AssocProjectionResult>, OperationError<I::Error>> {
         self.with_table(|table, params| {
             let cx = table.interner();
             let callbacks = cx.track_callbacks();
@@ -269,5 +269,6 @@ where
                     applicability: SelectedImpl::applicability(outcome),
                 }))
         })?
+        .map_err(OperationError::Source)
     }
 }

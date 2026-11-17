@@ -1,35 +1,45 @@
 //! Exact Rust source inputs for one frozen analysis generation.
 //!
 //! A project build may take long enough for files on disk to change underneath it. If each
-//! analysis phase reads those files independently, ItemTree can describe one version of a file
-//! while Body IR describes another. This crate puts one source boundary in front of those phases.
+//! analysis provider reads those files independently, declarations and bodies can describe
+//! different revisions. Ajika inputs capture each source revision and path probe. The host
+//! verifies those observations before publishing a new generation. An evicted source can be
+//! reloaded only if the bytes still match the captured revision.
 //!
-//! The normal lifecycle is:
-//!
-//! 1. An open [`SourceInventory`] captures source files and module-existence decisions.
-//! 2. Every captured [`SourceEntry`] records the exact byte [`SourceRevision`] used by the build.
-//! 3. File discovery finishes and the inventory is sealed.
-//! 4. The candidate is validated once more before its project generation is published.
-//! 5. Saved text may be evicted. A later reload is accepted only when it still has the captured
-//!    revision.
 //!
 mod captured;
 mod entry;
 mod error;
 mod inputs;
-mod inventory;
-mod path;
+mod read_error;
 mod revision;
+
+use rg_std::CancellationToken;
 
 pub use self::{
     captured::CapturedSource,
     entry::{SourceEntry, read_source_text},
     error::SourceError,
     inputs::{SourceInput, SourcePresence},
-    inventory::SourceInventory,
-    path::SourcePath,
-    revision::{SourceDescriptor, SourceRevision},
+    read_error::ReadError,
+    revision::SourceRevision,
 };
+
+/// All providers in one project use the same host cancellation signal. It is a service so
+/// replacing a request's signal does not change the captured source revision.
+#[derive(Default)]
+pub struct QueryServices {
+    pub cancellation: CancellationToken,
+}
+
+impl ajika::Services for QueryServices {
+    fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+}
+
+pub type QueryContext<'db> = ajika::Db<'db, QueryServices>;
+pub type QueryDatabase = ajika::Database<QueryServices>;
 
 #[cfg(test)]
 mod tests;

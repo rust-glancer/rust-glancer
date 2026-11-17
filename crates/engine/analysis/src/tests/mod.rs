@@ -1,6 +1,8 @@
 //! Analysis tests run queries against small Rust fixtures and snapshot the answers. Add a test
 //! to the module for the behavior being checked, and keep the fixture focused on that behavior.
 //!
+//! Fixtures run feature queries against production providers in an in-memory query database.
+//!
 //! Start with `check_analysis`. Each `//- /path` starts a fixture file. Put `crate:name` on a
 //! crate root to declare its package directly, then include the Rust source needed by the test:
 //!

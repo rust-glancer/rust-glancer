@@ -5,13 +5,18 @@
 //! it groups those scheduled owners by file, opens each parsed file once, finds the matching AST
 //! item by span, and then delegates the actual expression lowering to `BodyLowering`.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap, path::Path};
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{BodyId, FileId, ModuleRef, Span};
+use rg_ir_model::{
+    BodyId, ConstRef, CrateRef, DefMapRef, FileId, FunctionRef, ModuleRef, SavedBodyOwner, Span,
+    StaticRef,
+};
 use rg_parse::CurrentSource;
+use rg_semantic_ir::BodyOwnerData;
 use rg_syntax::{AstNode as _, SyntaxKind, ast};
+use rg_text::RustEdition;
 
 use super::{
     CurrentRootItems, LoweredCrateBodies, body::BodyLowering,
@@ -39,13 +44,36 @@ pub(crate) struct BodyLoweringTask {
     pub(crate) span: Span,
 }
 
+impl BodyLoweringTask {
+    pub(crate) fn for_saved_owner(krate: CrateRef, root: BodyOwnerData) -> Self {
+        let origin = DefMapRef::Crate(krate);
+        let owner = match root.owner {
+            SavedBodyOwner::Function(id) => BodyOwner::Function(FunctionRef::new(origin, id)),
+            SavedBodyOwner::Const(id) => BodyOwner::Const(ConstRef { origin, id }),
+            SavedBodyOwner::Static(id) => BodyOwner::Static(StaticRef { origin, id }),
+        };
+        Self {
+            owner,
+            current_root_items: CurrentRootItems::None,
+            owner_module: root.module,
+            fallback_module: root.module,
+            file_id: root.file,
+            span: root.span,
+        }
+    }
+}
+
 /// Which immutable syntax tree scheduled body tasks must use.
 ///
 /// Saved crate builds open ordinary parse-package files. A current request substitutes its one
 /// captured document while retaining the saved package for any other source reached by lowering.
 #[derive(Clone, Copy)]
 pub(crate) enum BodyTaskSource<'a> {
-    Saved(&'a rg_parse::Package),
+    Parsed(&'a rg_parse::Package),
+    Tracked {
+        db: &'a rg_source::QueryContext<'a>,
+        edition: RustEdition,
+    },
     Current {
         package: &'a rg_parse::Package,
         file: FileId,
@@ -54,10 +82,27 @@ pub(crate) enum BodyTaskSource<'a> {
 }
 
 impl<'a> BodyTaskSource<'a> {
-    fn package(self) -> &'a rg_parse::Package {
+    pub(crate) fn edition(self) -> RustEdition {
         match self {
-            Self::Saved(package) | Self::Current { package, .. } => package,
+            Self::Parsed(package) | Self::Current { package, .. } => package.edition(),
+            Self::Tracked { edition, .. } => edition,
         }
+    }
+
+    pub(crate) fn file_path(self, file: FileId) -> Option<Cow<'a, Path>> {
+        match self {
+            Self::Parsed(package) | Self::Current { package, .. } => {
+                package.file_path(file).map(Cow::Borrowed)
+            }
+            Self::Tracked { db, .. } => file.path(&db.interner()).ok().map(Cow::Owned),
+        }
+    }
+
+    pub(crate) fn check_cancelled(self) -> anyhow::Result<()> {
+        if let Self::Tracked { db, .. } = self {
+            db.check_cancelled()?;
+        }
+        Ok(())
     }
 }
 
@@ -137,17 +182,18 @@ impl<'a> BodyTaskLowering<'a> {
             );
         }
 
-        let parsed_file = self
-            .source
-            .package()
-            .parsed_file(file_id)
-            .with_context(|| {
-                format!("while attempting to fetch parsed source file {:?}", file_id)
-            })?;
-        let syntax = parsed_file.parse_syntax().with_context(|| {
-            format!("while attempting to parse syntax for body lowering in {file_id:?}")
-        })?;
-        self.lower_file_tasks_from_syntax(file_id, tasks, lowered, macro_expansion, &syntax.tree())
+        let syntax = match self.source {
+            BodyTaskSource::Tracked { db, edition } => {
+                rg_parse::saved_syntax(db, file_id, edition)?.tree()
+            }
+            BodyTaskSource::Parsed(package) | BodyTaskSource::Current { package, .. } => package
+                .parsed_file(file_id)
+                .with_context(|| format!("fetch parsed source file {file_id:?}"))?
+                .parse_syntax()
+                .with_context(|| format!("parse body source {file_id:?}"))?
+                .tree(),
+        };
+        self.lower_file_tasks_from_syntax(file_id, tasks, lowered, macro_expansion, &syntax)
     }
 
     fn lower_file_tasks_from_syntax(

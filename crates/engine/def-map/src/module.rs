@@ -205,7 +205,7 @@ impl ModuleOrigin {
     ///
     /// An out-of-line module contributes both the file containing `mod child;` and the resolved
     /// definition file. Other origin forms contribute their single source file.
-    pub(crate) fn files(&self) -> impl Iterator<Item = FileId> {
+    pub fn files(&self) -> impl Iterator<Item = FileId> {
         let files = match self {
             Self::Root { file_id } | Self::Synthetic { file_id, .. } => [Some(*file_id), None],
             Self::Inline {

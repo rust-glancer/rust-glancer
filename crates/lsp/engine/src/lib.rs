@@ -9,7 +9,6 @@ mod diagnostics;
 mod engine;
 mod formatting;
 mod memory;
-mod project_stats;
 mod proto;
 mod rpc;
 mod service;

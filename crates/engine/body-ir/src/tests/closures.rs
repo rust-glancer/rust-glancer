@@ -20,7 +20,7 @@ pub fn use_it(user: User) -> User {
             package body_closure_fixture
 
             body_closure_fixture [lib]
-            body b0 fn body_closure_fixture[lib]::crate::use_it @ 3:1-8:2
+            fn body_closure_fixture[lib]::crate::use_it @ 3:1-8:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v2, v5, v7
@@ -94,7 +94,7 @@ pub fn use_it(attr: Attr) {
             package body_direct_closure_expectation_fixture
 
             body_direct_closure_expectation_fixture [lib]
-            body b0 fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs @ 11:1-11:51
+            fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs @ 11:1-11:51
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -104,7 +104,7 @@ pub fn use_it(attr: Attr) {
             expr e0 block s1 => () @ 11:49-11:51
 
 
-            body b1 fn body_direct_closure_expectation_fixture[lib]::crate::with_pair @ 12:1-12:58
+            fn body_direct_closure_expectation_fixture[lib]::crate::with_pair @ 12:1-12:58
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -114,7 +114,7 @@ pub fn use_it(attr: Attr) {
             expr e0 block s1 => () @ 12:56-12:58
 
 
-            body b2 fn body_direct_closure_expectation_fixture[lib]::crate::use_it @ 14:1-17:2
+            fn body_direct_closure_expectation_fixture[lib]::crate::use_it @ 14:1-17:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -149,7 +149,7 @@ pub fn use_it(attr: Attr) {
                         expr e7 path left -> local v2 => nominal struct body_direct_closure_expectation_fixture[lib]::crate::User @ 16:31-16:35
 
 
-            body b3 fn impl AttrVec::push @ 6:5-6:42
+            fn impl AttrVec::push @ 6:5-6:42
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
@@ -204,7 +204,7 @@ pub fn use_it() {
             package body_equivalent_callable_bounds_fixture
 
             body_equivalent_callable_bounds_fixture [lib]
-            body b0 fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke @ 4:1-7:3
+            fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke @ 4:1-7:3
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -214,7 +214,7 @@ pub fn use_it() {
             expr e0 block s1 => () @ 7:1-7:3
 
 
-            body b1 fn body_equivalent_callable_bounds_fixture[lib]::crate::use_it @ 9:1-11:2
+            fn body_equivalent_callable_bounds_fixture[lib]::crate::use_it @ 9:1-11:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -309,7 +309,7 @@ pub fn use_it() {
             package body_solver_callable_fixture
 
             body_solver_callable_fixture [lib]
-            body b0 fn body_solver_callable_fixture[lib]::crate::adapter @ 19:1-21:2
+            fn body_solver_callable_fixture[lib]::crate::adapter @ 19:1-21:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -324,7 +324,7 @@ pub fn use_it() {
                     expr e0 block s2 => () @ 20:10-20:12
 
 
-            body b1 fn body_solver_callable_fixture[lib]::crate::project @ 23:1-25:2
+            fn body_solver_callable_fixture[lib]::crate::project @ 23:1-25:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -339,7 +339,7 @@ pub fn use_it() {
                     expr e0 block s2 => () @ 24:10-24:12
 
 
-            body b2 fn body_solver_callable_fixture[lib]::crate::invoke @ 27:1-32:2
+            fn body_solver_callable_fixture[lib]::crate::invoke @ 27:1-32:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -354,7 +354,7 @@ pub fn use_it() {
                     expr e0 block s2 => () @ 31:10-31:12
 
 
-            body b3 fn body_solver_callable_fixture[lib]::crate::make_name @ 34:1-36:2
+            fn body_solver_callable_fixture[lib]::crate::make_name @ 34:1-36:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -366,7 +366,7 @@ pub fn use_it() {
                 expr e0 path Name -> struct body_solver_callable_fixture[lib]::crate::Name => nominal struct body_solver_callable_fixture[lib]::crate::Name @ 35:5-35:9
 
 
-            body b4 fn body_solver_callable_fixture[lib]::crate::use_it @ 38:1-43:2
+            fn body_solver_callable_fixture[lib]::crate::use_it @ 38:1-43:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v1, v2
@@ -450,7 +450,7 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
             package body_function_pointer_callable_fixture
 
             body_function_pointer_callable_fixture [lib]
-            body b0 fn body_function_pointer_callable_fixture[lib]::crate::invoke @ 3:1-8:2
+            fn body_function_pointer_callable_fixture[lib]::crate::invoke @ 3:1-8:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -465,7 +465,7 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
                     expr e0 block s2 => () @ 7:10-7:12
 
 
-            body b1 fn body_function_pointer_callable_fixture[lib]::crate::forward @ 10:1-12:2
+            fn body_function_pointer_callable_fixture[lib]::crate::forward @ 10:1-12:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -565,7 +565,7 @@ pub fn use_it() -> User {
             package body_never_closure_callable_fixture
 
             body_never_closure_callable_fixture [lib]
-            body b0 fn body_never_closure_callable_fixture[lib]::crate::source @ 36:1-38:2
+            fn body_never_closure_callable_fixture[lib]::crate::source @ 36:1-38:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -579,7 +579,7 @@ pub fn use_it() -> User {
                     expr e0 block s2 => () @ 37:10-37:12
 
 
-            body b1 fn body_never_closure_callable_fixture[lib]::crate::abort @ 40:1-42:2
+            fn body_never_closure_callable_fixture[lib]::crate::abort @ 40:1-42:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -593,7 +593,7 @@ pub fn use_it() -> User {
                     expr e0 block s2 => () @ 41:10-41:12
 
 
-            body b2 fn body_never_closure_callable_fixture[lib]::crate::report @ 44:1-44:36
+            fn body_never_closure_callable_fixture[lib]::crate::report @ 44:1-44:36
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -602,7 +602,7 @@ pub fn use_it() -> User {
             expr e0 block s1 => () @ 44:34-44:36
 
 
-            body b3 fn body_never_closure_callable_fixture[lib]::crate::use_it @ 46:1-51:2
+            fn body_never_closure_callable_fixture[lib]::crate::use_it @ 46:1-51:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -638,7 +638,7 @@ pub fn use_it() -> User {
                                 expr e7 path abort -> fn body_never_closure_callable_fixture[lib]::crate::abort => function item fn body_never_closure_callable_fixture[lib]::crate::abort @ 49:9-49:14
 
 
-            body b4 fn impl Convert<U> for T::convert @ 15:5-17:6
+            fn impl Convert<U> for T::convert @ 15:5-17:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -653,7 +653,7 @@ pub fn use_it() -> User {
                     expr e0 block s2 => () @ 16:14-16:16
 
 
-            body b5 fn impl Outcome<T, E>::unwrap_or_else @ 28:5-33:6
+            fn impl Outcome<T, E>::unwrap_or_else @ 28:5-33:6
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>

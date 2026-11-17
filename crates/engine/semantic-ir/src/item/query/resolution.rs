@@ -7,7 +7,7 @@ use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
 use rg_ir_model::{CrateRef, DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef};
 use rg_std::{ExpectedUnique, UniqueVec};
 
-use super::{ItemStoreQuery, ItemStoreSource};
+use super::{ItemStoreQuery, SemanticItemSource};
 use crate::{SelfTypeOwner, TypePathContext, TypePathResolution};
 
 /// Resolves Rust paths into semantic item identities without projecting them into `Ty`.
@@ -20,7 +20,7 @@ pub struct ItemResolutionQuery<'a, D, I> {
 impl<'a, D, I> ItemResolutionQuery<'a, D, I>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a, Error = D::Error>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
         Self {

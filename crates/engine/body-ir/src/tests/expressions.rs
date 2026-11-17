@@ -35,7 +35,7 @@ impl User {
             package body_expr_fixture
 
             body_expr_fixture [lib]
-            body b0 fn body_expr_fixture[lib]::crate::identity @ 7:1-9:2
+            fn body_expr_fixture[lib]::crate::identity @ 7:1-9:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -47,7 +47,7 @@ impl User {
                 expr e0 path id -> local v0 => nominal struct body_expr_fixture[lib]::crate::UserId @ 8:5-8:7
 
 
-            body b1 fn impl User::id @ 12:5-18:6
+            fn impl User::id @ 12:5-18:6
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3, v4, v5
@@ -90,7 +90,7 @@ impl User {
                     expr e10 path via_fn -> local v4 => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:20-17:26
 
 
-            body b2 fn impl User::touch @ 20:5-22:6
+            fn impl User::touch @ 20:5-22:6
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
@@ -125,7 +125,7 @@ pub fn use_it(builder: Builder) {
             package body_method_call_generic_args_fixture
 
             body_method_call_generic_args_fixture [lib]
-            body b0 fn body_method_call_generic_args_fixture[lib]::crate::use_it @ 8:1-10:2
+            fn body_method_call_generic_args_fixture[lib]::crate::use_it @ 8:1-10:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -141,7 +141,7 @@ pub fn use_it(builder: Builder) {
                       expr e0 path builder -> local v0 => nominal struct body_method_call_generic_args_fixture[lib]::crate::Builder @ 9:16-9:23
 
 
-            body b1 fn impl Builder::get @ 5:5-5:33
+            fn impl Builder::get @ 5:5-5:33
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -180,7 +180,7 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
             package body_structural_type_fixture
 
             body_structural_type_fixture [lib]
-            body b0 fn body_structural_type_fixture[lib]::crate::use_it @ 1:1-12:2
+            fn body_structural_type_fixture[lib]::crate::use_it @ 1:1-12:2
             scopes
             - s0 parent <none>: v0, v1, v2, v3
             - s1 parent s0: v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14
@@ -290,7 +290,7 @@ pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
             package body_ref_index_fixture
 
             body_ref_index_fixture [lib]
-            body b0 fn body_ref_index_fixture[lib]::crate::use_it @ 1:1-5:2
+            fn body_ref_index_fixture[lib]::crate::use_it @ 1:1-5:2
             scopes
             - s0 parent <none>: v0, v1, v2
             - s1 parent s0: v3, v4, v5
@@ -371,7 +371,7 @@ pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
             package body_scalar_operator_fixture
 
             body_scalar_operator_fixture [lib]
-            body b0 fn body_scalar_operator_fixture[lib]::crate::use_it @ 1:1-17:2
+            fn body_scalar_operator_fixture[lib]::crate::use_it @ 1:1-17:2
             scopes
             - s0 parent <none>: v0, v1, v2
             - s1 parent s0: v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17
@@ -489,7 +489,7 @@ pub fn use_it(id: u8, name: u8) -> User {
             package body_record_expr_fixture
 
             body_record_expr_fixture [lib]
-            body b0 fn body_record_expr_fixture[lib]::crate::use_it @ 6:1-10:2
+            fn body_record_expr_fixture[lib]::crate::use_it @ 6:1-10:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3
@@ -545,7 +545,7 @@ pub fn use_it() {
             package body_value_constructor_fixture
 
             body_value_constructor_fixture [lib]
-            body b0 fn body_value_constructor_fixture[lib]::crate::use_it @ 8:1-12:2
+            fn body_value_constructor_fixture[lib]::crate::use_it @ 8:1-12:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2
@@ -595,7 +595,7 @@ pub fn use_it() {
             package body_variant_namespace_fixture
 
             body_variant_namespace_fixture [lib]
-            body b0 fn body_variant_namespace_fixture[lib]::crate::use_it @ 1:1-17:2
+            fn body_variant_namespace_fixture[lib]::crate::use_it @ 1:1-17:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2, v3, v4, v5, v6, v7; source_items i0, i1
@@ -680,7 +680,7 @@ pub fn use_it(wrapper: Wrapper) {
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::use_it @ 16:1-18:2
+            fn app[lib]::crate::use_it @ 16:1-18:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -728,7 +728,7 @@ pub fn use_it(mut value: u8) {
             package body_ref_mutability_fixture
 
             body_ref_mutability_fixture [lib]
-            body b0 fn body_ref_mutability_fixture[lib]::crate::use_it @ 1:1-4:2
+            fn body_ref_mutability_fixture[lib]::crate::use_it @ 1:1-4:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
@@ -791,7 +791,7 @@ pub fn use_it(user: User) {
             package body_rich_path_fixture
 
             body_rich_path_fixture [lib]
-            body b0 fn body_rich_path_fixture[lib]::crate::use_it @ 25:1-29:2
+            fn body_rich_path_fixture[lib]::crate::use_it @ 25:1-29:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2, v3
@@ -821,7 +821,7 @@ pub fn use_it(user: User) {
                       expr e5 path <User as Factory<Project>>::make -> fn trait body_rich_path_fixture[lib]::crate::Factory::make => <unknown> @ 28:29-28:61
 
 
-            body b1 fn impl Factory<User> for User::make @ 14:5-16:6
+            fn impl Factory<User> for User::make @ 14:5-16:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -832,7 +832,7 @@ pub fn use_it(user: User) {
                 expr e0 path User -> struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 15:9-15:13
 
 
-            body b2 fn impl Factory<Project> for User::make @ 20:5-22:6
+            fn impl Factory<Project> for User::make @ 20:5-22:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -887,7 +887,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             package body_common_expr_fixture
 
             body_common_expr_fixture [lib]
-            body b0 fn body_common_expr_fixture[lib]::crate::never @ 5:1-7:2
+            fn body_common_expr_fixture[lib]::crate::never @ 5:1-7:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -901,7 +901,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                     expr e0 block s2 => () @ 6:10-6:12
 
 
-            body b1 fn body_common_expr_fixture[lib]::crate::use_it @ 9:1-27:2
+            fn body_common_expr_fixture[lib]::crate::use_it @ 9:1-27:2
             scopes
             - s0 parent <none>: v0, v1, v2, v3
             - s1 parent s0: v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15
@@ -1110,7 +1110,7 @@ pub fn use_it(value: u8) {
             package body_block_modifier_fixture
 
             body_block_modifier_fixture [lib]
-            body b0 fn body_block_modifier_fixture[lib]::crate::use_it @ 1:1-12:2
+            fn body_block_modifier_fixture[lib]::crate::use_it @ 1:1-12:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -1206,7 +1206,7 @@ pub fn use_it() {
             package body_associated_path_fixture
 
             body_associated_path_fixture [lib]
-            body b0 fn body_associated_path_fixture[lib]::crate::use_it @ 13:1-16:2
+            fn body_associated_path_fixture[lib]::crate::use_it @ 13:1-16:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -1229,7 +1229,7 @@ pub fn use_it() {
                       expr e3 path widget -> local v0 => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 15:36-15:42
 
 
-            body b1 fn impl Widget::create @ 4:5-6:6
+            fn impl Widget::create @ 4:5-6:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -1264,7 +1264,7 @@ pub fn use_it(bytes: [u8; 4]) {
             package body_primitive_associated_path_fixture
 
             body_primitive_associated_path_fixture [lib]
-            body b0 fn body_primitive_associated_path_fixture[lib]::crate::use_it @ 9:1-12:2
+            fn body_primitive_associated_path_fixture[lib]::crate::use_it @ 9:1-12:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
@@ -1286,7 +1286,7 @@ pub fn use_it(bytes: [u8; 4]) {
                       expr e2 path bytes -> local v0 => [u8; 4] @ 11:36-11:41
 
 
-            body b1 fn impl u32::from_be_bytes @ 4:5-6:6
+            fn impl u32::from_be_bytes @ 4:5-6:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -1298,7 +1298,7 @@ pub fn use_it(bytes: [u8; 4]) {
                 expr e0 literal int `0` => u32 @ 5:9-5:10
 
 
-            body b2 const impl u32::MAX @ 2:5-2:28
+            const impl u32::MAX @ 2:5-2:28
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1326,7 +1326,7 @@ pub fn use_it(pair: Pair) -> Right {
             package body_tuple_field_fixture
 
             body_tuple_field_fixture [lib]
-            body b0 fn body_tuple_field_fixture[lib]::crate::use_it @ 6:1-8:2
+            fn body_tuple_field_fixture[lib]::crate::use_it @ 6:1-8:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -1354,7 +1354,7 @@ pub static CURRENT: u32 = LIMIT;
             package body_item_initializer_fixture
 
             body_item_initializer_fixture [lib]
-            body b0 const body_item_initializer_fixture[lib]::crate::LIMIT @ 1:1-1:26
+            const body_item_initializer_fixture[lib]::crate::LIMIT @ 1:1-1:26
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1362,7 +1362,7 @@ pub static CURRENT: u32 = LIMIT;
             expr e0 literal int `3` => i32 @ 1:24-1:25
 
 
-            body b1 static body_item_initializer_fixture[lib]::crate::CURRENT @ 2:1-2:33
+            static body_item_initializer_fixture[lib]::crate::CURRENT @ 2:1-2:33
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1452,7 +1452,7 @@ pub fn use_cfg(
             package body_cfg_list_fixture
 
             body_cfg_list_fixture [lib]
-            body b0 fn body_cfg_list_fixture[lib]::crate::use_cfg @ 7:1-70:2
+            fn body_cfg_list_fixture[lib]::crate::use_cfg @ 7:1-70:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3, v4, v5, v6, v8, v9
@@ -1560,7 +1560,7 @@ pub fn use_cfg_tail(active: u8) -> u8 {
             package body_cfg_tail_fixture
 
             body_cfg_tail_fixture [lib]
-            body b0 fn body_cfg_tail_fixture[lib]::crate::use_cfg_tail @ 1:1-19:2
+            fn body_cfg_tail_fixture[lib]::crate::use_cfg_tail @ 1:1-19:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2

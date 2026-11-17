@@ -9,7 +9,7 @@ use rg_ir_model::{
     ItemOwner, StaticRef, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
 use rg_item_tree::{ParamKind, SelfParamKind, TypeRef};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathContext};
+use rg_semantic_ir::{GenericParamSource, SelfTypeOwner, SemanticItemSource, TypePathContext};
 use rustc_type_ir::{
     ClauseKind,
     inherent::{IntoKind as _, Term as _},
@@ -33,7 +33,7 @@ pub(crate) struct TraitHeader<'s> {
 impl<'lower, 'query, D, I, R> TypeLoweringQuery<'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     pub fn function<'s>(

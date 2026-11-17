@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use rg_ir_model::{CrateRef, FileId, ModuleId, Span};
-use rg_item_tree::{ItemTreeRef, Package as ItemTreePackage};
+use rg_item_tree::{ItemTreeRef, ItemTrees};
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
 
@@ -48,7 +48,7 @@ impl GeneratedOrigin {
     pub(super) fn collect_syntax(
         self,
         state: &mut CrateBuilder,
-        package: &ItemTreePackage,
+        package: &ItemTrees,
         resolutions: &MacroSourceFileResolutions,
         expansion: ExpansionSyntax,
         macro_name: Option<&str>,
@@ -92,9 +92,8 @@ impl GeneratedOrigin {
 
 /// Pending collection for one generated out-of-line module whose real file is project-owned.
 ///
-/// The `mod` declaration is already retained in DefMap's synthetic macro-output arena. Completing
-/// collection therefore needs only that item id and the context that would have been used if the
-/// real file resolution had been available immediately.
+/// The `mod` declaration is already retained as an item. Its ID and the call site's module
+/// context are enough to finish collection once the file is available.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingGeneratedModule {
     pub(crate) request: MacroSourceFileRequest,
@@ -105,21 +104,20 @@ pub(crate) struct PendingGeneratedModule {
     pub(crate) origin: MacroCallOrigin,
 }
 
-/// Pending collection for one builtin `include!` call produced by another macro.
+/// Pending collection for a builtin `include!` that named a file we have yet to acquire.
 ///
-/// ItemTree could not lower a payload for a call that did not exist in original source. The macro
-/// directive is already complete; this pending operation owns the remaining file collection.
+/// The macro directive is complete. This pending operation owns the remaining file collection.
 /// The origin retains ancestry for nested macros and placement for splicing the loaded items into
 /// the module or associated owner.
 #[derive(Debug, Clone)]
-pub(crate) struct PendingGeneratedInclude {
+pub(crate) struct PendingInclude {
     pub(super) request: MacroSourceFileRequest,
     pub(super) origin: GeneratedOrigin,
 }
 
 /// Collect each answered module or include without replaying its surrounding expansion.
 pub(crate) fn apply_pending_macro_source_files(
-    package: &ItemTreePackage,
+    package: &ItemTrees,
     state: &mut CrateBuilder,
     resolutions: &MacroSourceFileResolutions,
 ) -> Result<()> {
@@ -129,8 +127,7 @@ pub(crate) fn apply_pending_macro_source_files(
             .get(&pending.request)
             .expect("pending module request should be answered")
         {
-            MacroSourceFileResolution::Missing => {}
-            MacroSourceFileResolution::Module { .. } => {
+            MacroSourceFileResolution::Missing | MacroSourceFileResolution::Module { .. } => {
                 // File contents use their own crate for `$crate`, even when the module
                 // declaration came from a macro expansion.
                 DeclarationCollector::new(state, package, resolutions, pending.origin, None)
@@ -141,7 +138,7 @@ pub(crate) fn apply_pending_macro_source_files(
             }
         }
     }
-    let pending = std::mem::take(&mut state.pending_generated_includes);
+    let pending = std::mem::take(&mut state.pending_includes);
     for pending in pending {
         match resolutions
             .get(&pending.request)

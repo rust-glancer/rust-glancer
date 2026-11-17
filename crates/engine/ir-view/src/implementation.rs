@@ -189,11 +189,15 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         body_ref: BodyRef,
         ty: TypeDefRef,
     ) -> anyhow::Result<()> {
-        let Some(store) = self.db.body_ir.body_item_store(body_ref)? else {
-            return Ok(());
-        };
-
-        for (impl_ref, impl_data) in store.impls_with_refs() {
+        for item in
+            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Body(body_ref))?
+        {
+            let SemanticItemRef::Impl(impl_ref) = item.item() else {
+                continue;
+            };
+            let Some(impl_data) = item.impl_data() else {
+                continue;
+            };
             rg_std::check_cancel!(self.db, "implementation lookup");
             if impl_data.resolved_self_ty.is(&ty) {
                 implementations.push(DeclarationRef::from(impl_ref));
@@ -229,7 +233,6 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            use_site,
             self.db.cancellation().clone(),
         ))
     }

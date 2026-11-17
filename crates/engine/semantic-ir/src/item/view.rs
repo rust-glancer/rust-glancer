@@ -1,4 +1,4 @@
-//! Borrowed semantic item views shared by read transactions and downstream queries.
+//! Borrowed semantic item views shared by readers and downstream queries.
 
 use rg_def_map::ItemSource;
 use rg_ir_model::{
@@ -23,6 +23,69 @@ pub struct SemanticItemView<'a> {
 impl<'a> SemanticItemView<'a> {
     pub(crate) fn new(item: SemanticItemRef, data: SemanticItemData<'a>) -> Self {
         Self { item, data }
+    }
+
+    pub fn struct_data(self) -> Option<&'a StructData> {
+        match self.data {
+            SemanticItemData::Struct(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn union_data(self) -> Option<&'a UnionData> {
+        match self.data {
+            SemanticItemData::Union(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn enum_data(self) -> Option<&'a EnumData> {
+        match self.data {
+            SemanticItemData::Enum(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn trait_data(self) -> Option<&'a TraitData> {
+        match self.data {
+            SemanticItemData::Trait(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn impl_data(self) -> Option<&'a ImplData> {
+        match self.data {
+            SemanticItemData::Impl(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn function_data(self) -> Option<&'a FunctionData> {
+        match self.data {
+            SemanticItemData::Function(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn type_alias_data(self) -> Option<&'a TypeAliasData> {
+        match self.data {
+            SemanticItemData::TypeAlias(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn const_data(self) -> Option<&'a ConstData> {
+        match self.data {
+            SemanticItemData::Const(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    pub fn static_data(self) -> Option<&'a StaticData> {
+        match self.data {
+            SemanticItemData::Static(data) => Some(data),
+            _ => None,
+        }
     }
 
     pub fn item(self) -> SemanticItemRef {

@@ -6,7 +6,7 @@
 
 use std::{path::Path, sync::Arc};
 
-use crate::{SourceDescriptor, SourceError, SourcePath, SourceRevision};
+use crate::{SourceError, SourceRevision, revision::SourceDescriptor};
 
 /// One canonical Rust source file captured before rebuilding the saved project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +23,7 @@ impl CapturedSource {
             source,
         })?;
         let text = text.into();
-        let descriptor = SourceDescriptor::new(SourcePath::new(canonical_path), text.as_bytes());
+        let descriptor = SourceDescriptor::new(canonical_path, text.as_bytes());
         Ok(Self { descriptor, text })
     }
 
@@ -45,10 +45,6 @@ impl CapturedSource {
 
     pub(crate) fn descriptor(&self) -> SourceDescriptor {
         self.descriptor.clone()
-    }
-
-    pub(crate) fn source_path(&self) -> &SourcePath {
-        self.descriptor.source_path()
     }
 
     pub(crate) fn shared_text(&self) -> Arc<str> {

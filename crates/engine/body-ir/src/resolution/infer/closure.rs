@@ -5,8 +5,8 @@ use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, ScopeId};
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
+use rg_source::ReadError;
 use rg_ty::solver::TyShape;
 
 use super::BodyInference;
@@ -14,8 +14,8 @@ use crate::body::{ClosureParamData, ExprKind};
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     /// Apply annotations and infer parameter patterns and the body using the prepared signature.
     /// Callable bounds may already have filled some of its parameter and return slots.

@@ -95,7 +95,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            use_site,
             self.db.cancellation().clone(),
         );
         let query = AssociatedItemQuery::new(ty_context);
@@ -204,7 +203,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db
                 .item_lookup_query(use_site)
                 .context("assemble module associated item lookup")?,
-            use_site,
             self.db.cancellation().clone(),
         );
         let query = AssociatedItemQuery::new(context);
@@ -253,7 +251,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            use_site,
             self.db.cancellation().clone(),
         );
         let query = AssociatedItemQuery::new(ty_context);

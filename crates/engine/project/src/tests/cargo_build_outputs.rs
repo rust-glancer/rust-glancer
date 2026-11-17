@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crate::{PackageResidencyPolicy, Project, SavedFileChange, testonly::ProjectSourceFixture};
+use crate::{Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
 fn passively_recovered_out_dir_sources_enter_semantic_analysis() {
@@ -69,33 +69,32 @@ pub struct GeneratedChild;
     assert!(workspace_package.cargo_generated_sources.is_some());
 
     let mut project = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("passive generated-source fixture should build");
-    assert!(project.snapshot().parse_db().contains_file_path(
+    assert!(project.state.parse_db().contains_file_path(
         &fs::canonicalize(&generated).expect("generated source should canonicalize")
     ));
     assert_symbol_count(&project, "RecoveredGenerated", 1);
     assert_symbol_count(&project, "NestedRecovered", 1);
     assert_symbol_count(&project, "MacroRecovered", 1);
     assert_symbol_count(&project, "GeneratedChild", 1);
-    let snapshot = project.snapshot();
-    let generated_symbol = snapshot
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("generated fixture analysis should load")
-        .workspace_symbols("RecoveredGenerated")
-        .expect("generated fixture symbol query should resolve")
-        .into_iter()
-        .next()
-        .expect("recovered generated symbol should exist");
-    assert_eq!(
-        snapshot.file_path(generated_symbol.crate_ref.package, generated_symbol.file_id),
-        Some(
-            fs::canonicalize(&generated)
-                .expect("generated source should canonicalize")
-                .as_path()
-        )
-    );
+    project.inspect(|snapshot| {
+        let generated_symbol = snapshot
+            .analysis()
+            .workspace_symbols("RecoveredGenerated")
+            .expect("generated fixture symbol query should resolve")
+            .into_iter()
+            .next()
+            .expect("recovered generated symbol should exist");
+        assert_eq!(
+            snapshot.file_path(generated_symbol.crate_ref.package, generated_symbol.file_id),
+            Some(
+                fs::canonicalize(&generated)
+                    .expect("generated source should canonicalize")
+                    .as_path()
+            )
+        );
+    });
 
     // An ordinary source save rebuilds from retained Cargo-generated sources. It must not require a
     // Cargo rescan to rediscover the same output directory.
@@ -128,7 +127,6 @@ pub struct GeneratedChild;
 
     drop(project);
     let warm = Project::builder(fixture.workspace_metadata())
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("passive generated-source cache should restore");
     assert_symbol_count(&warm, "RefreshedGenerated", 1);
@@ -150,7 +148,6 @@ pub struct GeneratedChild;
             .all(|package| package.cargo_generated_sources.is_none())
     );
     let source_only = Project::builder(source_only_workspace)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("missing passive artifacts should fall back to source-only analysis");
     assert_symbol_count(&source_only, "RefreshedGenerated", 0);
@@ -158,7 +155,7 @@ pub struct GeneratedChild;
 }
 
 #[test]
-fn restores_a_valid_historical_build_output_until_manual_reindex() {
+fn warm_start_uses_newly_selected_build_output() {
     let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
@@ -181,7 +178,6 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
     fs::write(&historical, "pub struct HistoricalGenerated;")
         .expect("historical generated source should be written");
     let historical_project = Project::builder(fixture.workspace_metadata())
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("historical generated-source project should build");
     assert_symbol_count(&historical_project, "HistoricalGenerated", 1);
@@ -211,23 +207,16 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
         .expect("selected output directory should canonicalize")
     );
 
-    let mut restored = Project::builder(current_workspace)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+    let restored = Project::builder(current_workspace)
         .build()
-        .expect("still-valid historical package cache should restore");
-    assert_symbol_count(&restored, "HistoricalGenerated", 1);
-    assert_symbol_count(&restored, "NewlySelectedGenerated", 0);
-
-    restored
-        .reindex_workspace()
-        .expect("manual reindex should bypass the historical package cache");
+        .expect("warm startup should index the current build output");
     assert_symbol_count(&restored, "HistoricalGenerated", 0);
     assert_symbol_count(&restored, "NewlySelectedGenerated", 1);
 }
 
 #[test]
 fn manual_workspace_reindex_rescans_passive_cargo_build_outputs() {
-    let fixture = ProjectSourceFixture::build(
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -270,7 +259,8 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
             .iter()
             .any(|package| package.cargo_generated_sources.is_some())
     );
-    assert!(project.snapshot().parse_db().contains_file_path(&generated));
+    assert!(project.state.parse_db().contains_file_path(&generated));
+    assert_symbol_count(&project, "DiscoveredAfterStartup", 1);
 }
 
 #[test]
@@ -353,12 +343,12 @@ fn write_cargo_build_output_fixture(
 }
 
 fn assert_symbol_count(project: &Project, name: &str, expected: usize) {
-    let symbols = project
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("generated fixture analysis should load")
-        .workspace_symbols(name)
-        .expect("generated fixture symbol query should resolve");
+    let symbols = project.inspect(|snapshot| {
+        snapshot
+            .analysis()
+            .workspace_symbols(name)
+            .expect("generated fixture symbol query should resolve")
+    });
     assert_eq!(
         symbols.len(),
         expected,

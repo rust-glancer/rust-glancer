@@ -7,10 +7,10 @@
 //! rejected so ordinary value completion can handle the field value.
 
 use rg_body_ir::{
-    BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
+    BodyPath, BodyReader, BodyView, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
 };
 use rg_ir_model::{BodyRef, CrateRef, FieldKey, FileId, ScopeId, Span};
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 
 use super::{RecordFieldCompletionSite, sites::BodyScanSites};
 use crate::source::scan::NarrowestSourceSite;
@@ -25,7 +25,7 @@ use crate::source::scan::NarrowestSourceSite;
 ///        ^^^^ exclude `name` from the candidates for `em`
 /// ```
 pub(crate) struct RecordFieldCompletionSiteScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    body_ir: &'txn BodyReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -33,7 +33,7 @@ pub(crate) struct RecordFieldCompletionSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        body_ir: &'txn BodyReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -49,7 +49,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     /// Returns the smallest record field list that accepts completion here.
     pub(crate) fn site_at_record_field(
         &self,
-    ) -> Result<Option<RecordFieldCompletionSite>, PackageStoreError> {
+    ) -> Result<Option<RecordFieldCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {

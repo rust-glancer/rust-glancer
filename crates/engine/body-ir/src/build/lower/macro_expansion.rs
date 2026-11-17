@@ -8,7 +8,7 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
     BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander as DefMapBodyMacroExpander,
     BodyMacroExpansionScope, BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome,
-    BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, DefMapReadTxn,
+    BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, DefinitionReader,
 };
 use rg_ir_model::ModuleRef;
 use rg_std::CancellationToken;
@@ -77,20 +77,20 @@ pub(crate) trait BodyMacroExpansionContext {
 
 /// Keeps macro expansion cache and recursion policy out of the mechanical body lowering context.
 pub(crate) struct BodyMacroExpansion<'ctx, 'db> {
-    parse_package: &'ctx rg_parse::Package,
+    edition: rg_text::RustEdition,
     expander: DefMapBodyMacroExpander<'db, 'ctx>,
     cfg: CfgEvaluator<'ctx>,
 }
 
 impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
     pub(crate) fn new(
-        parse_package: &'ctx rg_parse::Package,
-        def_maps: &'ctx DefMapReadTxn<'db>,
+        edition: rg_text::RustEdition,
+        def_maps: &'ctx DefinitionReader<'db>,
         cfg: CfgEvaluator<'ctx>,
         cancellation: CancellationToken,
     ) -> Self {
         Self {
-            parse_package,
+            edition,
             expander: DefMapBodyMacroExpander::new(def_maps, cancellation),
             cfg,
         }
@@ -102,7 +102,7 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
         source: BodySource,
         origin: BodyMacroCallOrigin,
     ) -> BodyMacroCallSite<'ctx> {
-        BodyMacroCallSite::new(module, source, origin, self.parse_package.edition())
+        BodyMacroCallSite::new(module, source, origin, self.edition)
     }
 }
 

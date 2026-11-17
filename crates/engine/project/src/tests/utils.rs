@@ -5,7 +5,7 @@ use rg_analysis::WorkspaceSymbol;
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use test_fixture::fixture_path_for_snapshot;
 
-use crate::{AnalysisChangeSummary, PackageResidencyPolicy, Project, testonly::ProjectFixture};
+use crate::{AnalysisChangeSummary, Project, testonly::ProjectFixture};
 
 pub(super) struct HostFixture {
     fixture: ProjectFixture,
@@ -13,7 +13,9 @@ pub(super) struct HostFixture {
 
 impl HostFixture {
     pub(super) fn build(spec: &str) -> Self {
-        Self::build_with_package_residency_policy(spec, PackageResidencyPolicy::default())
+        Self {
+            fixture: ProjectFixture::build(spec),
+        }
     }
 
     pub(super) fn build_with_fake_sysroot(spec: &str) -> Self {
@@ -22,70 +24,8 @@ impl HostFixture {
         }
     }
 
-    pub(super) fn build_with_package_residency_policy(
-        spec: &str,
-        package_residency_policy: PackageResidencyPolicy,
-    ) -> Self {
-        Self {
-            fixture: ProjectFixture::build_with_package_residency_policy(
-                spec,
-                package_residency_policy,
-            ),
-        }
-    }
-
     pub(super) fn file_id_for_path(&self, relative_path: &str) -> FileId {
         self.fixture.file_id_for_path(relative_path)
-    }
-
-    pub(super) fn corrupt_package_cache_artifact(&self, package_name: &str) {
-        self.fixture.corrupt_package_cache_artifact(package_name);
-    }
-
-    pub(super) fn remove_package_cache_artifact(&self, package_name: &str) {
-        self.fixture.remove_package_cache_artifact(package_name);
-    }
-
-    pub(super) fn package_cache_artifact_exists(&self, package_name: &str) -> bool {
-        self.fixture.package_cache_artifact_exists(package_name)
-    }
-
-    pub(super) fn document_symbol_names(&self, relative_path: &str) -> Vec<String> {
-        let snapshot = self.fixture.project().snapshot();
-        let Some(context) = snapshot
-            .file_context_for_path(self.fixture.path(relative_path))
-            .expect("fixture path should resolve to a file context")
-        else {
-            return Vec::new();
-        };
-        let analysis = snapshot
-            .analysis_for_crates(&[context.crate_ref], rg_std::CancellationToken::new())
-            .expect("fixture analysis should materialize");
-        let outline = analysis
-            .document_symbols(context.crate_ref, context.file)
-            .expect("fixture document symbols should resolve");
-        let mut names = Vec::new();
-        for symbol in outline.symbols {
-            push_document_symbol_names(&symbol, &mut names);
-        }
-
-        names.sort();
-        names.dedup();
-        names
-    }
-
-    pub(super) fn workspace_symbols_error(&self, query: &str) -> String {
-        let analysis = self
-            .fixture
-            .project()
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("fixture analysis should construct before lazy package load");
-
-        match analysis.workspace_symbols(query) {
-            Ok(_) => panic!("fixture workspace symbol query should fail"),
-            Err(error) => format!("{error:#}"),
-        }
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {
@@ -139,12 +79,6 @@ impl HostFixture {
 
         self.render_changed_files(self.fixture.project(), &summary.changed_files, &mut dump);
         writeln!(&mut dump).expect("string writes should not fail");
-        self.render_affected_packages(
-            self.fixture.project(),
-            &summary.affected_packages,
-            &mut dump,
-        );
-        writeln!(&mut dump).expect("string writes should not fail");
         self.render_changed_crates(self.fixture.project(), &summary.changed_crates, &mut dump);
 
         dump
@@ -162,10 +96,17 @@ impl HostFixture {
             .iter()
             .map(|changed_file| {
                 let package = self.package(project, changed_file.package);
-                let path = package
-                    .file_path(changed_file.file)
-                    .expect("changed file should have a parsed path");
-                (package.package_name().to_string(), self.display_path(path))
+                let path = changed_file
+                    .file
+                    .path(
+                        &project
+                            .database
+                            .lock()
+                            .expect("project query runtime")
+                            .interner(),
+                    )
+                    .expect("changed file has an interned path");
+                (package.package_name().to_string(), self.display_path(&path))
             })
             .collect::<Vec<_>>();
         files.sort();
@@ -177,30 +118,6 @@ impl HostFixture {
 
         for (package_name, path) in files {
             writeln!(dump, "- {package_name} {path}").expect("string writes should not fail");
-        }
-    }
-
-    fn render_affected_packages(
-        &self,
-        project: &Project,
-        packages: &[PackageSlot],
-        dump: &mut String,
-    ) {
-        writeln!(dump, "affected packages").expect("string writes should not fail");
-
-        let mut names = packages
-            .iter()
-            .map(|slot| self.package(project, *slot).package_name().to_string())
-            .collect::<Vec<_>>();
-        names.sort();
-
-        if names.is_empty() {
-            writeln!(dump, "- <none>").expect("string writes should not fail");
-            return;
-        }
-
-        for name in names {
-            writeln!(dump, "- {name}").expect("string writes should not fail");
         }
     }
 
@@ -251,9 +168,6 @@ impl HostFixture {
                 } => {
                     self.render_type_names_at(project, label, package, marker, &mut dump);
                 }
-                HostObservation::ResidentStats { label } => {
-                    self.render_resident_stats(project, label, &mut dump);
-                }
             }
         }
 
@@ -263,12 +177,12 @@ impl HostFixture {
     fn render_workspace_symbols(&self, project: &Project, query: &str, dump: &mut String) {
         writeln!(dump, "workspace symbols `{query}`").expect("string writes should not fail");
 
-        let snapshot = project.snapshot();
-        let mut symbols = snapshot
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("fixture analysis should materialize")
-            .workspace_symbols(query)
-            .expect("fixture workspace symbols should resolve");
+        let mut symbols = project.inspect(|snapshot| {
+            snapshot
+                .analysis()
+                .workspace_symbols(query)
+                .expect("fixture workspace symbols should resolve")
+        });
         symbols.sort_by(|left, right| {
             self.workspace_symbol_key(project, left)
                 .cmp(&self.workspace_symbol_key(project, right))
@@ -301,11 +215,11 @@ impl HostFixture {
     ) {
         writeln!(dump, "file context `{label}`").expect("string writes should not fail");
 
-        let Some(context) = project
-            .snapshot()
-            .file_context_for_path(self.fixture.path(relative_path))
-            .expect("fixture path should resolve to a file context")
-        else {
+        let Some(context) = project.inspect(|snapshot| {
+            snapshot
+                .file_context_for_path(self.fixture.path(relative_path))
+                .expect("fixture path should resolve to a file context")
+        }) else {
             writeln!(dump, "- <none>").expect("string writes should not fail");
             return;
         };
@@ -348,18 +262,6 @@ impl HostFixture {
         }
     }
 
-    fn render_resident_stats(&self, project: &Project, label: &str, dump: &mut String) {
-        let stats = project.snapshot().stats();
-
-        writeln!(dump, "resident stats `{label}`").expect("string writes should not fail");
-        writeln!(dump, "- def-map crates {}", stats.def_map.crate_count)
-            .expect("string writes should not fail");
-        writeln!(dump, "- semantic crates {}", stats.semantic_ir.crate_count)
-            .expect("string writes should not fail");
-        writeln!(dump, "- body crates {}", stats.body_ir.crate_count)
-            .expect("string writes should not fail");
-    }
-
     fn workspace_symbol_key(
         &self,
         project: &Project,
@@ -394,7 +296,7 @@ impl HostFixture {
 
     fn package<'a>(&self, project: &'a Project, package: PackageSlot) -> &'a rg_parse::Package {
         project
-            .snapshot()
+            .state
             .parse_db()
             .package(package.0)
             .expect("fixture package should exist")
@@ -419,56 +321,31 @@ impl HostFixture {
         path: &Path,
         offset: u32,
     ) -> Vec<String> {
-        let snapshot = host.snapshot();
-        let package_slot =
-            ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), package_name);
-        let file_id = ProjectFixture::file_id_for_path_in(snapshot.parse_db(), path);
-        let target = snapshot
-            .crates_for_file(package_slot, file_id)
-            .expect("fixture target lookup should start")
-            .into_iter()
-            .next()
-            .expect("fixture file should be owned by a target");
-        let analysis = snapshot
-            .analysis_for_crates(&[target], rg_std::CancellationToken::new())
-            .expect("fixture analysis should materialize");
-        let Some(ty) = analysis
-            .type_at(target, file_id, offset)
-            .expect("fixture type query should resolve")
-        else {
-            return Vec::new();
-        };
+        host.inspect(|snapshot| {
+            let package_slot =
+                ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), package_name);
+            let file_id = ProjectFixture::file_id_for_path_in(snapshot.parse_db(), path);
+            let target = snapshot
+                .crates_for_file(package_slot, file_id)
+                .expect("fixture target lookup should start")
+                .into_iter()
+                .next()
+                .expect("fixture file should be owned by a target");
+            let analysis = snapshot.analysis();
+            let Some(ty) = analysis
+                .type_at(target, file_id, offset)
+                .expect("fixture type query should resolve")
+            else {
+                return Vec::new();
+            };
 
-        let loaders = crate::storage::loaders::PackageReadLoaders::new(&host.state);
-        let semantic_ir = host.state.semantic_ir.read_txn(loaders.semantic_ir);
-        let def_map = host.state.def_map.read_txn(loaders.def_map);
-        let mut names = Vec::new();
-        for ty in ty.nominal_type_defs() {
-            let Some(crate_ref) = ty.origin.as_crate_ref() else {
-                continue;
-            };
-            let Some(local_def) = semantic_ir
-                .items(crate_ref)
-                .expect("fixture semantic IR should load while rendering nominal types")
-                .expect("Item store must exist")
-                .semantic_item_view(ty.into())
-                .and_then(|view| view.local_def())
-            else {
-                continue;
-            };
-            let Some(crate_ref) = local_def.origin.as_crate_ref() else {
-                continue;
-            };
-            let Some(local_def) = def_map
-                .def_map(crate_ref)
-                .expect("fixture def-map should load while rendering nominal types")
-                .and_then(|def_map| def_map.local_def(local_def.local_def))
-            else {
-                continue;
-            };
-            names.push(local_def.name.to_string());
-        }
-        names
+            let reader = rg_semantic_ir::ItemReader(snapshot.declarations());
+            let items = rg_semantic_ir::ItemStoreQuery::new(&reader);
+            ty.nominal_type_defs()
+                .filter_map(|ty| items.type_def_name(ty).expect("fixture type name resolves"))
+                .map(str::to_owned)
+                .collect()
+        })
     }
 }
 
@@ -484,9 +361,6 @@ pub(super) enum HostObservation<'a> {
         label: &'a str,
         package: &'a str,
         marker: &'a str,
-    },
-    ResidentStats {
-        label: &'a str,
     },
 }
 
@@ -508,16 +382,5 @@ impl<'a> HostObservation<'a> {
             package,
             marker,
         }
-    }
-
-    pub(super) fn resident_stats(label: &'a str) -> Self {
-        Self::ResidentStats { label }
-    }
-}
-
-fn push_document_symbol_names(symbol: &rg_analysis::DocumentSymbol, names: &mut Vec<String>) {
-    names.push(symbol.name.clone());
-    for child in &symbol.children {
-        push_document_symbol_names(child, names);
     }
 }

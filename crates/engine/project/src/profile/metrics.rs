@@ -5,8 +5,7 @@ use rg_profile::{
 use super::BuildProcessMemory;
 
 static BUILD_CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
-    ProfileCheckpointColumn::bytes("retained_bytes", "rg_sampled"),
-    ProfileCheckpointColumn::bytes("active_retained_bytes", "rg_total"),
+    ProfileCheckpointColumn::bytes("retained_bytes", "rg_retained"),
     ProfileCheckpointColumn::bytes("allocated_bytes", "a_allocated"),
     ProfileCheckpointColumn::bytes("active_bytes", "a_backed"),
     ProfileCheckpointColumn::bytes("resident_bytes", "a_resident"),
@@ -17,115 +16,23 @@ declare_metrics! {
     pub(crate) mod metric {
         scope "project.build" {
             checkpoint CHECKPOINTS = "checkpoints" [columns super::BUILD_CHECKPOINT_COLUMNS, title "Build checkpoints"];
+            /// Wall time for the full Ajika run, including routing, checkpointing and release.
+            duration QUERY_OPERATION = "query_operation" [title "Query operation total"];
+            duration DECLARATIONS = "declarations" [title "Declaration demand"];
+            duration PREFILL_BODIES = "body_prefill" [title "Body prefill"];
+            duration SOURCE_VALIDATION = "source_validation" [title "Source validation"];
         }
 
-        scope "project.build.parse" {
-            memory_snapshot PARSE_MEMORY = "memory" [title "after parse"];
-        }
-
-        scope "project.build.cache_probe" {
-            memory_snapshot CACHE_PROBE_MEMORY = "memory" [title "after cache probe"];
-        }
-
-        scope "project.build.item_tree" {
-            memory_snapshot ITEM_TREE_MEMORY = "memory" [title "after item-tree"];
-        }
-
-        scope "project.build.item_tree_syntax_eviction" {
-            memory_snapshot ITEM_TREE_SYNTAX_EVICTION_MEMORY = "memory" [title "after item-tree syntax eviction"];
-        }
-
-        scope "project.build.cache_source_fingerprints" {
-            memory_snapshot CACHE_SOURCE_FINGERPRINTS_MEMORY = "memory" [title "after cache source fingerprints"];
-        }
-
-        scope "project.build.def_map" {
-            memory_snapshot DEF_MAP_MEMORY = "memory" [title "after def-map"];
-        }
-
-        scope "project.build.cargo_build_outputs" {
-            /// Cargo target directories considered by the bounded passive scan.
-            counter CARGO_BUILD_OUTPUT_TARGET_DIRECTORIES = "target_directories";
-            counter CARGO_BUILD_OUTPUT_DEPS_DIRECTORIES = "deps_directories";
-            counter CARGO_BUILD_OUTPUT_DEP_INFO_FILES = "dep_info_files";
-            /// Packages with a custom build target and therefore possible build-script outputs.
-            counter CARGO_BUILD_OUTPUT_BUILD_SCRIPT_PACKAGES = "build_script_packages";
-            /// Rustc units attributed by an exact package target-root dependency.
-            counter CARGO_BUILD_OUTPUT_MATCHED_RUSTC_UNITS = "matched_rustc_units";
-            /// Internally consistent output-directory candidates recovered from attributed units.
-            counter CARGO_BUILD_OUTPUT_CANDIDATES = "build_output_candidates";
-            /// Packages for which one deterministic historical candidate was selected.
-            counter CARGO_BUILD_OUTPUT_SELECTED_PACKAGES = "selected_packages";
-            counter CARGO_BUILD_OUTPUT_GENERATED_FILES = "generated_files";
-            counter CARGO_BUILD_OUTPUT_GENERATED_BYTES = "generated_bytes";
-            duration CARGO_BUILD_OUTPUT_SCAN = "timings.scan";
-        }
-
-        scope "project.build.macro_source_files" {
-            /// Coalesced late `mod` and `include!` requests processed across discovery waves.
-            counter MACRO_SOURCE_FILE_REQUESTS = "requests.seen";
-            /// Distinct semantic lookup keys resolved by the project boundary.
-            counter MACRO_SOURCE_FILE_UNIQUE_REQUESTS = "requests.unique";
-            /// Distinct package-local source paths resolved from those requests.
-            counter MACRO_SOURCE_FILE_UNIQUE_PATHS = "paths.unique";
-            /// Requests coalesced onto a path already handled earlier in this discovery run.
-            counter MACRO_SOURCE_FILE_COALESCED_PATHS = "paths.coalesced";
-            /// Requests whose supported path did not exist.
-            counter MACRO_SOURCE_FILE_MISSING_PATHS = "paths.missing";
-            /// Parse package files added by late discovery, including ordinary descendants.
-            counter MACRO_SOURCE_FILE_DISCOVERED_FILES = "files.discovered";
-            /// File trees added by incremental ItemTree lowering.
-            counter MACRO_SOURCE_FILE_ITEM_TREE_FILES_LOWERED = "item_tree.files_lowered";
-            /// Existing file trees reused by incremental ItemTree lowering.
-            counter MACRO_SOURCE_FILE_ITEM_TREE_FILES_REUSED = "item_tree.files_reused";
-            /// Batches of macro source-file requests processed by the loader.
-            counter MACRO_SOURCE_FILE_DISCOVERY_WAVES = "waves";
-            /// Time spent capturing and lowering files discovered through macro expansion.
-            duration TIMING_MACRO_SOURCE_FILE_LOADING = "timings.loading";
-            /// Source-built package fingerprints changed by late discovery.
-            counter MACRO_SOURCE_FILE_CACHE_FINGERPRINT_CHANGES = "cache.fingerprint_changes";
-        }
-
-        scope "project.build.semantic_ir" {
-            memory_snapshot SEMANTIC_IR_MEMORY = "memory" [title "after semantic-ir"];
-        }
-
-        scope "project.build.item_tree_drop" {
-            memory_snapshot ITEM_TREE_DROP_MEMORY = "memory" [title "after item-tree drop"];
-        }
-
-        scope "project.build.body_ir" {
-            memory_snapshot BODY_IR_MEMORY = "memory" [title "after body-ir"];
-        }
-
-        scope "project.build.parse_syntax_eviction" {
-            memory_snapshot PARSE_SYNTAX_EVICTION_MEMORY = "memory" [title "after parse syntax eviction"];
-        }
-
-        scope "project.build.cache_probe" {
-            counter CACHE_PROBE_PACKAGES = "packages.total";
-            counter CACHE_PROBE_HITS = "results.hits";
-            counter CACHE_PROBE_MISSING_ARTIFACTS = "misses.missing_artifact";
-            counter CACHE_PROBE_ARTIFACT_READ_ERRORS = "misses.artifact_read_error";
-            counter CACHE_PROBE_SOURCE_MISMATCHES = "misses.source_mismatch";
-            counter CACHE_PROBE_SOURCE_ERRORS = "misses.source_error";
-            counter CACHE_PROBE_BODY_IR_POLICY_MISMATCHES = "misses.body_ir_policy_mismatch";
-            counter CACHE_PROBE_PARSE_RESTORE_ERRORS = "misses.parse_restore_error";
-            counter CACHE_PROBE_UNPLANNED_PACKAGES = "misses.unplanned_package";
-            counter CACHE_PROBE_PROPAGATED_MISSES = "misses.reverse_dependent";
-
-            duration CACHE_PROBE_ARTIFACT_READ = "timings.artifact_read";
-            duration CACHE_PROBE_SOURCE_FINGERPRINT = "timings.source_fingerprint";
-            duration CACHE_PROBE_PARSE_RESTORE = "timings.parse_restore";
-        }
-
-        scope "project.cache.sections" {
-            /// Encoded bytes read, grouped by probe or analysis phase.
-            keyed_counter CACHE_SECTION_BYTES = "bytes" [title "Cache section bytes read"];
-            /// Filesystem read time, grouped by probe or analysis phase.
-            keyed_duration CACHE_SECTION_READ = "timings.read" [title "Cache section read time"];
-            /// Wincode decode and structural validation time, grouped by probe or analysis phase.
-            keyed_duration CACHE_SECTION_DECODE = "timings.decode" [title "Cache section decode time"];
+        scope "project.build.ajika" {
+            counter EXECUTED = "executed" [title "Queries executed"];
+            counter VALIDATED = "validated" [title "Query records validated"];
+            /// Reuse or reads of stored results and outputs during the operation.
+            counter HITS = "hits" [title "Cache hits"];
+            counter DECODED = "decoded" [title "Values decoded"];
+            counter METADATA_READS = "metadata_reads" [title "Query records read"];
+            gauge PAYLOAD_BYTES_READ = "payload_bytes_read" [Bytes, title "Payload bytes read"];
+            gauge PAYLOAD_BYTES_WRITTEN = "payload_bytes_written" [Bytes, title "Payload bytes written"];
+            gauge METADATA_BYTES_WRITTEN = "metadata_bytes_written" [Bytes, title "Query record bytes written"];
         }
     }
 }
@@ -139,14 +46,12 @@ pub(crate) fn profile_descriptors() -> &'static [ProfileDescriptor] {
 pub(crate) fn record_build_checkpoint(
     label: &'static str,
     retained_bytes: Option<usize>,
-    active_retained_bytes: Option<usize>,
     process_memory: Option<BuildProcessMemory>,
 ) {
     metric::CHECKPOINTS.record(
         label,
         vec![
             ProfileCheckpointValue::optional_bytes("retained_bytes", retained_bytes),
-            ProfileCheckpointValue::optional_bytes("active_retained_bytes", active_retained_bytes),
             ProfileCheckpointValue::optional_bytes(
                 "allocated_bytes",
                 process_memory.and_then(|memory| memory.allocated_bytes),

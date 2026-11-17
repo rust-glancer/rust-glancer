@@ -12,7 +12,7 @@
 //! environment that can expose either those tables or frozen DefMaps. Lexical variable bindings
 //! and type-dependent lookup belong to later Body IR and type analysis.
 //!
-//! Construction starts at `DefMapDb::build_packages`. Body macro expansion has a separate entry
+//! Construction starts at `CrateData::build_target`. Body macro expansion has a separate entry
 //! point, `BodyMacroExpander`, which reads frozen definitions and returns syntax for body lowering
 //! or source queries without changing the saved item scopes.
 
@@ -29,11 +29,11 @@ mod package;
 mod profile;
 mod query;
 mod source;
-mod store;
 #[doc(hidden)]
 pub mod testonly;
 mod visible;
 
+pub(crate) use self::build::MacroSourceFileRequest;
 pub use self::{
     binding::{NameBinding, NameBindingProvenance, Namespace, NamespaceSet, PerNs, Visibility},
     body_macros::{
@@ -43,9 +43,8 @@ pub use self::{
         ExpandedBodyMacro,
     },
     build::{
-        DefMapBuildOutput, GeneratedItemStores, ImportCollectionEnv, ImportCollectionOutput,
-        ImportCollector, MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
-        ModuleImportInput, ResolvedModuleImports,
+        CrateBuildOutput, CrateDependencies, ImportCollectionEnv, ImportCollectionOutput,
+        ImportCollector, ModuleImportInput, ResolvedModuleImports,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     item_scope::{ItemScope, ItemScopeBuilder, NameBindings, NameBindingsView},
@@ -60,21 +59,16 @@ pub use self::{
         ModuleBuilder, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
         ModuleResolutionView,
     },
-    package::{
-        CrateData, CrateDefMapManifest, MacroExpansionLimitGroup, MacroExpansionLimitReport,
-        PackageDefMaps, PackageDefMapsManifest,
-    },
+    package::{CrateData, MacroExpansionLimitGroup, MacroExpansionLimitReport},
     profile::profile_descriptors,
     query::{
-        CrateResolutionEnv, DefMapQuery, DefMapSource, GlobImportSource, MacroDefinitionEnv,
-        NameResolutionEnv, NameResolver, ResolvePathResult,
+        CrateDataSource, CrateDefMapReader, CrateResolutionEnv, DefMapQuery, DefMapSource,
+        DefinitionReader, GlobImportSource, MacroDefinitionEnv, NameResolutionEnv, NameResolver,
+        ResolvePathResult,
     },
     source::{
         BodyItemSourceRef, GeneratedItemRef, GeneratedItemStore, GeneratedSourceId, ItemSource,
         ItemSourceKind,
-    },
-    store::{
-        DefMapDb, DefMapLoader, DefMapReadTxn, DefMapStats, LoadDefMap, UnresolvedImportStats,
     },
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };

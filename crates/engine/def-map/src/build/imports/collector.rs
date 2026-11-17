@@ -9,7 +9,6 @@ use std::{collections::VecDeque, mem};
 use rg_ir_model::{
     CrateRef, DefId, ImportId, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleRef,
 };
-use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rustc_hash::FxHashMap;
 
@@ -41,7 +40,9 @@ pub struct ModuleImportInput<'a> {
 /// The caller owns module metadata, item data, and access to frozen dependencies. The collector
 /// temporarily owns the mutable scope buffers and overlays them on these reads. Keeping that
 /// split lets the same algorithm serve an active crate or one body-local DefMap.
-pub trait ImportCollectionEnv: CrateResolutionEnv<Error = PackageStoreError> {
+pub trait ImportCollectionEnv:
+    CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
+{
     /// All modules with imports in this build, including those registered by an earlier call.
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>>;
     fn import_data(&self, import: ImportRef) -> &ImportData;
@@ -391,7 +392,7 @@ impl ImportCollector {
         env: &E,
         old: Option<NameBinding>,
         incoming: NameBinding,
-    ) -> Result<NameBinding, PackageStoreError> {
+    ) -> Result<NameBinding, E::Error> {
         old.map_or(Ok(incoming), |old| {
             old.select(incoming, |a, b| {
                 NameResolver::new(env).broadest_visibility(a, b)
@@ -595,7 +596,7 @@ struct ImportQueryEnv<'a, E> {
     env: &'a E,
 }
 impl<E: ImportCollectionEnv> NameResolutionEnv for ImportQueryEnv<'_, E> {
-    type Error = PackageStoreError;
+    type Error = E::Error;
     fn module_metadata(
         &self,
         module: ModuleRef,

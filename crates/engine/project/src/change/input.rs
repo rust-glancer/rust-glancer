@@ -46,19 +46,16 @@ impl SavedFileChange {
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct AnalysisChangeSummary {
     pub changed_files: Vec<ChangedFile>,
-    pub affected_packages: Vec<PackageSlot>,
     pub changed_crates: Vec<CrateRef>,
 }
 
 impl AnalysisChangeSummary {
     pub(crate) fn is_empty(&self) -> bool {
-        self.changed_files.is_empty()
-            && self.affected_packages.is_empty()
-            && self.changed_crates.is_empty()
+        self.changed_files.is_empty() && self.changed_crates.is_empty()
     }
 }
 
-/// One known package-local source file that was reparsed in place.
+/// One file whose captured revision or package membership changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 pub struct ChangedFile {
     pub package: PackageSlot,

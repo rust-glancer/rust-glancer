@@ -44,31 +44,21 @@ pub enum SourceError {
         expected: bool,
         actual: bool,
     },
-    /// A sealed generation was asked to discover or replace a source path.
-    Sealed { path: PathBuf },
+    /// A source spelling now resolves to a different canonical file.
+    PathChanged { path: PathBuf },
+    /// An optional source became readable after discovery skipped it.
+    ReadabilityChanged { path: PathBuf },
 }
 
 impl SourceError {
-    /// A best-effort source lookup can skip files that cannot be read or decoded.
-    pub fn is_unreadable(&self) -> bool {
-        matches!(self, Self::Io { .. } | Self::InvalidUtf8 { .. })
-    }
-
     /// Returns the path that invalidated an otherwise usable project generation.
     pub fn stale_path(&self) -> Option<&Path> {
         match self {
             Self::Stale { path, .. }
             | Self::Missing { path, .. }
-            | Self::ExistenceChanged { path, .. } => Some(path),
-            _ => None,
-        }
-    }
-
-    /// Preserves the underlying I/O kind for watcher races such as a file disappearing mid-save.
-    pub fn io_kind(&self) -> Option<std::io::ErrorKind> {
-        match self {
-            Self::Io { source, .. } => Some(source.kind()),
-            Self::Missing { .. } => Some(std::io::ErrorKind::NotFound),
+            | Self::ExistenceChanged { path, .. }
+            | Self::PathChanged { path }
+            | Self::ReadabilityChanged { path } => Some(path),
             _ => None,
         }
     }
@@ -90,6 +80,14 @@ impl fmt::Display for SourceError {
                 "source {} changed from revision {expected} to {actual}",
                 path.display()
             ),
+            Self::PathChanged { path } => write!(
+                f,
+                "source path {} resolved to a different file",
+                path.display()
+            ),
+            Self::ReadabilityChanged { path } => {
+                write!(f, "source {} became readable", path.display())
+            }
             Self::Missing { path, expected } => write!(
                 f,
                 "source {} at revision {expected} is missing",
@@ -104,11 +102,6 @@ impl fmt::Display for SourceError {
                 "source existence for {} changed from {expected} to {actual}",
                 path.display()
             ),
-            Self::Sealed { path } => write!(
-                f,
-                "sealed source inventory cannot discover {}",
-                path.display()
-            ),
         }
     }
 }
@@ -121,7 +114,8 @@ impl Error for SourceError {
             Self::Stale { .. }
             | Self::Missing { .. }
             | Self::ExistenceChanged { .. }
-            | Self::Sealed { .. } => None,
+            | Self::PathChanged { .. }
+            | Self::ReadabilityChanged { .. } => None,
         }
     }
 }

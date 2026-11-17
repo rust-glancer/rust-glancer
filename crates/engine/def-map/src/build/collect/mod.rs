@@ -7,10 +7,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context as _;
+use rg_cfg_eval::CfgOptions;
 use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
-use rg_item_tree::Package as ItemTreePackage;
-use rg_parse::{ModuleFileContext, Package};
-use rg_text::Name;
+use rg_item_tree::ItemTrees;
+use rg_parse::{CargoTarget, ModuleFileContext};
+use rg_text::{Name, RustEdition};
 
 use super::{
     MacroSourceFileResolutions,
@@ -22,20 +23,19 @@ use crate::{DefMapBuilder, ModuleBuilder, ModuleDocumentation, ModuleOrigin, Vis
 mod declarations;
 pub(crate) use self::declarations::DeclarationCollector;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn collect_crate(
     crate_ref: CrateRef,
-    package: &Package,
-    item_tree_package: &ItemTreePackage,
+    target: &CargoTarget,
+    edition: RustEdition,
+    cfg_options: CfgOptions,
+    item_tree_package: &ItemTrees,
     roots: HashMap<Name, ModuleRef>,
     known_module_files: Arc<KnownModuleFiles>,
 ) -> anyhow::Result<CrateBuilder> {
     let resolutions = MacroSourceFileResolutions::default();
-    let target = &package.targets()[crate_ref.crate_id.0];
-    let target_root = item_tree_package
-        .target_root(target.id)
-        .context("target root should be lowered")?;
     let root_file = item_tree_package
-        .file(target_root.root_file)
+        .file(target.root_file)
         .context("target root file should be lowered")?;
     let mut builder = DefMapBuilder::new(DefMapRef::Crate(crate_ref));
     // A target root has neither a declaration name nor a parent. All descendants use the
@@ -54,8 +54,8 @@ pub(super) fn collect_crate(
         cargo_target: target.id,
         crate_name: target.name.clone(),
         root_module,
-        edition: package.edition(),
-        cfg_options: package.cfg_options().clone(),
+        edition,
+        cfg_options,
         target_kind: target.kind.clone(),
         known_module_files,
         def_map_builder: builder,
@@ -67,14 +67,10 @@ pub(super) fn collect_crate(
         macro_directives: Vec::new(),
         macro_source_file_requests: Vec::new(),
         pending_generated_modules: Vec::new(),
-        pending_generated_includes: Vec::new(),
+        pending_includes: Vec::new(),
         macro_expansion_limit: None,
     };
-    let context = Arc::new(ModuleFileContext::for_target_root(
-        package
-            .file_path(target_root.root_file)
-            .expect("target root should have a parsed path"),
-    ));
+    let context = Arc::new(ModuleFileContext::for_target_root(&target.src_path));
     DeclarationCollector::new(
         &mut state,
         item_tree_package,
@@ -82,7 +78,7 @@ pub(super) fn collect_crate(
         MacroCallOrigin::Source,
         None,
     )
-    .collect_module_file(root_module, target_root.root_file, context)
+    .collect_module_file(root_module, target.root_file, context)
     .with_context(|| format!("collect crate scope for {}", target.name))?;
     Ok(state)
 }

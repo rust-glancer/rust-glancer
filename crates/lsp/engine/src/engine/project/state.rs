@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use rg_project::{Project, ProjectSnapshot};
+use rg_project::Project;
 
 /// Owns the one saved project used by all analysis queries in this engine.
 ///
@@ -51,10 +51,9 @@ impl ProjectState {
         mutation(saved).context("mutate saved project")
     }
 
-    pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
+    pub(super) fn saved_project(&self) -> anyhow::Result<&Project> {
         self.saved
             .as_ref()
-            .map(Project::snapshot)
             .context("saved project is not initialized")
     }
 
@@ -65,12 +64,5 @@ impl ProjectState {
             .context("saved project is not initialized")?
             .stale_saved_source_paths()
             .context("scan published project for stale saved sources")
-    }
-
-    /// Drop loads retained only to serve the request that just finished.
-    pub(super) fn release_query_memory(&mut self) {
-        if let Some(saved) = &mut self.saved {
-            saved.release_query_memory();
-        }
     }
 }

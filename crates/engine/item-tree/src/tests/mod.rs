@@ -485,34 +485,6 @@ pub fn use_it() {
 }
 
 #[test]
-fn lowers_literal_include_files_for_macro_calls() {
-    utils::check_project_item_tree_with_declarations(
-        r#"
-//- /src/lib.rs crate:include_fixture
-include!("included.rs");
-
-//- /src/included.rs
-pub struct Included;
-"#,
-        expect![[r#"
-            package include_fixture
-
-            targets
-            - include_fixture [lib] -> lib.rs
-
-            files
-            file included.rs
-            - pub struct Included
-
-            file lib.rs
-            - macro_call [include]
-              - args ("included.rs")
-              - include_file included.rs
-        "#]],
-    );
-}
-
-#[test]
 fn lowers_cfg_select_arms_as_source_fragments() {
     utils::check_project_item_tree_with_declarations(
         r#"
@@ -525,9 +497,6 @@ cfg_select! {
         pub struct Other;
     }
 }
-
-//- /src/os.rs
-pub struct Unix;
 "#,
         expect![[r#"
             package cfg_select_item_tree_fixture
@@ -543,9 +512,6 @@ pub struct Unix;
                 - module os [out_of_line]
               - cfg_select_arm 1
                 - pub struct Other
-
-            file os.rs
-            - pub struct Unix
         "#]],
     );
 }
@@ -577,79 +543,6 @@ cfg_select! {
               - cfg_select_arm 0 [lowering_failed]
               - cfg_select_arm 1
                 - pub struct Selected
-        "#]],
-    );
-}
-
-#[test]
-fn literal_include_probe_ignores_unreadable_targets() {
-    utils::check_project_item_tree_with_declarations(
-        r#"
-//- /src/lib.rs crate:shadowed_include_fixture
-macro_rules! include {
-    ($path:literal) => {};
-}
-
-include!("foo");
-
-//- /src/foo/mod.rs
-pub struct Foo;
-"#,
-        expect![[r#"
-            package shadowed_include_fixture
-
-            targets
-            - shadowed_include_fixture [lib] -> lib.rs
-
-            files
-            file lib.rs
-            - macro_definition include
-              - body {($ path : literal) => {} ;}
-            - macro_call [include]
-              - args ("foo")
-        "#]],
-    );
-}
-
-#[test]
-fn cyclic_literal_include_files_do_not_recurse_forever() {
-    utils::check_project_item_tree_with_declarations(
-        r#"
-//- /src/lib.rs crate:cyclic_include_fixture
-include!("foo.rs");
-
-//- /src/foo.rs
-pub struct Foo;
-
-include!("bar.rs");
-
-//- /src/bar.rs
-pub struct Bar;
-
-include!("foo.rs");
-"#,
-        expect![[r#"
-            package cyclic_include_fixture
-
-            targets
-            - cyclic_include_fixture [lib] -> lib.rs
-
-            files
-            file bar.rs
-            - pub struct Bar
-            - macro_call [include]
-              - args ("foo.rs")
-
-            file foo.rs
-            - pub struct Foo
-            - macro_call [include]
-              - args ("bar.rs")
-              - include_file bar.rs
-
-            file lib.rs
-            - macro_call [include]
-              - args ("foo.rs")
-              - include_file foo.rs
         "#]],
     );
 }
@@ -757,14 +650,11 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
 }
 "#,
     );
-    let package = db
-        .item_tree_db()
-        .package(0)
-        .expect("fixture item-tree package should exist");
-    let [target_root] = package.target_roots() else {
+    let trees = db.item_trees(0);
+    let [target_root] = db.parse_db().packages()[0].targets() else {
         panic!("fixture should contain one target root");
     };
-    let file_tree = package
+    let file_tree = trees
         .file(target_root.root_file)
         .expect("target root item tree should exist");
     let function = file_tree

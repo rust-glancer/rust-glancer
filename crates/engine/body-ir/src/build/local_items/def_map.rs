@@ -22,7 +22,7 @@ use rg_item_tree::{
     EnumItem, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleItem,
     ModuleSource, UseItem,
 };
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 use rg_std::CancellationToken;
 use rg_text::Name;
 
@@ -346,7 +346,7 @@ impl LocalDefMapBuildState {
         cancellation: &CancellationToken,
     ) -> anyhow::Result<DefMap>
     where
-        S: DefMapSource<Error = PackageStoreError> + Copy,
+        S: DefMapSource<Error = ReadError> + Copy,
     {
         rg_std::check_cancel!(cancellation, "local import resolution");
         // Only modules containing `use` items receive imported bindings. Lend those buffers;
@@ -401,7 +401,7 @@ struct LocalDefMapFinalizationEnv<'state, S> {
 
 impl<S> LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = PackageStoreError> + Copy,
+    S: DefMapSource<Error = ReadError> + Copy,
 {
     fn is_active_body_origin(&self, origin: DefMapRef) -> bool {
         origin == DefMapRef::Body(self.state.body_ref)
@@ -410,9 +410,9 @@ where
 
 impl<S> NameResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = PackageStoreError> + Copy,
+    S: DefMapSource<Error = ReadError> + Copy,
 {
-    type Error = PackageStoreError;
+    type Error = ReadError;
 
     fn module_metadata(
         &self,
@@ -521,7 +521,7 @@ where
 
 impl<S> MacroDefinitionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = PackageStoreError> + Copy,
+    S: DefMapSource<Error = ReadError> + Copy,
 {
     fn macro_definition_view<'a>(
         &'a self,
@@ -551,7 +551,7 @@ where
 
 impl<S> CrateResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = PackageStoreError> + Copy,
+    S: DefMapSource<Error = ReadError> + Copy,
 {
     fn extern_root(
         &self,
@@ -572,7 +572,7 @@ where
 
 impl<S> ImportCollectionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = PackageStoreError> + Copy,
+    S: DefMapSource<Error = ReadError> + Copy,
 {
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>> {
         (0..self.state.builder.module_count())

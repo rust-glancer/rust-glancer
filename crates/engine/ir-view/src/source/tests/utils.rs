@@ -1,93 +1,91 @@
-use rg_ir_model::{CrateRef, PackageSlot, Span, identity::DeclarationRef};
+use rg_body_ir::testonly::BodyIrFixture;
+use rg_ir_model::{Span, identity::DeclarationRef};
 
 use crate::{
+    IndexedViewDb,
     source::{IndexedSourceFact, IndexedSourceRole, IndexedSourceSurface, SourceOccurrenceView},
-    testonly::ViewFixture,
 };
 
 pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
-    let fixture = ViewFixture::build(fixture);
-    let package = fixture
-        .parse_db()
-        .packages()
-        .first()
-        .expect("fixture should contain one package");
-    let target = package
-        .targets()
-        .first()
-        .expect("fixture package should contain one target");
-    let file_id = package
-        .parsed_files()
-        .find(|file| file.path().ends_with("src/lib.rs"))
-        .expect("fixture should contain src/lib.rs")
-        .file_id();
-    let parsed_file = package
-        .parsed_file(file_id)
-        .expect("fixture source file should be parsed");
-    let crate_ref = CrateRef {
-        package: PackageSlot(0),
-        crate_id: rg_ir_model::CrateId(target.id.0),
-    };
-    let view_db = fixture.view_db();
-
-    let mut occurrences = Vec::new();
-    for occurrence in SourceOccurrenceView::new(&view_db)
-        .occurrences_in_crate(crate_ref, Some(file_id))
-        .expect("fixture source occurrences should scan")
-    {
-        let (fact, _, occurrence_file, span, role, surface) = occurrence.into_parts();
-        if occurrence_file != file_id {
-            continue;
-        }
-        let Some(text) = parsed_file
-            .text_for_span(span)
-            .expect("source occurrence text should load")
-        else {
-            continue;
+    let mut fixture = BodyIrFixture::build(fixture);
+    fixture.inspect(|view| {
+        let [target] = view.semantic().targets() else {
+            panic!("source occurrence fixture should have one target");
         };
-        occurrences.push((
-            text,
-            format!(
-                "{} @ {}",
-                render_occurrence(fact, role, surface),
-                render_span(
-                    span,
-                    parsed_file
-                        .line_index()
-                        .expect("fixture line index should load")
-                )
-            ),
-        ));
-    }
+        let package = &view.parse_db().packages()[target.package.0];
+        let file_id = package
+            .parsed_files()
+            .find(|file| file.path().ends_with("src/lib.rs"))
+            .expect("fixture should contain src/lib.rs")
+            .file_id();
+        let parsed_file = package
+            .parsed_file(file_id)
+            .expect("fixture source file should be parsed");
+        let line_index = parsed_file
+            .line_index()
+            .expect("fixture line index should load");
+        let view_db = IndexedViewDb::new(
+            view.semantic().definitions(),
+            view.semantic().items(),
+            view.body_reader(),
+            view.parse_db(),
+            rg_std::CancellationToken::new(),
+        );
 
-    let mut mismatches = Vec::new();
-    for (ident, expected) in cases {
-        let mut matching = occurrences
-            .iter()
-            .filter(|(text, _)| text == ident)
-            .map(|(_, rendered)| rendered.as_str())
-            .collect::<Vec<_>>();
-        matching.sort();
-
-        let actual = if matching.is_empty() {
-            "<none>".to_string()
-        } else {
-            matching.join("\n")
-        };
-        let expected = expected
-            .trim()
-            .lines()
-            .map(str::trim)
-            .collect::<Vec<_>>()
-            .join("\n");
-        if actual != expected {
-            mismatches.push(format!(
-                "unexpected occurrences for `{ident}`\nactual:\n{actual}\nexpected:\n{expected}"
+        let mut occurrences = Vec::new();
+        for occurrence in SourceOccurrenceView::new(&view_db)
+            .occurrences_in_crate(*target, Some(file_id))
+            .expect("fixture source occurrences should scan")
+        {
+            let (fact, _, occurrence_file, span, role, surface) = occurrence.into_parts();
+            if occurrence_file != file_id {
+                continue;
+            }
+            let Some(text) = parsed_file
+                .text_for_span(span)
+                .expect("source occurrence text should load")
+            else {
+                continue;
+            };
+            occurrences.push((
+                text,
+                format!(
+                    "{} @ {}",
+                    render_occurrence(fact, role, surface),
+                    render_span(span, line_index)
+                ),
             ));
         }
-    }
 
-    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+        let mut mismatches = Vec::new();
+        for (ident, expected) in cases {
+            let mut matching = occurrences
+                .iter()
+                .filter(|(text, _)| text == ident)
+                .map(|(_, rendered)| rendered.as_str())
+                .collect::<Vec<_>>();
+            matching.sort();
+
+            let actual = if matching.is_empty() {
+                "<none>".to_string()
+            } else {
+                matching.join("\n")
+            };
+            let expected = expected
+                .trim()
+                .lines()
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join("\n");
+            if actual != expected {
+                mismatches.push(format!(
+                    "unexpected occurrences for `{ident}`\nactual:\n{actual}\nexpected:\n{expected}"
+                ));
+            }
+        }
+
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    });
 }
 
 fn render_span(span: Span, line_index: &rg_parse::LineIndex) -> String {

@@ -6,7 +6,7 @@ use std::{
 };
 
 use rg_ir_model::{ImplRef, TraitDefRef, TraitImplRef, TypeDefRef};
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -28,8 +28,8 @@ impl BodyLocalItemCache {
     /// Publish only a complete index. A package-loading error leaves the cache empty for retry.
     pub(crate) fn index_or_try_init(
         &self,
-        load: impl FnOnce() -> Result<BodyLocalItemIndex, PackageStoreError>,
-    ) -> Result<&BodyLocalItemIndex, PackageStoreError> {
+        load: impl FnOnce() -> Result<BodyLocalItemIndex, ReadError>,
+    ) -> Result<&BodyLocalItemIndex, ReadError> {
         if let Some(index) = self.index.get() {
             return Ok(index);
         }

@@ -7,8 +7,8 @@
 use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::{BodyRef, Path, ScopeId};
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, ItemStoreSource, TypePathResolution};
+use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, SemanticItemSource, TypePathResolution};
+use rg_source::ReadError;
 use rg_std::CancellationToken;
 use rg_ty::{
     Ty, TyContext,
@@ -54,8 +54,8 @@ impl<D, I> rg_std::Cancelable for BodyResolutionContext<'_, D, I> {
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Clone,
-    I: ItemStoreSource<'a, Error = PackageStoreError> + Clone,
+    D: DefMapSource<Error = ReadError> + Clone,
+    I: SemanticItemSource<'a, Error = ReadError> + Clone,
 {
     pub fn new(
         def_maps: D,
@@ -69,7 +69,6 @@ where
             def_maps.clone(),
             item_stores.clone(),
             item_lookup_query.clone(),
-            body_ref.crate_ref,
             cancellation,
         );
         Self {
@@ -115,8 +114,8 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'a, Error = ReadError> + Copy,
 {
     pub(crate) fn def_map_query(&self) -> DefMapQuery<D> {
         DefMapQuery::new(self.def_maps)
@@ -149,11 +148,7 @@ where
     }
 
     /// Lower source-shaped type syntax with the generic and lexical scope of this body.
-    pub fn resolve_type_ref(
-        &self,
-        scope: ScopeId,
-        type_ref: &TypeRef,
-    ) -> Result<Ty, PackageStoreError> {
+    pub fn resolve_type_ref(&self, scope: ScopeId, type_ref: &TypeRef) -> Result<Ty, ReadError> {
         self.type_refs(scope).resolve(type_ref)
     }
 
@@ -185,7 +180,7 @@ where
         &self,
         scope: ScopeId,
         prefix: &crate::BodyAssociatedPathPrefix,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         self.associated_items().candidates_for_prefix(scope, prefix)
     }
 
@@ -194,7 +189,7 @@ where
         &self,
         scope: ScopeId,
         trait_ref: &TypeRef,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         self.associated_items()
             .candidates_for_trait_ref(scope, trait_ref)
     }
@@ -226,10 +221,10 @@ where
 
 impl<'a, D, I> TypePathResolver for BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'a, Error = ReadError> + Copy,
 {
-    type Error = PackageStoreError;
+    type Error = ReadError;
 
     fn resolve_type_path(
         &self,
@@ -249,13 +244,13 @@ where
 
 impl<'a, D, I> rg_ty::solver::SolverScope for BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'a, Error = ReadError> + Copy,
 {
     fn local_trait_impls(
         &self,
         trait_ref: rg_ir_model::TraitDefRef,
-    ) -> Result<Vec<rg_ir_model::TraitImplRef>, PackageStoreError> {
+    ) -> Result<Vec<rg_ir_model::TraitImplRef>, ReadError> {
         Ok(self
             .body_local_items()
             .trait_impls_for_traits(&[trait_ref])?

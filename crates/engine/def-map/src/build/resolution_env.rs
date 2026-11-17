@@ -11,52 +11,35 @@
 //! used directly. Selected crates never fall back to their old frozen data.
 
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef,
+    CrateRef, DefId, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef,
 };
-use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
 use super::{
     crates::CrateBuilder,
     imports::{ImportCollectionEnv, ModuleImportInput},
-    output::CompletedCrateStore,
 };
 use crate::{
-    CrateData, CrateResolutionEnv, DefMapReadTxn, ImportData, LocalDefData, LocalEnumVariantData,
-    LocalEnumVariantEntry, MacroDefinitionEnv, MacroDefinitionView, ModuleBuilder, ModuleData,
-    ModuleResolutionView, NameBinding, NameBindingsView, NameResolutionEnv, Namespace,
+    CrateResolutionEnv, ImportData, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
+    MacroDefinitionEnv, MacroDefinitionView, ModuleBuilder, ModuleResolutionView, NameBinding,
+    NameBindingsView, NameResolutionEnv, Namespace,
 };
 
 /// Reads the active builder alongside completed and unchanged frozen crates.
 ///
 /// This type supplies storage access, not import scheduling. Its extra import methods expose
 /// declaration lists and the proc-macro export rule for the active builder.
-pub(crate) struct BuildResolutionEnv<'a> {
-    baseline: &'a DefMapReadTxn<'a>,
-    completed: &'a CompletedCrateStore,
+pub(crate) struct BuildResolutionEnv<'a, E> {
+    dependencies: &'a E,
     state: &'a CrateBuilder,
 }
 
-impl<'a> BuildResolutionEnv<'a> {
-    pub(crate) fn new(
-        baseline: &'a DefMapReadTxn<'a>,
-        completed: &'a CompletedCrateStore,
-        state: &'a CrateBuilder,
-    ) -> Self {
+impl<'a, E> BuildResolutionEnv<'a, E> {
+    pub(crate) fn new(dependencies: &'a E, state: &'a CrateBuilder) -> Self {
         Self {
-            baseline,
-            completed,
+            dependencies,
             state,
         }
-    }
-
-    /// A selected package never falls back to its previous snapshot, even if a crate slot has
-    /// not been filled yet. Dependency order makes all reachable external crates complete.
-    fn frozen_crate(&self, krate: CrateRef) -> Result<Option<&CrateData>, PackageStoreError> {
-        if self.completed.contains_package(krate.package) {
-            return Ok(self.completed.crate_data(krate));
-        }
-        self.baseline.crate_data(krate)
     }
 
     fn active_crate(&self, krate: CrateRef) -> Option<&CrateBuilder> {
@@ -64,8 +47,8 @@ impl<'a> BuildResolutionEnv<'a> {
     }
 }
 
-impl NameResolutionEnv for BuildResolutionEnv<'_> {
-    type Error = PackageStoreError;
+impl<E: NameResolutionEnv> NameResolutionEnv for BuildResolutionEnv<'_, E> {
+    type Error = E::Error;
 
     fn module_metadata(
         &self,
@@ -80,14 +63,7 @@ impl NameResolutionEnv for BuildResolutionEnv<'_> {
                 .map(ModuleBuilder::resolution_view));
         }
 
-        let Some(crate_ref) = module_ref.origin.as_crate_ref() else {
-            return Ok(None);
-        };
-        Ok(self
-            .frozen_crate(crate_ref)?
-            .map(CrateData::def_map)
-            .and_then(|def_map| def_map.module(module_ref.module))
-            .map(ModuleData::resolution_view))
+        self.dependencies.module_metadata(module_ref)
     }
 
     fn module_scope_entry<'a>(
@@ -95,32 +71,21 @@ impl NameResolutionEnv for BuildResolutionEnv<'_> {
         module_ref: ModuleRef,
         name: &str,
     ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
-        let Some(crate_ref) = module_ref.origin.as_crate_ref() else {
-            return Ok(None);
-        };
-        if crate_ref == self.state.crate_ref {
+        if module_ref.origin.as_crate_ref() == Some(self.state.crate_ref) {
             return Ok(self
                 .state
                 .def_map_builder
                 .module_scope(module_ref.module)
                 .and_then(|scope| scope.entry(name)));
         }
-
-        Ok(self
-            .frozen_crate(crate_ref)?
-            .and_then(|krate| krate.def_map().module(module_ref.module))
-            .and_then(|module| module.scope.entry(name))
-            .map(|entry| entry.as_view()))
+        self.dependencies.module_scope_entry(module_ref, name)
     }
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
     ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
-        let Some(crate_ref) = module_ref.origin.as_crate_ref() else {
-            return Ok(Vec::new());
-        };
-        if crate_ref == self.state.crate_ref {
+        if module_ref.origin.as_crate_ref() == Some(self.state.crate_ref) {
             return Ok(self
                 .state
                 .def_map_builder
@@ -128,18 +93,7 @@ impl NameResolutionEnv for BuildResolutionEnv<'_> {
                 .map(|scope| scope.entries().collect())
                 .unwrap_or_default());
         }
-
-        Ok(self
-            .frozen_crate(crate_ref)?
-            .and_then(|krate| krate.def_map().module(module_ref.module))
-            .map(|module| {
-                module
-                    .scope
-                    .entries()
-                    .map(|(name, entry)| (name, entry.as_view()))
-                    .collect()
-            })
-            .unwrap_or_default())
+        self.dependencies.module_scope_entries(module_ref)
     }
 
     fn local_def_data(
@@ -152,13 +106,7 @@ impl NameResolutionEnv for BuildResolutionEnv<'_> {
             return Ok(state.def_map_builder.local_def(local_def_ref.local_def));
         }
 
-        let Some(crate_ref) = local_def_ref.origin.as_crate_ref() else {
-            return Ok(None);
-        };
-        Ok(self
-            .frozen_crate(crate_ref)?
-            .map(CrateData::def_map)
-            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+        self.dependencies.local_def_data(local_def_ref)
     }
 
     fn local_enum_variant_data(
@@ -173,13 +121,7 @@ impl NameResolutionEnv for BuildResolutionEnv<'_> {
                 .local_enum_variant(variant_ref.local_enum_variant));
         }
 
-        let Some(crate_ref) = variant_ref.origin.as_crate_ref() else {
-            return Ok(None);
-        };
-        Ok(self
-            .frozen_crate(crate_ref)?
-            .map(CrateData::def_map)
-            .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
+        self.dependencies.local_enum_variant_data(variant_ref)
     }
 
     fn local_enum_variant_entries_for_enum<'a>(
@@ -195,19 +137,12 @@ impl NameResolutionEnv for BuildResolutionEnv<'_> {
                 .collect());
         }
 
-        if let Some(crate_ref) = enum_def.origin.as_crate_ref()
-            && let Some(def_map) = self.frozen_crate(crate_ref)?.map(CrateData::def_map)
-        {
-            Ok(def_map
-                .local_enum_variant_entries_for_enum(enum_def.local_def)
-                .collect())
-        } else {
-            Ok(Vec::new())
-        }
+        self.dependencies
+            .local_enum_variant_entries_for_enum(enum_def)
     }
 }
 
-impl MacroDefinitionEnv for BuildResolutionEnv<'_> {
+impl<E: MacroDefinitionEnv> MacroDefinitionEnv for BuildResolutionEnv<'_, E> {
     fn macro_definition_view<'a>(
         &'a self,
         def: DefId,
@@ -215,31 +150,21 @@ impl MacroDefinitionEnv for BuildResolutionEnv<'_> {
         let DefId::Local(def_ref) = def else {
             return Ok(None);
         };
-        let Some(local_def) = self.local_def_data(def_ref)? else {
+        if def_ref.origin.as_crate_ref() != Some(self.state.crate_ref) {
+            return self.dependencies.macro_definition_view(def);
+        }
+        let Some(local_def) = self.state.def_map_builder.local_def(def_ref.local_def) else {
             return Ok(None);
         };
-
-        let data = if let Some(crate_ref) = def_ref.origin.as_crate_ref()
-            && let Some(state) = self.active_crate(crate_ref)
-        {
-            state.def_map_builder.macro_definition(def_ref.local_def)
-        } else {
-            let Some(crate_ref) = def_ref.origin.as_crate_ref() else {
-                return Ok(None);
-            };
-            self.frozen_crate(crate_ref)?
-                .map(CrateData::def_map)
-                .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
-        };
-        let Some(data) = data else {
-            return Ok(None);
-        };
-
-        Ok(MacroDefinitionView::new(def_ref, local_def, data))
+        Ok(self
+            .state
+            .def_map_builder
+            .macro_definition(def_ref.local_def)
+            .and_then(|data| MacroDefinitionView::new(def_ref, local_def, data)))
     }
 }
 
-impl CrateResolutionEnv for BuildResolutionEnv<'_> {
+impl<E: CrateResolutionEnv> CrateResolutionEnv for BuildResolutionEnv<'_, E> {
     fn extern_root(
         &self,
         crate_ref: CrateRef,
@@ -248,38 +173,28 @@ impl CrateResolutionEnv for BuildResolutionEnv<'_> {
         if let Some(state) = self.active_crate(crate_ref) {
             return Ok(state.extern_prelude.resolve(name));
         }
-
-        Ok(self
-            .frozen_crate(crate_ref)?
-            .and_then(|data| data.extern_prelude().get(name).copied()))
+        self.dependencies.extern_root(crate_ref, name)
     }
 
     fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
         if let Some(state) = self.active_crate(crate_ref) {
             return Ok(state.prelude);
         }
-
-        Ok(self
-            .frozen_crate(crate_ref)?
-            .and_then(|data| data.prelude()))
+        self.dependencies.prelude_module(crate_ref)
     }
 
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
-        let module = if let Some(state) = self.active_crate(crate_ref) {
-            Some(state.root_module)
-        } else {
-            self.frozen_crate(crate_ref)?
-                .and_then(|data| data.root_module())
-        };
-
-        Ok(module.map(|module| ModuleRef {
-            origin: DefMapRef::Crate(crate_ref),
-            module,
-        }))
+        if let Some(state) = self.active_crate(crate_ref) {
+            return Ok(Some(ModuleRef::krate(crate_ref, state.root_module)));
+        }
+        self.dependencies.root_module(crate_ref)
     }
 }
 
-impl ImportCollectionEnv for BuildResolutionEnv<'_> {
+impl<E> ImportCollectionEnv for BuildResolutionEnv<'_, E>
+where
+    E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>,
+{
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>> {
         let mut result = Vec::new();
         let state = self.state;

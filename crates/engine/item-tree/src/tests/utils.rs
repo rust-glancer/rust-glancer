@@ -7,7 +7,7 @@ use rg_parse::{CargoTarget, Package};
 use crate::{
     BuiltinMacroItem, CfgSelectArmPayload, FieldItem, FieldList, FileTree, ItemKind, ItemNode,
     ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource, ParamKind,
-    TargetRoot, VisibilityLevel, testonly::ItemTreeFixture,
+    VisibilityLevel, testonly::ItemTreeFixture,
 };
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
@@ -43,11 +43,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
             .sorted_packages()
             .into_iter()
             .map(|(package_slot, package)| {
-                let item_trees = self
-                    .db
-                    .item_tree_db()
-                    .package(package_slot)
-                    .expect("package item trees should exist while rendering snapshot");
+                let item_trees = self.db.item_trees(package_slot);
                 PackageItemTreeSnapshot {
                     package,
                     item_trees,
@@ -77,7 +73,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
 /// Renders target/file sections such as `file lib.rs`.
 struct PackageItemTreeSnapshot<'a> {
     package: &'a Package,
-    item_trees: &'a crate::Package,
+    item_trees: &'a crate::ItemTrees,
     mode: SnapshotMode,
 }
 
@@ -86,12 +82,8 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         let target_dumps = self
             .sorted_target_roots()
             .into_iter()
-            .map(|target_root| {
-                let target = self
-                    .package
-                    .target(target_root.target)
-                    .expect("parsed target should exist while rendering snapshot");
-                self.render_target_root(target, target_root.root_file)
+            .map(|target| {
+                self.render_target_root(target, target.root_file)
                     .trim_end()
                     .to_string()
             })
@@ -301,17 +293,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 }
                 if let Some(builtin) = &macro_call.builtin {
                     match builtin {
-                        BuiltinMacroItem::Include { path } => {
-                            if let Some(file) = self.item_trees.included_file(file_tree.file, path)
-                            {
-                                writeln!(
-                                    dump,
-                                    "{indent}  - include_file {}",
-                                    self.file_label(file)
-                                )
-                                .expect("string writes should not fail");
-                            }
-                        }
+                        BuiltinMacroItem::Include { .. } => {}
                         BuiltinMacroItem::CfgSelect { arms } => {
                             for (arm_idx, arm) in arms.iter().enumerate() {
                                 match &arm.payload {
@@ -514,18 +496,9 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         parts.join(", ")
     }
 
-    fn sorted_target_roots(&self) -> Vec<&TargetRoot> {
-        let mut target_roots = self.item_trees.target_roots().iter().collect::<Vec<_>>();
-        target_roots.sort_by(|left, right| {
-            let left_target = self
-                .package
-                .target(left.target)
-                .expect("parsed target should exist while sorting item-tree target roots");
-            let right_target = self
-                .package
-                .target(right.target)
-                .expect("parsed target should exist while sorting item-tree target roots");
-
+    fn sorted_target_roots(&self) -> Vec<&CargoTarget> {
+        let mut target_roots = self.package.targets().iter().collect::<Vec<_>>();
+        target_roots.sort_by(|left_target, right_target| {
             (
                 left_target.kind.sort_order(),
                 left_target.name.as_str(),

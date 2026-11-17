@@ -13,12 +13,13 @@ use std::{
 };
 
 use rg_arena::Arena;
-use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{BodyId, BodyRef, CrateRef};
-use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery, SemanticIrReadTxn};
+use rg_cfg_eval::CfgEvaluator;
+use rg_def_map::DefinitionReader;
+use rg_ir_model::{BodyId, BodyRef, BodyRoot, CrateRef};
+use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemReader};
 
 use super::lower::{BodyTaskSource, LoweredCrateBodies};
-use crate::{BodyFacts, BodyLocalItems, CrateBodies};
+use crate::{BodyFacts, BodyLocalItems, BodyStore};
 
 // Phase logs explain a slow crate-level build without emitting one event for every normal phase.
 const SLOW_CRATE_RESOLUTION_PHASE: Duration = Duration::from_secs(1);
@@ -41,7 +42,8 @@ pub(super) struct BodySemanticTimings {
 /// Coordinates all body-local facts needed to resolve one crate's bodies.
 pub(super) struct CrateBodyBuildState<'crate_data> {
     crate_ref: CrateRef,
-    parse_package: &'crate_data rg_parse::Package,
+    source: BodyTaskSource<'crate_data>,
+    root: BodyRoot,
     crate_bodies: LoweredCrateBodies,
     /// Project identities for the bodies in the temporary worklist.
     ///
@@ -59,21 +61,27 @@ pub(super) struct CrateBodyBuildState<'crate_data> {
 impl<'crate_data> CrateBodyBuildState<'crate_data> {
     pub(super) fn new(
         crate_ref: CrateRef,
-        parse_package: &'crate_data rg_parse::Package,
+        source: BodyTaskSource<'crate_data>,
+        root: BodyRoot,
         crate_bodies: LoweredCrateBodies,
         cancellation: rg_std::CancellationToken,
     ) -> Self {
         let mut body_refs = Arena::with_capacity(crate_bodies.bodies().len());
         let mut body_slots = HashMap::with_capacity(crate_bodies.bodies().len());
         for (body, _) in crate_bodies.bodies().iter_with_ids() {
-            let body_ref = BodyRef { crate_ref, body };
+            let body_ref = BodyRef {
+                crate_ref,
+                root,
+                body,
+            };
             let allocated = body_refs.alloc(body_ref);
             debug_assert_eq!(allocated, body);
             body_slots.insert(body_ref, body);
         }
         Self {
             crate_ref,
-            parse_package,
+            source,
+            root,
             crate_bodies,
             body_refs,
             body_slots,
@@ -113,7 +121,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             .collect();
         Ok(Self {
             crate_ref,
-            parse_package,
+            source: BodyTaskSource::Parsed(parse_package),
+            root: BodyRoot::Current,
             crate_bodies,
             body_refs: Arena::from_vec(body_refs),
             body_slots,
@@ -130,10 +139,11 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     /// surrounding project build.
     pub(super) fn resolve(
         mut self,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
         item_lookup_cache: &ItemLookupQueryCache,
-    ) -> anyhow::Result<CrateBodies> {
+        cfg: CfgEvaluator<'_>,
+    ) -> anyhow::Result<BodyStore> {
         let span = tracing::debug_span!(
             "body_ir_crate_resolution",
             rg.crate_id = self.crate_ref.crate_id.0,
@@ -146,17 +156,14 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // blocks to their corresponding `Self` types.
         let phase_started = Instant::now();
         let crate_ref = self.crate_ref;
-        self.materialize_body_local_items(
-            def_map,
-            semantic_ir,
-            BodyTaskSource::Saved(self.parse_package),
-            |lowered| {
-                Ok(BodyRef {
-                    crate_ref,
-                    body: lowered.body,
-                })
-            },
-        )?;
+        let root = self.root;
+        self.materialize_body_local_items(def_map, semantic_ir, self.source, cfg, |lowered| {
+            Ok(BodyRef {
+                root,
+                crate_ref,
+                body: lowered.body,
+            })
+        })?;
         let elapsed = phase_started.elapsed();
         let body_local_items_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
@@ -173,7 +180,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // `BodyBuildQuerySource`.
         let phase_started = Instant::now();
         let item_lookup_query = ItemLookupQuery::build_with_cache(
-            &ItemStoreQuery::new(semantic_ir),
+            *semantic_ir,
             self.crate_ref,
             item_lookup_cache,
             &self.cancellation,

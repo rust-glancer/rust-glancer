@@ -13,7 +13,6 @@ ajika.workspace = true
 anyhow.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 rg_syntax.workspace = true
-rayon.workspace = true
 wincode.workspace = true
 rg_arena.workspace = true
 rg_cfg_eval.workspace = true
@@ -26,9 +25,9 @@ rg_text.workspace = true
 rg_tt.workspace = true
 rg_wincode_utils.workspace = true
 rg_workspace.workspace = true
-test_fixture.workspace = true
 
 [dev-dependencies]
+test_fixture.workspace = true
 expect-test.workspace = true
 
 [lints]

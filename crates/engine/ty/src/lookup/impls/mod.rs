@@ -9,7 +9,8 @@ mod trait_impl;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::ImplRef;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
+use rg_std::OperationError;
 
 pub(crate) use self::candidates::TraitImplFilter;
 pub use self::receiver::{InherentImplMatch, ReceiverImplMatches};
@@ -30,7 +31,7 @@ pub struct ImplQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
 impl<'query, D, I> ImplQuery<'query, D, I, ItemPathQuery<'query, D, I>>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let resolver = context.item_paths().clone();
@@ -41,7 +42,7 @@ where
 impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
     R: SolverScope<Error = D::Error>,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
@@ -64,7 +65,7 @@ where
         &self,
         impl_ref: ImplRef,
         receiver_ty: &Ty,
-    ) -> Result<Option<Substitution>, D::Error> {
+    ) -> Result<Option<Substitution>, OperationError<D::Error>> {
         TraitSelectionQuery::with_resolver(self.context.clone(), &self.resolver)
             .match_impl_header(impl_ref, receiver_ty)
     }

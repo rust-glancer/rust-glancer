@@ -57,16 +57,15 @@ pub fn inspect() {}
         .build()
         .expect("saved project should build");
     let saved_stats = project.stats();
-    assert_eq!(saved_stats.body_ir.missing_crate_count, 0);
 
-    let snapshot = project.snapshot();
-    let context = snapshot
-        .file_context_for_path(source.path("src/lib.rs"))
-        .expect("fixture source should resolve")
-        .expect("fixture source has a context");
-    let target = (context.crate_ref, context.file);
-    let current = MarkedText::parse(
-        r#"
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(source.path("src/lib.rs"))
+            .expect("fixture source should resolve")
+            .expect("fixture source has a context");
+        let target = (context.crate_ref, context.file);
+        let current = MarkedText::parse(
+            r#"
 pub struct Saved;
 
 impl Saved {
@@ -83,56 +82,56 @@ pub fn inspect() {
     Saved::ass$associated$;
 }
 "#,
-    );
-
-    // Current-body analysis owns its lookup data without changing the saved declarations.
-    for (marker, expected) in [("method", "method"), ("associated", "associated")] {
-        let offset = current
-            .offset(marker)
-            .try_into()
-            .expect("completion marker should fit into u32");
-        let completion_source = CompletionSource::new(current.text(), offset)
-            .expect("current source should produce completion syntax");
-        let (analysis, summary) = snapshot
-            .analysis_for_current_source(
-                target,
-                snapshot
-                    .prepare_current_source(
-                        target,
-                        current.text(),
-                        &rg_std::CancellationToken::new(),
-                    )
-                    .expect("capture current source"),
-                CurrentSourceSelection::AtOffset(offset),
-                CancellationToken::new(),
-                |_| Ok(()),
-            )
-            .expect("saved current body should build");
-        let labels = analysis
-            .completions_at(
-                CompletionQuery::new(target.0, target.1, offset)
-                    .with_completion_source(&completion_source),
-            )
-            .expect("saved completion should resolve")
-            .into_iter()
-            .map(|item| item.label)
-            .collect::<Vec<_>>();
-
-        assert!(
-            labels.iter().any(|label| label == expected),
-            "completion at {marker} should contain {expected}, got {labels:?}",
         );
-        assert!(
-            summary.is_complete(),
-            "saved completion should build every selected current body: {summary:?}",
-        );
-    }
 
-    assert_eq!(
-        project.stats(),
-        saved_stats,
-        "request-local lookup construction must not change the saved project",
-    );
+        // Current-body analysis owns its lookup data without changing the saved declarations.
+        for (marker, expected) in [("method", "method"), ("associated", "associated")] {
+            let offset = current
+                .offset(marker)
+                .try_into()
+                .expect("completion marker should fit into u32");
+            let completion_source = CompletionSource::new(current.text(), offset)
+                .expect("current source should produce completion syntax");
+            let (analysis, summary) = snapshot
+                .analysis_for_current_source(
+                    target,
+                    snapshot
+                        .prepare_current_source(
+                            target,
+                            current.text(),
+                            &rg_std::CancellationToken::new(),
+                        )
+                        .expect("capture current source"),
+                    CurrentSourceSelection::AtOffset(offset),
+                    |_| Ok(()),
+                )
+                .expect("saved current body should build");
+            let labels = analysis
+                .completions_at(
+                    CompletionQuery::new(target.0, target.1, offset)
+                        .with_completion_source(&completion_source),
+                )
+                .expect("saved completion should resolve")
+                .into_iter()
+                .map(|item| item.label)
+                .collect::<Vec<_>>();
+
+            assert!(
+                labels.iter().any(|label| label == expected),
+                "completion at {marker} should contain {expected}, got {labels:?}",
+            );
+            assert!(
+                summary.is_complete(),
+                "saved completion should build every selected current body: {summary:?}",
+            );
+        }
+
+        assert_eq!(
+            project.stats(),
+            saved_stats,
+            "request-local lookup construction must not change the saved project",
+        );
+    })
 }
 
 #[test]
@@ -468,45 +467,49 @@ fn current_declaration_headers_use_request_local_semantics() {
         .offset("cursor")
         .try_into()
         .expect("header marker should fit into u32");
-    let snapshot = fixture.fixture.project().snapshot();
     let target = fixture.target();
-    let (analysis, _) = snapshot
-        .analysis_for_current_source(
-            target,
-            snapshot
-                .prepare_current_source(target, current.text(), &rg_std::CancellationToken::new())
-                .expect("capture current source"),
-            CurrentSourceSelection::AtOffset(offset),
-            CancellationToken::new(),
-            |_| Ok(()),
-        )
-        .expect("current impl header should build");
-    let (crate_ref, file) = target;
-    let hover = analysis
-        .hover(crate_ref, file, offset)
-        .expect("current impl header hover should resolve")
-        .expect("Saved should have hover information");
-    assert!(
-        hover.blocks.iter().any(|block| block
-            .path
-            .as_deref()
-            .is_some_and(|path| path.ends_with("Saved"))),
-        "hover should resolve the current path to Saved: {hover:?}",
-    );
-    assert!(
-        analysis
-            .type_at(crate_ref, file, offset)
-            .expect("current impl header type should resolve")
-            .is_some(),
-        "type lookup should resolve the current path to Saved",
-    );
-    let targets = analysis
-        .goto_definition(crate_ref, file, offset)
-        .expect("current impl header navigation should resolve");
-    assert!(
-        targets.iter().any(|target| target.name == "Saved"),
-        "navigation should resolve the current path to Saved: {targets:?}",
-    );
+    fixture.fixture.project().inspect(|snapshot| {
+        let (analysis, _) = snapshot
+            .analysis_for_current_source(
+                target,
+                snapshot
+                    .prepare_current_source(
+                        target,
+                        current.text(),
+                        &rg_std::CancellationToken::new(),
+                    )
+                    .expect("capture current source"),
+                CurrentSourceSelection::AtOffset(offset),
+                |_| Ok(()),
+            )
+            .expect("current impl header should build");
+        let (crate_ref, file) = target;
+        let hover = analysis
+            .hover(crate_ref, file, offset)
+            .expect("current impl header hover should resolve")
+            .expect("Saved should have hover information");
+        assert!(
+            hover.blocks.iter().any(|block| block
+                .path
+                .as_deref()
+                .is_some_and(|path| path.ends_with("Saved"))),
+            "hover should resolve the current path to Saved: {hover:?}",
+        );
+        assert!(
+            analysis
+                .type_at(crate_ref, file, offset)
+                .expect("current impl header type should resolve")
+                .is_some(),
+            "type lookup should resolve the current path to Saved",
+        );
+        let targets = analysis
+            .goto_definition(crate_ref, file, offset)
+            .expect("current impl header navigation should resolve");
+        assert!(
+            targets.iter().any(|target| target.name == "Saved"),
+            "navigation should resolve the current path to Saved: {targets:?}",
+        );
+    })
 }
 
 #[test]
@@ -861,7 +864,6 @@ pub fn inspect() {
 }
 "#,
     );
-    let snapshot = fixture.fixture.project().snapshot();
     let target = fixture.target();
     let offset = current
         .offset("cursor")
@@ -881,26 +883,33 @@ pub fn inspect() {
     for (index, stop_at) in checkpoints.into_iter().enumerate() {
         let mut visited = Vec::new();
         let cancellation = CancellationToken::new();
-        let error = match snapshot.analysis_for_current_source(
-            target,
-            snapshot
-                .prepare_current_source(target, current.text(), &rg_std::CancellationToken::new())
-                .expect("capture current source"),
-            CurrentSourceSelection::AtOffset(offset),
-            cancellation.clone(),
-            |checkpoint| {
-                visited.push(checkpoint);
-                if checkpoint == stop_at {
-                    cancellation.cancel();
-                }
-                Ok(())
-            },
-        ) {
-            Ok(_) => panic!("cancellation at {stop_at} should stop current-body construction"),
-            Err(error) => error,
-        };
-
-        assert!(error.chain().any(|cause| cause.is::<rg_std::Cancelled>()));
+        let error = fixture
+            .fixture
+            .project()
+            .with_snapshot(cancellation.clone(), |snapshot| {
+                let source =
+                    snapshot.prepare_current_source(target, current.text(), &cancellation)?;
+                snapshot
+                    .analysis_for_current_source(
+                        target,
+                        source,
+                        CurrentSourceSelection::AtOffset(offset),
+                        |checkpoint| {
+                            visited.push(checkpoint);
+                            if checkpoint == stop_at {
+                                cancellation.cancel();
+                            }
+                            Ok(())
+                        },
+                    )
+                    .map(|_| ())
+            })
+            .expect_err("cancelled current-body analysis should stop");
+        assert!(error.chain().any(|cause| {
+            cause
+                .downcast_ref::<ajika::Error>()
+                .is_some_and(ajika::Error::is_cancelled)
+        }));
         assert_eq!(
             visited,
             checkpoints[..=index],
@@ -925,46 +934,46 @@ pub fn unselected() {
 }
 "#,
     );
-    let snapshot = fixture.fixture.project().snapshot();
     let target = fixture.target();
-    let (first_crate, first_file) = target;
-    let current = snapshot
-        .file_source_text(first_crate.package, first_file)
-        .expect("saved fixture source should load")
-        .expect("saved fixture source should exist");
-    let offset = current
-        .find("let selected")
-        .expect("selected body should exist in saved fixture")
-        .try_into()
-        .expect("selected body offset should fit into u32");
-    let source = snapshot
-        .prepare_current_source(target, &current, &rg_std::CancellationToken::new())
-        .expect("exact current source should prepare");
-    let (crate_ref, file) = target;
-    assert_eq!(
-        source.relationship(crate_ref.package, file),
-        Some(SavedSourceRelationship::Exact),
-    );
+    fixture.fixture.project().inspect(|snapshot| {
+        let (first_crate, first_file) = target;
+        let current = snapshot
+            .file_source_text(first_crate.package, first_file)
+            .expect("saved fixture source should load")
+            .expect("saved fixture source should exist");
+        let offset = current
+            .find("let selected")
+            .expect("selected body should exist in saved fixture")
+            .try_into()
+            .expect("selected body offset should fit into u32");
+        let source = snapshot
+            .prepare_current_source(target, &current, &rg_std::CancellationToken::new())
+            .expect("exact current source should prepare");
+        let (crate_ref, file) = target;
+        assert_eq!(
+            source.relationship(crate_ref.package, file),
+            Some(SavedSourceRelationship::Exact),
+        );
 
-    let (analysis, summary) = snapshot
-        .analysis_for_current_source(
-            target,
-            source,
-            CurrentSourceSelection::AtOffset(offset),
-            CancellationToken::new(),
-            |_| Ok(()),
-        )
-        .expect("selected exact body should build");
+        let (analysis, summary) = snapshot
+            .analysis_for_current_source(
+                target,
+                source,
+                CurrentSourceSelection::AtOffset(offset),
+                |_| Ok(()),
+            )
+            .expect("selected exact body should build");
 
-    assert!(summary.is_complete());
-    let (crate_ref, file) = target;
-    let hints = analysis
-        .inlay_hints(crate_ref, file, None, None)
-        .expect("exact analysis should retain hints from unselected saved bodies");
-    assert!(
-        hints.iter().any(|hint| hint.label == ": Saved"),
-        "the unselected saved body should remain visible: {hints:?}",
-    );
+        assert!(summary.is_complete());
+        let (crate_ref, file) = target;
+        let hints = analysis
+            .inlay_hints(crate_ref, file, None, None)
+            .expect("exact analysis should retain hints from unselected saved bodies");
+        assert!(
+            hints.iter().any(|hint| hint.label == ": Saved"),
+            "the unselected saved body should remain visible: {hints:?}",
+        );
+    })
 }
 
 #[test]
@@ -1023,8 +1032,8 @@ fn unfinished
             .try_into()
             .expect("range end should fit into u32"),
     };
-    let snapshot = fixture.fixture.project().snapshot();
     let target = fixture.target();
+    fixture.fixture.project().inspect(|snapshot| {
     let source = snapshot
         .prepare_current_source(target, current.text(), &rg_std::CancellationToken::new())
         .expect("current range source should prepare");
@@ -1033,7 +1042,7 @@ fn unfinished
             target,
             source,
             CurrentSourceSelection::IntersectingRange(range),
-            CancellationToken::new(),
+
             |_| Ok(()),
         )
         .expect("current bodies in the requested range should build");
@@ -1051,6 +1060,7 @@ fn unfinished
         hints.iter().any(|hint| hint.label == ": Value"),
         "the selected current body should contribute its inferred local type: {hints:?}",
     );
+    })
 }
 
 #[test]
@@ -1077,30 +1087,30 @@ pub fn inspect() {
             .try_into()
             .expect("current source length should fit into u32"),
     };
-    let snapshot = fixture.fixture.project().snapshot();
     let target = fixture.target();
-    let source = snapshot
-        .prepare_current_source(target, current, &rg_std::CancellationToken::new())
-        .expect("current range source should prepare");
-    let (analysis, summary) = snapshot
-        .analysis_for_current_source(
-            target,
-            source,
-            CurrentSourceSelection::IntersectingRange(range),
-            CancellationToken::new(),
-            |_| Ok(()),
-        )
-        .expect("ambiguous current roots should fail closed without breaking the request");
+    fixture.fixture.project().inspect(|snapshot| {
+        let source = snapshot
+            .prepare_current_source(target, current, &rg_std::CancellationToken::new())
+            .expect("current range source should prepare");
+        let (analysis, summary) = snapshot
+            .analysis_for_current_source(
+                target,
+                source,
+                CurrentSourceSelection::IntersectingRange(range),
+                |_| Ok(()),
+            )
+            .expect("ambiguous current roots should fail closed without breaking the request");
 
-    assert!(summary.rebuilt_body_spans().is_empty());
-    assert_eq!(summary.unavailable().len(), 2);
-    assert!(
-        summary
-            .unavailable()
-            .iter()
-            .all(|reason| *reason == CurrentSourceUnavailable::AmbiguousSavedOwner),
-    );
-    drop(analysis);
+        assert!(summary.rebuilt_body_spans().is_empty());
+        assert_eq!(summary.unavailable().len(), 2);
+        assert!(
+            summary
+                .unavailable()
+                .iter()
+                .all(|reason| *reason == CurrentSourceUnavailable::AmbiguousSavedOwner),
+        );
+        drop(analysis);
+    })
 }
 
 struct CurrentBodyFixture {
@@ -1131,86 +1141,85 @@ impl CurrentBodyFixture {
         current: &MarkedText,
         marker: &str,
     ) -> (Vec<CompletionItem>, CurrentSourceBuildSummary) {
-        let snapshot = self.fixture.project().snapshot();
-        let before = self.fixture.project().stats();
         let target = self.target();
-        let offset = current
-            .offset(marker)
-            .try_into()
-            .expect("current-body marker should fit into u32");
-        let completion_source = CompletionSource::new(current.text(), offset)
-            .expect("current body should produce completion syntax");
-        let (analysis, summary) = snapshot
-            .analysis_for_current_source(
-                target,
-                snapshot
-                    .prepare_current_source(
-                        target,
-                        current.text(),
-                        &rg_std::CancellationToken::new(),
-                    )
-                    .expect("capture current source"),
-                CurrentSourceSelection::AtOffset(offset),
-                CancellationToken::new(),
-                |_| Ok(()),
-            )
-            .expect("current body should build against the saved fixture");
-        let (crate_ref, file) = target;
-        let query = CompletionQuery::new(crate_ref, file, offset)
-            .with_completion_source(&completion_source);
-        let items = analysis
-            .completions_at(query)
-            .expect("current-body completion should resolve");
+        self.fixture.project().inspect(|snapshot| {
+            let before = self.fixture.project().stats();
+            let offset = current
+                .offset(marker)
+                .try_into()
+                .expect("current-body marker should fit into u32");
+            let completion_source = CompletionSource::new(current.text(), offset)
+                .expect("current body should produce completion syntax");
+            let (analysis, summary) = snapshot
+                .analysis_for_current_source(
+                    target,
+                    snapshot
+                        .prepare_current_source(
+                            target,
+                            current.text(),
+                            &rg_std::CancellationToken::new(),
+                        )
+                        .expect("capture current source"),
+                    CurrentSourceSelection::AtOffset(offset),
+                    |_| Ok(()),
+                )
+                .expect("current body should build against the saved fixture");
+            let (crate_ref, file) = target;
+            let query = CompletionQuery::new(crate_ref, file, offset)
+                .with_completion_source(&completion_source);
+            let items = analysis
+                .completions_at(query)
+                .expect("current-body completion should resolve");
 
-        drop(analysis);
-        assert_eq!(
-            self.fixture.project().stats(),
-            before,
-            "request-local current-body analysis must not change saved project stores",
-        );
-        (items, summary)
+            drop(analysis);
+            assert_eq!(
+                self.fixture.project().stats(),
+                before,
+                "request-local current-body analysis must not change saved project stores",
+            );
+            (items, summary)
+        })
     }
 
     fn build_summary(&self, current: &MarkedText, marker: &str) -> CurrentSourceBuildSummary {
-        let snapshot = self.fixture.project().snapshot();
         let target = self.target();
-        let offset = current
-            .offset(marker)
-            .try_into()
-            .expect("current-body marker should fit into u32");
-        let before = self.fixture.project().stats();
-        let (analysis, summary) = snapshot
-            .analysis_for_current_source(
-                target,
-                snapshot
-                    .prepare_current_source(
-                        target,
-                        current.text(),
-                        &rg_std::CancellationToken::new(),
-                    )
-                    .expect("capture current source"),
-                CurrentSourceSelection::AtOffset(offset),
-                CancellationToken::new(),
-                |_| Ok(()),
-            )
-            .expect("current-body build summary should be returned");
-        drop(analysis);
-        assert_eq!(
-            self.fixture.project().stats(),
-            before,
-            "request-local current-body analysis must not change saved project stores",
-        );
-        summary
+        self.fixture.project().inspect(|snapshot| {
+            let offset = current
+                .offset(marker)
+                .try_into()
+                .expect("current-body marker should fit into u32");
+            let before = self.fixture.project().stats();
+            let (analysis, summary) = snapshot
+                .analysis_for_current_source(
+                    target,
+                    snapshot
+                        .prepare_current_source(
+                            target,
+                            current.text(),
+                            &rg_std::CancellationToken::new(),
+                        )
+                        .expect("capture current source"),
+                    CurrentSourceSelection::AtOffset(offset),
+                    |_| Ok(()),
+                )
+                .expect("current-body build summary should be returned");
+            drop(analysis);
+            assert_eq!(
+                self.fixture.project().stats(),
+                before,
+                "request-local current-body analysis must not change saved project stores",
+            );
+            summary
+        })
     }
 
     fn target(&self) -> (rg_ir_model::CrateRef, FileId) {
-        let context = self
-            .fixture
-            .project()
-            .snapshot()
-            .file_context_for_path(self.fixture.path("src/lib.rs"))
-            .expect("fixture source should resolve")
-            .expect("fixture source has a context");
+        let context = self.fixture.project().inspect(|snapshot| {
+            snapshot
+                .file_context_for_path(self.fixture.path("src/lib.rs"))
+                .expect("fixture source should resolve")
+                .expect("fixture source has a context")
+        });
         (context.crate_ref, context.file)
     }
 }

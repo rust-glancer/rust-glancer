@@ -66,11 +66,11 @@ pub fn use_it(c_a_outer: u8) {
             // unqualified value proximity
             variable c_z_inner
               detail: let c_z_inner: u8
-              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }, binding: BindingId(1) })
+              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(1) })
               replace: 107..108
             variable c_a_outer
               detail: let c_a_outer: u8
-              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }, binding: BindingId(0) })
+              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(0) })
               replace: 107..108
             fn c_module_item
               detail: pub fn c_module_item()
@@ -110,7 +110,7 @@ pub fn use_it() {
             // unqualified type proximity
             struct ZLocal
               detail: struct ZLocal
-              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }), id: Struct(StructId(0)) }) })
+              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Function(0), body: BodyId(0) }), id: Struct(StructId(0)) }) })
               replace: 112..113
             struct AModule
               detail: struct AModule

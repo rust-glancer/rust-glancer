@@ -11,9 +11,9 @@
 //! user.name($0) not a dot-completion site: the cursor is inside the arguments
 //! ```
 
-use rg_body_ir::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
+use rg_body_ir::{BodyReader, BodyView, ExprData, ExprKind};
 use rg_ir_model::{CrateRef, ExprId, FileId, Span};
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 
 use super::DotCompletionSite;
 use crate::source::scan::NarrowestSourceSite;
@@ -23,7 +23,7 @@ use crate::source::scan::NarrowestSourceSite;
 /// The result identifies the lowered receiver separately from the source span to replace. Candidate
 /// generation can therefore inspect the receiver type without having to rediscover dot syntax.
 pub(crate) struct DotCompletionSiteScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    body_ir: &'txn BodyReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -31,7 +31,7 @@ pub(crate) struct DotCompletionSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        body_ir: &'txn BodyReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -45,7 +45,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Returns the smallest field or method expression that accepts completions at the dot.
-    pub(crate) fn site_at_dot(&self) -> Result<Option<DotCompletionSite>, PackageStoreError> {
+    pub(crate) fn site_at_dot(&self) -> Result<Option<DotCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
