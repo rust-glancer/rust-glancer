@@ -1,27 +1,27 @@
-//! Persisted lookup indexes for one semantic crate.
+//! Build the complete candidate index for one semantic crate.
 //!
-//! Method lookup, trait selection, and compiler desugarings repeatedly ask for candidates with the
-//! same receiver or trait identity. Each `ItemLookupIndex` is serialized beside its owning
-//! `ItemStore`, and its candidate tables contain only declarations from that store. It never copies
-//! candidates from visible dependencies into itself. The visible crate list and selected language
-//! items are saved alongside those tables, so queries do not need to walk the dependency graph or
-//! read dependency declarations to discover them.
-//!
-//! This matters for packages with many Cargo targets: a library's candidates stay in the library
-//! index instead of being repeated in every test or example target. `item::query` composes the local
-//! and dependency indexes only for the operation that needs them.
+//! Candidates belong to their own ItemStore; visible dependencies keep their own indexes.
+//! Construction writes candidates directly into shards, then derives the keys used to select
+//! those shards. Production publishes keys and shards independently and drops the complete index.
+//! In-memory callers use the same key selection against their owned shards.
 
-use std::collections::HashMap;
+use std::{
+    array,
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use rg_ir_model::{
-    AssocItemId, CrateRef, FunctionRef, ImplId, ImplRef, Mutability, PrimitiveTy, TraitDefRef,
-    TraitId, TraitImplRef, TypeDefRef,
+    AssocItemId, FunctionRef, ImplRef, Mutability, PrimitiveTy, TraitImplRef, TypeDefRef,
 };
-use rg_std::{MemorySize, Shrink, UniqueVec};
-use rg_text::Name;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ItemLookupFacts, ItemStore};
+use super::lookup_shard::{IndexedImplRef, IndexedTraitImplRef};
+use crate::{ItemLookupShard, ItemStore, LookupKeys, LookupQuestion};
+
+// Broad candidate lists use shard zero. Keyed tables share the hash used by lookup questions.
+const SHARD_COUNT: usize = 16;
 
 /// Outer receiver shape used to narrow saved trait impl declarations before semantic proof.
 ///
@@ -66,128 +66,44 @@ pub enum TraitImplSelfHead {
     Adt(TypeDefRef),
 }
 
-/// A crate's own lookup candidates, plus its saved visibility and language-item choices.
-///
-/// For example, an index contains `impl Widget { fn draw(...) }` when that impl is declared in the
-/// indexed crate. It does not contain a method declared by a dependency merely because that
-/// dependency is visible; [`crate::ItemLookupQuery`] brings the two crate-local indexes together at
-/// lookup time. The small visibility and language-item facts are computed during indexing, so
-/// assembling that lookup does not need to reconstruct its context from dependency declarations.
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+/// The complete construction result for one target. Its fields stay private so keys always
+/// describe the owned shards. Only the individual shards and keys are persisted.
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
 pub struct ItemLookupIndex {
-    lookup_facts: ItemLookupFacts,
-    // Inherent lookup starts from a receiver type. These maps jump directly to impls whose
-    // already-resolved `Self` type mentions that receiver.
-    pub(crate) inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
-    pub(crate) inherent_functions_by_type_and_name:
-        HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
-    pub(crate) structural_inherent_impls: UniqueVec<ImplRef>,
-    pub(crate) structural_inherent_functions_by_name: HashMap<Name, UniqueVec<FunctionRef>>,
-    // Implementation navigation and qualified paths still ask which impls mention one nominal
-    // type. Trait-item lookup uses the trait-keyed map below instead.
-    pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
-    pub(crate) trait_impls_by_trait: HashMap<TraitDefRef, IndexedTraitImpls>,
-    // A named trait item selects its declaring traits before any impl proof. Completion starts
-    // from one of the two broad trait surfaces. Once a trait is selected, the function maps adapt
-    // its proof back into declarations without reopening the trait item every time.
-    pub(crate) traits_with_functions: UniqueVec<TraitDefRef>,
-    pub(crate) traits_with_associated_items: UniqueVec<TraitDefRef>,
-    pub(crate) traits_by_item_name: HashMap<Name, TraitItemTraitRefs>,
-    pub(crate) trait_functions_by_trait: HashMap<TraitDefRef, UniqueVec<FunctionRef>>,
-    pub(crate) trait_functions_by_trait_and_name:
-        HashMap<TraitDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
+    keys: LookupKeys,
+    shards: [ItemLookupShard; SHARD_COUNT],
 }
 
 impl ItemLookupIndex {
-    /// Builds the declaration-local candidate tables for one semantic crate.
-    ///
-    /// `lookup_facts` must describe this store's crate and the same saved declarations. They are
-    /// attached as-is; candidate tables are gathered only from `store`.
-    ///
-    /// Production lowering supplies the conservative receiver heads resolved by the semantic
-    /// header pass. Synthetic stores without a definition resolver can pass an empty map; their
-    /// trait impls then enter the fallback lane.
+    /// Build declaration-local candidates after semantic lowering has resolved impl headers.
+    /// Synthetic stores without a definition resolver can pass an empty head map; their trait
+    /// impls then enter the conservative fallback lane.
     pub fn build_from_store(
         store: &ItemStore,
         self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
-        lookup_facts: ItemLookupFacts,
     ) -> Self {
-        let mut index = Self {
-            lookup_facts,
-            ..Self::default()
-        };
-        index.extend_from_store(store, self_heads);
-        index
-    }
+        let mut shards: [ItemLookupShard; SHARD_COUNT] =
+            array::from_fn(|_| ItemLookupShard::default());
 
-    pub(crate) fn lookup_facts(&self) -> &ItemLookupFacts {
-        &self.lookup_facts
-    }
-
-    /// Count retained candidate references across every declaration-local lookup table.
-    #[cfg(test)]
-    pub(crate) fn entry_count(&self) -> usize {
-        self.inherent_impls_by_type
-            .values()
-            .map(UniqueVec::len)
-            .sum::<usize>()
-            + self
-                .inherent_functions_by_type_and_name
-                .values()
-                .flat_map(HashMap::values)
-                .map(UniqueVec::len)
-                .sum::<usize>()
-            + self.structural_inherent_impls.len()
-            + self
-                .structural_inherent_functions_by_name
-                .values()
-                .map(UniqueVec::len)
-                .sum::<usize>()
-            + self
-                .trait_impls_by_type
-                .values()
-                .map(UniqueVec::len)
-                .sum::<usize>()
-            + self
-                .trait_impls_by_trait
-                .values()
-                .map(IndexedTraitImpls::entry_count)
-                .sum::<usize>()
-            + self.traits_with_functions.len()
-            + self.traits_with_associated_items.len()
-            + self
-                .traits_by_item_name
-                .values()
-                .map(TraitItemTraitRefs::entry_count)
-                .sum::<usize>()
-            + self
-                .trait_functions_by_trait
-                .values()
-                .map(UniqueVec::len)
-                .sum::<usize>()
-            + self
-                .trait_functions_by_trait_and_name
-                .values()
-                .flat_map(HashMap::values)
-                .map(UniqueVec::len)
-                .sum::<usize>()
-    }
-
-    fn extend_from_store(
-        &mut self,
-        store: &ItemStore,
-        self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
-    ) {
         // Record trait declaration surfaces before processing impls. For `value.convert()`, the
         // name `convert` should select `Convert` before its impl headers are compared with value's
         // type. `value./* completion */` instead starts from every trait containing a function.
         for (trait_ref, trait_data) in store.traits_with_refs() {
             if !trait_data.items.is_empty() {
-                self.traits_with_associated_items.push(trait_ref);
+                shards[0].traits_with_associated_items.push(trait_ref);
             }
-            let functions = self.trait_functions_by_trait.entry(trait_ref).or_default();
-            self.trait_impls_by_trait.entry(trait_ref).or_default();
-            self.trait_functions_by_trait_and_name
+            let trait_shard = Self::shard_for(&trait_ref);
+            // Empty entries distinguish a known trait with no candidates from an unknown trait.
+            shards[trait_shard]
+                .trait_functions_by_trait
+                .entry(trait_ref)
+                .or_default();
+            shards[trait_shard]
+                .trait_impls_by_trait
+                .entry(trait_ref)
+                .or_default();
+            shards[trait_shard]
+                .trait_functions_by_trait_and_name
                 .entry(trait_ref)
                 .or_default();
             for item in &trait_data.items {
@@ -197,17 +113,23 @@ impl ItemLookupIndex {
                             origin: trait_ref.origin,
                             id: *id,
                         };
-                        functions.push(function_ref);
-                        self.traits_with_functions.push(trait_ref);
+                        shards[trait_shard]
+                            .trait_functions_by_trait
+                            .get_mut(&trait_ref)
+                            .expect("trait functions initialized above")
+                            .push(function_ref);
+                        shards[0].traits_with_functions.push(trait_ref);
                         if let Some(function_data) = store.function_data(*id) {
-                            self.traits_by_item_name
+                            shards[Self::shard_for(&function_data.name)]
+                                .traits_by_item_name
                                 .entry(function_data.name.clone())
                                 .or_default()
                                 .functions
                                 .push(trait_ref);
-                            self.trait_functions_by_trait_and_name
-                                .entry(trait_ref)
-                                .or_default()
+                            shards[trait_shard]
+                                .trait_functions_by_trait_and_name
+                                .get_mut(&trait_ref)
+                                .expect("trait function names initialized above")
                                 .entry(function_data.name.clone())
                                 .or_default()
                                 .push(function_ref);
@@ -215,14 +137,14 @@ impl ItemLookupIndex {
                     }
                     AssocItemId::Const(id) => {
                         if let Some(const_data) = store.const_data(*id) {
-                            self.traits_by_item_name
+                            shards[Self::shard_for(&const_data.name)]
+                                .traits_by_item_name
                                 .entry(const_data.name.clone())
                                 .or_default()
                                 .consts
                                 .push(trait_ref);
                         }
                     }
-
                     // Associated type completion uses the trait-wide surface above. Named type
                     // projection follows written trait bounds, so it needs no reverse name index.
                     AssocItemId::TypeAlias(_) => {}
@@ -236,27 +158,29 @@ impl ItemLookupIndex {
         // the header pass, so receiver lookup does not need to reopen every canonical header.
         for (impl_ref, impl_data) in store.impls_with_refs() {
             if impl_data.trait_ref.is_none() {
-                let functions_by_name =
-                    if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
-                        self.inherent_impls_by_type
-                            .entry(*self_ty)
-                            .or_default()
-                            .push(impl_ref);
-                        self.inherent_functions_by_type_and_name
-                            .entry(*self_ty)
-                            .or_default()
-                    } else if impl_data.resolved_self_ty.is_empty() {
-                        // Inherent impls for shaped builtin types, such as `impl<T> [T]`, do not have
-                        // a nominal receiver key. Keep them in a small side list so structural method
-                        // lookup does not scan every visible impl.
-                        self.structural_inherent_impls.push(impl_ref);
-                        &mut self.structural_inherent_functions_by_name
-                    } else {
-                        continue;
-                    };
+                let self_ty = impl_data.resolved_self_ty.as_option().copied();
+                if let Some(self_ty) = self_ty {
+                    let shard = &mut shards[Self::shard_for(&self_ty)];
+                    shard
+                        .inherent_impls_by_type
+                        .entry(self_ty)
+                        .or_default()
+                        .push(impl_ref);
+                    shard
+                        .inherent_functions_by_type_and_name
+                        .entry(self_ty)
+                        .or_default();
+                } else if impl_data.resolved_self_ty.is_empty() {
+                    // Inherent impls for shaped builtin types, such as `impl<T> [T]`, do not have
+                    // a nominal receiver key. Keep them in a small side list so structural method
+                    // lookup does not scan every visible impl.
+                    shards[0].structural_inherent_impls.push(impl_ref);
+                } else {
+                    continue;
+                }
 
-                // Both receiver families can answer named lookup before callers open headers.
-                // The broad impl indexes remain useful when listing all associated items.
+                // Nominal functions share their receiver's shard; structural functions route by
+                // name. Both families can answer named lookup before callers open impl headers.
                 for item in &impl_data.items {
                     if let AssocItemId::Function(id) = item {
                         let function_ref = FunctionRef {
@@ -265,6 +189,15 @@ impl ItemLookupIndex {
                         };
                         let Some(function_data) = store.function_data(*id) else {
                             continue;
+                        };
+                        let functions_by_name = if let Some(self_ty) = self_ty {
+                            shards[Self::shard_for(&self_ty)]
+                                .inherent_functions_by_type_and_name
+                                .get_mut(&self_ty)
+                                .expect("inherent receiver initialized above")
+                        } else {
+                            &mut shards[Self::shard_for(&function_data.name)]
+                                .structural_inherent_functions_by_name
                         };
                         functions_by_name
                             .entry(function_data.name.clone())
@@ -281,201 +214,50 @@ impl ItemLookupIndex {
                     trait_ref: *trait_ref,
                 };
 
-                // `impl Marker for [u8]` enters the slice lane, while `impl<T> Marker for T` and
-                // alias-headed impls stay in the fallback lane. Both are still grouped under the
-                // selected trait before the type layer performs exact matching and proof.
-                self.trait_impls_by_trait
+                // A nominal trait lookup reads both the trait shard for blanket fallbacks and
+                // the type shard for direct candidates. These entries can live in different shards.
+                shards[Self::shard_for(trait_ref)]
+                    .trait_impls_by_trait
                     .entry(*trait_ref)
                     .or_default()
                     .push(
                         IndexedImplRef::from_crate(impl_ref),
                         self_heads.get(&impl_ref).copied(),
                     );
-
                 if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
-                    self.trait_impls_by_type
+                    shards[Self::shard_for(self_ty)]
+                        .trait_impls_by_type
                         .entry(*self_ty)
                         .or_default()
                         .push(IndexedTraitImplRef::from_crate(trait_impl));
                 }
             }
         }
+
+        // Derive routing keys from completed tables instead of maintaining a second set of
+        // insertions. Missing keys must prove absence without overlooking a populated shard.
+        let keys = LookupKeys::build(&shards);
+        Self { keys, shards }
     }
 
-    /// Return one trait's direct receiver-head candidates followed by conservative fallbacks.
-    ///
-    /// Given these declarations:
-    ///
-    /// ```text
-    /// impl Marker for u32 {}
-    /// impl<T> Marker for [T] {}
-    /// impl<T> Marker for T {}
-    /// ```
-    ///
-    /// a `Primitive(UnsignedInt(U32))` lookup returns the first and third impls. A `Slice` lookup
-    /// returns the second and third. The exact matcher later checks everything omitted by the head
-    /// key.
-    ///
-    /// `None` asks only for fallbacks. Closure and function-item receivers use that lane because a
-    /// concrete source impl cannot name their body-owned identity.
-    pub(crate) fn trait_impl_candidates_for_self_head(
-        &self,
-        trait_ref: TraitDefRef,
-        self_head: Option<TraitImplSelfHead>,
-    ) -> Option<UniqueVec<IndexedImplRef>> {
-        let indexed = self.trait_impls_by_trait.get(&trait_ref)?;
-        let mut impls = UniqueVec::new();
-
-        match self_head {
-            Some(TraitImplSelfHead::Adt(type_def)) => {
-                if let Some(candidates) = self.trait_impls_by_type.get(&type_def) {
-                    impls.extend(candidates.iter().filter_map(|candidate| {
-                        (candidate.expand().trait_ref == trait_ref).then_some(candidate.impl_ref)
-                    }));
-                }
-            }
-            Some(self_head) => {
-                if let Some(candidates) = indexed.direct_by_self_head.get(&self_head) {
-                    impls.extend(candidates.iter().copied());
-                }
-            }
-            None => {}
-        }
-        impls.extend(indexed.fallbacks.iter().copied());
-        Some(impls)
-    }
-}
-
-/// All impls of one trait plus the receiver lanes used by impl discovery.
-///
-/// For `impl Marker for u32`, `impl<T> Marker for [T]`, and `impl<T> Marker for T`, `all` contains
-/// all three declarations, `direct_by_self_head` has primitive and slice entries, and `fallbacks`
-/// contains only the blanket impl. This lets a known `u32` receiver avoid reopening the slice impl
-/// while still considering the blanket one.
-///
-/// Nominal direct impls already live in `trait_impls_by_type`, so this value duplicates only
-/// structural and fallback impl identities. The complete list remains necessary for trait solver enumeration,
-/// implementation navigation, and unresolved receiver fallbacks.
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(crate) struct IndexedTraitImpls {
-    pub(crate) all: UniqueVec<IndexedImplRef>,
-    fallbacks: UniqueVec<IndexedImplRef>,
-    direct_by_self_head: HashMap<TraitImplSelfHead, UniqueVec<IndexedImplRef>>,
-}
-
-impl IndexedTraitImpls {
-    fn push(&mut self, impl_ref: IndexedImplRef, self_head: Option<TraitImplSelfHead>) {
-        if !self.all.push(impl_ref) {
-            return;
-        }
-
-        match self_head {
-            Some(TraitImplSelfHead::Adt(_)) => {
-                // The exact definition key and implemented trait are already retained by
-                // `trait_impls_by_type`; avoid storing a third copy here.
-            }
-            Some(self_head) => {
-                self.direct_by_self_head
-                    .entry(self_head)
-                    .or_default()
-                    .push(impl_ref);
-            }
-            None => {
-                self.fallbacks.push(impl_ref);
-            }
-        }
+    /// Publish keys and shard payloads independently, without persisting this aggregate.
+    pub(crate) fn into_parts(self) -> (LookupKeys, [ItemLookupShard; SHARD_COUNT]) {
+        (self.keys, self.shards)
     }
 
-    #[cfg(test)]
-    fn entry_count(&self) -> usize {
-        self.all.len()
-            + self.fallbacks.len()
-            + self
-                .direct_by_self_head
-                .values()
-                .map(UniqueVec::len)
-                .sum::<usize>()
-    }
-}
-
-/// Declaring traits partitioned by the kind of one shared associated-item name.
-///
-/// Rust allows different traits to use the same spelling for different associated-item kinds.
-/// Keeping the lanes together gives name-first lookup one persisted map without making a method
-/// query consider an unrelated associated const.
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(crate) struct TraitItemTraitRefs {
-    pub(crate) functions: UniqueVec<TraitDefRef>,
-    pub(crate) consts: UniqueVec<TraitDefRef>,
-}
-
-impl TraitItemTraitRefs {
-    #[cfg(test)]
-    fn entry_count(&self) -> usize {
-        self.functions.len() + self.consts.len()
-    }
-}
-
-/// Crate-only impl identity retained inside a crate-local lookup index.
-///
-/// A general [`ImplRef`] also has to represent body-local declarations, which makes its
-/// [`rg_ir_model::DefMapRef`] origin larger. Entries collected from semantic item stores cannot be
-/// body-local, so retaining the crate directly avoids paying for that unused variant millions of
-/// times. Query methods expand this back to the ordinary public identity at their boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub(crate) struct IndexedImplRef {
-    crate_ref: CrateRef,
-    id: ImplId,
-}
-
-impl IndexedImplRef {
-    fn from_crate(impl_ref: ImplRef) -> Self {
-        Self {
-            crate_ref: impl_ref
-                .origin
-                .as_crate_ref()
-                .expect("semantic item-store impl should have a crate origin"),
-            id: impl_ref.id,
-        }
+    /// In-memory readers select exactly the same shards as the persisted lookup provider.
+    pub fn shards_for(&self, question: &LookupQuestion) -> impl Iterator<Item = &ItemLookupShard> {
+        question
+            .shards(&self.keys)
+            .into_iter()
+            .map(|shard| &self.shards[shard])
     }
 
-    pub(crate) fn expand(self) -> ImplRef {
-        ImplRef::new(rg_ir_model::DefMapRef::Crate(self.crate_ref), self.id)
-    }
-}
-
-/// Compact trait impl identity used where the trait is not already present as the map key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub(crate) struct IndexedTraitImplRef {
-    impl_ref: IndexedImplRef,
-    trait_crate: CrateRef,
-    trait_id: TraitId,
-}
-
-impl IndexedTraitImplRef {
-    fn from_crate(trait_impl: TraitImplRef) -> Self {
-        Self {
-            impl_ref: IndexedImplRef::from_crate(trait_impl.impl_ref),
-            trait_crate: trait_impl
-                .trait_ref
-                .origin
-                .as_crate_ref()
-                .expect("semantic item-store trait should have a crate origin"),
-            trait_id: trait_impl.trait_ref.id,
-        }
-    }
-
-    pub(crate) fn expand(self) -> TraitImplRef {
-        TraitImplRef {
-            impl_ref: self.impl_ref.expand(),
-            trait_ref: TraitDefRef::new(
-                rg_ir_model::DefMapRef::Crate(self.trait_crate),
-                self.trait_id,
-            ),
-        }
+    /// Hashing only routes reads: exact keys remain in each table. Changing this layout requires
+    /// a cache epoch change, just like changing any other persisted output.
+    pub(crate) fn shard_for(key: &impl Hash) -> usize {
+        let mut hash = DefaultHasher::new();
+        key.hash(&mut hash);
+        (hash.finish() as usize) & (SHARD_COUNT - 1)
     }
 }

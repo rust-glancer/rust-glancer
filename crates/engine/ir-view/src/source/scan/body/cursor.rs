@@ -82,7 +82,10 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn body_at(&self) -> Result<Option<BodyRef>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (body_ref, body) in
+            self.body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             if !body.source().span.contains(self.offset) {
                 continue;
             }

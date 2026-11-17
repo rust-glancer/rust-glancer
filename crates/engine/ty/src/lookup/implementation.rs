@@ -7,7 +7,8 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, GenericDefRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
 use rg_semantic_ir::SemanticItemSource;
-use rg_std::{ExpectedUnique, OperationError, UniqueVec};
+use rg_source::ReadError;
+use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::TraitImplFilter;
 use crate::{
@@ -23,7 +24,7 @@ pub struct ImplementationQuery<'query, D, I> {
 impl<'query, D, I> ImplementationQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query> + Clone,
 {
     /// Creates implementation lookup in one crate-scoped type-query environment.
     pub fn new(context: TyContext<'query, D, I>) -> Self {
@@ -40,15 +41,11 @@ where
         &self,
         function: FunctionRef,
         args: &GenericArgs,
-        scope: &impl SolverScope<Error = D::Error>,
-    ) -> Result<Option<FunctionRef>, OperationError<D::Error>> {
+        scope: &impl SolverScope,
+    ) -> Result<Option<FunctionRef>, ReadError> {
         rg_std::check_cancel!(self.context, "selected call implementation");
         let paths = self.context.item_paths();
-        let Some(data) = paths
-            .items()
-            .function_data(function)
-            .map_err(OperationError::Source)?
-        else {
+        let Some(data) = paths.items().function_data(function)? else {
             return Ok(None);
         };
         let ItemOwner::Trait(id) = data.owner else {
@@ -63,12 +60,8 @@ where
         // For `Convert<u32>::convert::<u8>`, impl matching needs Self and u32, not the method's
         // u8. Bind arguments to their parameter identities, then take just the trait's slots.
         let generics = paths.generics();
-        let function_params = generics
-            .generics(GenericDefRef::Function(function))
-            .map_err(OperationError::Source)?;
-        let trait_params = generics
-            .generics(GenericDefRef::Trait(trait_ref))
-            .map_err(OperationError::Source)?;
+        let function_params = generics.generics(GenericDefRef::Function(function))?;
+        let trait_params = generics.generics(GenericDefRef::Trait(trait_ref))?;
         let args = Substitution::from_args(&function_params, args).args_for(&trait_params);
         let Some(receiver) = args.first().and_then(GenericArg::as_ty) else {
             return Ok(None);
@@ -87,11 +80,7 @@ where
         // outer shape, so their generic arguments and bounds still need to be checked.
         let mut candidates =
             TraitImplFilter::from(receiver).candidates(&self.context, trait_ref)?;
-        candidates.extend(
-            scope
-                .local_trait_impls(trait_ref)
-                .map_err(OperationError::Source)?,
-        );
+        candidates.extend(scope.local_trait_impls(trait_ref)?);
 
         // Check the complete trait arguments and each impl's bounds in the calling body's
         // scope. Self is the receiver type already chosen for this call, including any
@@ -133,7 +122,7 @@ where
     }
 
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.
-    pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
+    pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, ReadError> {
         let mut impls = UniqueVec::new();
         for candidate in ty.reference_chain() {
             rg_std::check_cancel!(self.context, "implementation candidates");
@@ -149,12 +138,9 @@ where
     }
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
-    pub fn impls_for_type_def(
-        &self,
-        ty: TypeDefRef,
-    ) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
+    pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, ReadError> {
         let mut impls = UniqueVec::new();
-        for candidate in self.context.item_lookup().impls_for_type(ty) {
+        for candidate in self.context.item_lookup().impls_for_type(ty)? {
             rg_std::check_cancel!(self.context, "implementation candidates");
             impls.push(candidate);
         }
@@ -170,18 +156,15 @@ where
     pub fn impls_for_trait(
         &self,
         trait_ref: TraitDefRef,
-        scope: Option<&impl SolverScope<Error = D::Error>>,
-    ) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
+        scope: Option<&impl SolverScope>,
+    ) -> Result<UniqueVec<ImplRef>, ReadError> {
         let mut impls = UniqueVec::new();
-        for candidate in self.context.item_lookup().impls_for_trait(trait_ref) {
+        for candidate in self.context.item_lookup().impls_for_trait(trait_ref)? {
             rg_std::check_cancel!(self.context, "implementation candidates");
             impls.push(candidate);
         }
         if let Some(scope) = scope {
-            for candidate in scope
-                .local_trait_impls(trait_ref)
-                .map_err(OperationError::Source)?
-            {
+            for candidate in scope.local_trait_impls(trait_ref)? {
                 rg_std::check_cancel!(self.context, "implementation candidates");
                 impls.push(candidate.impl_ref);
             }
@@ -199,13 +182,10 @@ where
     pub fn function_implementations(
         &self,
         function: FunctionRef,
-        scope: Option<&impl SolverScope<Error = D::Error>>,
-    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
+        scope: Option<&impl SolverScope>,
+    ) -> Result<UniqueVec<FunctionRef>, ReadError> {
         let items = self.context.item_paths().items();
-        let Some(data) = items
-            .function_data(function)
-            .map_err(OperationError::Source)?
-        else {
+        let Some(data) = items.function_data(function)? else {
             return Ok(UniqueVec::new());
         };
 
@@ -215,12 +195,10 @@ where
                 id,
             },
             ItemOwner::Impl(id) => {
-                let Some(implementation) = items
-                    .impl_data(ImplRef {
-                        origin: function.origin,
-                        id,
-                    })
-                    .map_err(OperationError::Source)?
+                let Some(implementation) = items.impl_data(ImplRef {
+                    origin: function.origin,
+                    id,
+                })?
                 else {
                     return Ok(UniqueVec::new());
                 };
@@ -248,26 +226,15 @@ where
         &self,
         impl_ref: ImplRef,
         method_name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
-        let Some(data) = self
-            .context
-            .item_paths()
-            .items()
-            .impl_data(impl_ref)
-            .map_err(OperationError::Source)?
-        else {
+    ) -> Result<UniqueVec<FunctionRef>, ReadError> {
+        let Some(data) = self.context.item_paths().items().impl_data(impl_ref)? else {
             return Ok(UniqueVec::new());
         };
 
         let mut functions = UniqueVec::new();
         for function in data.functions() {
             rg_std::check_cancel!(self.context, "implementation candidates");
-            let Some(function_data) = self
-                .context
-                .item_paths()
-                .items()
-                .function_data(function)
-                .map_err(OperationError::Source)?
+            let Some(function_data) = self.context.item_paths().items().function_data(function)?
             else {
                 continue;
             };

@@ -30,7 +30,7 @@ impl<D, I> rg_std::Cancelable for TyContext<'_, D, I> {
 impl<'query, D, I> TyContext<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query> + Clone,
 {
     pub fn new(
         def_maps: D,

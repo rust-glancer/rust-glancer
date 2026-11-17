@@ -18,7 +18,8 @@ use rg_ir_model::{
 };
 use rg_item_tree::ImplPolarity;
 use rg_semantic_ir::{SemanticItemSource, TypePathContext};
-use rg_std::{Cancelable, OperationError};
+use rg_source::ReadError;
+use rg_std::Cancelable;
 use rustc_type_ir::{
     ClauseKind,
     inherent::IntoKind as _,
@@ -104,7 +105,7 @@ pub(crate) trait DeclarationProvider {
 /// For example, solving inside `fn f<T: Clone>()` must see `T: Clone` and any impls declared in
 /// a surrounding block, even though neither comes from a crate-wide impl search.
 pub trait SolverScope: TypePathResolver {
-    fn local_trait_impls(&self, _trait_ref: TraitDefRef) -> Result<Vec<TraitImplRef>, Self::Error> {
+    fn local_trait_impls(&self, _trait_ref: TraitDefRef) -> Result<Vec<TraitImplRef>, ReadError> {
         Ok(Vec::new())
     }
 
@@ -120,7 +121,7 @@ pub trait SolverScope: TypePathResolver {
 }
 
 impl<R: SolverScope + ?Sized> SolverScope for &R {
-    fn local_trait_impls(&self, trait_ref: TraitDefRef) -> Result<Vec<TraitImplRef>, Self::Error> {
+    fn local_trait_impls(&self, trait_ref: TraitDefRef) -> Result<Vec<TraitImplRef>, ReadError> {
         R::local_trait_impls(*self, trait_ref)
     }
 
@@ -135,7 +136,7 @@ impl<R: SolverScope + ?Sized> SolverScope for &R {
 
 impl<'query, D, I> SolverScope for ItemPathQuery<'query, D, I>
 where
-    D: DefMapSource<Error = I::Error>,
+    D: DefMapSource,
     I: SemanticItemSource<'query>,
 {
 }
@@ -160,29 +161,23 @@ pub struct DeclarationCache {
 /// Compiler callbacks ask for declarations as they explore a goal. This provider loads those
 /// declarations on demand, using the same path resolver as the body or editor query. If a read
 /// fails, the provider keeps the source error while unwinding to its own solver boundary.
-pub struct SemanticDeclarations<'a, 'query, D, I: SemanticItemSource<'query>> {
+pub struct SemanticDeclarations<'a, 'query, D, I> {
     paths: &'a ItemPathQuery<'query, D, I>,
-    resolver: &'a dyn TypePathResolver<Error = I::Error>,
+    resolver: &'a dyn TypePathResolver,
     // Only operations that evaluate goals need impl discovery and a use-site solver scope.
     #[allow(clippy::type_complexity)]
-    solving: Option<(
-        &'a TyContext<'query, D, I>,
-        &'a dyn SolverScope<Error = I::Error>,
-    )>,
+    solving: Option<(&'a TyContext<'query, D, I>, &'a dyn SolverScope)>,
     shared: Option<&'a DeclarationCache>,
-    error: RefCell<Option<OperationError<I::Error>>>,
+    error: RefCell<Option<ReadError>>,
     profile: RefCell<SolverProfile>,
 }
 
 impl<'a, 'query, D, I> SemanticDeclarations<'a, 'query, D, I>
 where
-    D: DefMapSource<Error = I::Error>,
+    D: DefMapSource,
     I: SemanticItemSource<'query>,
 {
-    pub fn new(
-        context: &'a TyContext<'query, D, I>,
-        resolver: &'a dyn SolverScope<Error = I::Error>,
-    ) -> Self {
+    pub fn new(context: &'a TyContext<'query, D, I>, resolver: &'a dyn SolverScope) -> Self {
         Self {
             paths: context.item_paths(),
             resolver,
@@ -198,7 +193,7 @@ where
     /// no use-site solver context. This keeps display queries from building an impl index.
     pub(crate) fn for_lowering(
         paths: &'a ItemPathQuery<'query, D, I>,
-        resolver: &'a dyn TypePathResolver<Error = I::Error>,
+        resolver: &'a dyn TypePathResolver,
     ) -> Self {
         Self {
             paths,
@@ -219,7 +214,7 @@ where
     pub fn with_solver<R>(
         &self,
         run: impl for<'s> FnOnce(Solver<'s>) -> R,
-    ) -> Result<R, OperationError<I::Error>> {
+    ) -> Result<R, ReadError> {
         self.with_storage(|cx| run(Solver::new(cx)))
     }
 
@@ -228,7 +223,7 @@ where
     pub fn with_table<R>(
         &self,
         run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [GenericParamRef]) -> R,
-    ) -> Result<R, OperationError<I::Error>> {
+    ) -> Result<R, ReadError> {
         self.with_solver(|solver| {
             let cx = solver.interner();
             let (params, env) = match self.solving.and_then(|(_, scope)| scope.generic_owner()) {
@@ -247,7 +242,7 @@ where
     pub(crate) fn with_storage<R>(
         &self,
         run: impl for<'s> FnOnce(SolverInterner<'s>) -> R,
-    ) -> Result<R, OperationError<I::Error>> {
+    ) -> Result<R, ReadError> {
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
             self.check_cancelled();
             let storage = SolverStorage::new(self);
@@ -271,7 +266,7 @@ where
         }
     }
 
-    fn load_metadata(&self, id: DefId) -> Result<Option<DeclarationMetadata>, I::Error> {
+    fn load_metadata(&self, id: DefId) -> Result<Option<DeclarationMetadata>, ReadError> {
         let Some(owner) = id.generic_owner() else {
             return Ok(None);
         };
@@ -416,12 +411,12 @@ where
 
     /// Run a declaration read unless the operation was cancelled. A failed read must exit
     /// immediately, since the solver can interpret an absent declaration as valid input.
-    fn load<T>(&self, read: impl FnOnce() -> Result<Option<T>, I::Error>) -> Option<T> {
+    fn load<T>(&self, read: impl FnOnce() -> Result<Option<T>, ReadError>) -> Option<T> {
         self.check_cancelled();
         self.profile.borrow_mut().declaration_loads += 1;
         match read() {
             Ok(value) => value,
-            Err(error) => self.abort(OperationError::Source(error)),
+            Err(error) => self.abort(error),
         }
     }
 
@@ -435,7 +430,7 @@ where
 
     /// Solver callbacks have no error return. Unwind to `with_storage` so it can return the
     /// typed error immediately. `resume_unwind` skips the panic hook for this controlled exit.
-    fn abort(&self, error: OperationError<I::Error>) -> ! {
+    fn abort(&self, error: ReadError) -> ! {
         *self.error.borrow_mut() = Some(error);
         panic::resume_unwind(Box::new(CallbackAbort))
     }
@@ -451,7 +446,7 @@ where
 
 impl<'query, D, I> DeclarationProvider for SemanticDeclarations<'_, 'query, D, I>
 where
-    D: DefMapSource<Error = I::Error>,
+    D: DefMapSource,
     I: SemanticItemSource<'query>,
 {
     fn metadata(&self, id: DefId) -> Option<Arc<DeclarationMetadata>> {
@@ -729,13 +724,13 @@ where
         let (context, scope) = self.solving?;
         let mut impls = match filter.candidates(context, trait_id) {
             Ok(impls) => impls,
-            Err(cancelled) => self.abort(cancelled.into()),
+            Err(error) => self.abort(error),
         };
         // Keep the index's ordered set while merging the local overlay. For this one trait,
         // projecting to ImplRef preserves uniqueness and needs no second set.
         match scope.local_trait_impls(trait_id) {
             Ok(local) => impls.extend(local),
-            Err(error) => self.abort(OperationError::Source(error)),
+            Err(error) => self.abort(error),
         }
         Some(
             impls

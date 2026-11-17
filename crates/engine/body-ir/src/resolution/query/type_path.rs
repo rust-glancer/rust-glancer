@@ -24,8 +24,8 @@ pub struct BodyTypePathQuery<'query, D, I> {
 
 impl<'query, D, I> BodyTypePathQuery<'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -228,13 +228,11 @@ where
             .iter()
             .copied()
             .collect::<rg_std::UniqueVec<_>>();
-        if let Ok(saved) = self
-            .context
-            .item_lookup_query()
-            .inherent_impls_for_type(ty.def)
-        {
-            impls.extend(saved);
-        }
+        impls.extend(
+            self.context
+                .item_lookup_query()
+                .inherent_impls_for_type(ty.def)?,
+        );
         let item_query = self.context.item_query();
         for impl_ref in impls {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {

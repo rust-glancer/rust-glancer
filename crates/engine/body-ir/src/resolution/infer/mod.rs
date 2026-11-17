@@ -15,7 +15,6 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{BodyRef, ExprId, identity::DeclarationRef};
 use rg_semantic_ir::{ItemLookupQuery, SemanticItemSource};
 use rg_source::ReadError;
-use rg_std::OperationError;
 use rg_ty::solver::{InferenceTable, SemanticDeclarations, SolverInterner, Ty};
 
 use crate::{
@@ -41,8 +40,8 @@ pub(crate) struct InferenceContext<'query, D, I> {
 
 impl<'query, D, I> InferenceContext<'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     pub(crate) fn new(
         def_maps: D,
@@ -111,8 +110,8 @@ struct BodyInference<'s, 'query, D, I> {
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     fn lower(&self, ty: &rg_ty::Ty) -> Ty<'s> {
         self.inference
@@ -151,7 +150,7 @@ where
 
     /// Populate editor-facing declarations after inference settles. A uniquely selected call
     /// keeps its target; otherwise navigation can retain the broader lookup candidates.
-    fn resolve_method_declarations(&mut self) -> Result<(), OperationError<ReadError>> {
+    fn resolve_method_declarations(&mut self) -> Result<(), ReadError> {
         for call in std::mem::take(&mut self.method_calls) {
             rg_std::check_cancel!(self.context, "method declaration resolution");
             let ExprKind::MethodCall { receiver, .. } = self.body.expr_unchecked(call).kind else {
@@ -164,11 +163,12 @@ where
                 BodyResolution::Declarations([DeclarationRef::from(function)].into_iter().collect())
             } else if let Some(receiver) = receiver {
                 let receiver_ty = self.inference.root_resolved_expr_ty(receiver);
-                let targets = self
-                    .context
-                    .live()
-                    .call_targets(call, None, Some(receiver_ty), self.inference.table())
-                    .map_err(OperationError::Source)?;
+                let targets = self.context.live().call_targets(
+                    call,
+                    None,
+                    Some(receiver_ty),
+                    self.inference.table(),
+                )?;
                 if targets.is_empty() {
                     BodyResolution::Unknown
                 } else {

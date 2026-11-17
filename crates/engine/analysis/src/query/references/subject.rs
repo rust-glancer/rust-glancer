@@ -15,11 +15,11 @@
 
 use std::collections::HashSet;
 
-use rg_ir_model::{DefMapRef, FileId, Span, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, SemanticItemRef, Span, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::declaration::{Declaration, DeclarationView},
-    source::{IndexedSourceSurface, SourceOccurrenceView},
+    source::{IndexedSourceSurface, ReferenceSourceSelection, SourceOccurrenceView},
 };
 use rg_std::UniqueVec;
 
@@ -131,6 +131,32 @@ impl ReferenceSearchHints {
         self.exact_labels.iter().cloned().collect()
     }
 
+    pub(super) fn source_selection(&self, subject: &ReferenceSubject) -> ReferenceSourceSelection {
+        ReferenceSourceSelection {
+            labels: self
+                .exact_labels
+                .iter()
+                .map(|label| label.as_str().to_owned())
+                .collect(),
+            modules: subject
+                .declarations
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    DeclarationRef::Module(module) => Some(*module),
+                    _ => None,
+                })
+                .collect(),
+            types: subject
+                .declarations
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => Some(*ty),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
     pub(super) fn local_scan_target(&self) -> Option<ReferenceScanTarget> {
         self.local_scan_target
     }
@@ -227,7 +253,7 @@ impl ReferenceSearchHints {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ReferenceSourceLocation {
     pub(super) declaration: DeclarationRef,
-    pub(super) crate_ref: rg_ir_model::CrateRef,
+    pub(super) crate_ref: CrateRef,
     pub(super) file_id: FileId,
     pub(super) span: Span,
 }

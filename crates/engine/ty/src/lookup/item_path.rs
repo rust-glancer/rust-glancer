@@ -6,6 +6,7 @@ use rg_semantic_ir::{
     GenericsQuery, ItemResolutionQuery, ItemStoreQuery, SemanticItemSource, TypePathContext,
     TypePathResolution,
 };
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 
 /// Resolves paths into semantic item refs.
@@ -18,7 +19,7 @@ pub struct ItemPathQuery<'a, D, I> {
 impl<'a, D, I> ItemPathQuery<'a, D, I>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
         Self {
@@ -35,7 +36,7 @@ where
         &self.generics
     }
 
-    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, D::Error> {
+    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, ReadError> {
         self.definitions.target_pointer_width(crate_ref)
     }
 
@@ -43,7 +44,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<TypePathResolution, D::Error> {
+    ) -> Result<TypePathResolution, ReadError> {
         self.definitions.resolve_type_path(context, path)
     }
 
@@ -55,7 +56,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<TypePathResolution, D::Error> {
+    ) -> Result<TypePathResolution, ReadError> {
         self.definitions.resolve_lexical_type_path(from, path)
     }
 
@@ -63,7 +64,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
+    ) -> Result<UniqueVec<SemanticItemRef>, ReadError> {
         self.definitions.semantic_items_for_type_path(context, path)
     }
 }

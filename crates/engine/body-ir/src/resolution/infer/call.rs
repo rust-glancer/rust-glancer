@@ -64,8 +64,8 @@ impl<'s> PreparedCall<'s> {
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     /// Calls establish closure signatures early, then process ordinary arguments and fulfill
     /// their bounds before consuming closure bodies. Those bodies are still visited exactly once.

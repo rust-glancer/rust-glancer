@@ -21,16 +21,17 @@ pub use rg_source::ReadError;
 
 pub use self::{
     build::{
-        BodyOwnerData, ItemStoreLowerer, ItemStoreSourceReader, TargetDeclarationMetadata,
-        TargetDeclarationReader, TargetDeclarations, target_declarations,
+        BodyOwnerData, ItemStoreLowerer, ItemStoreSourceReader, SymbolNameData,
+        TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations,
+        target_declarations,
     },
     item::{
         ConstData, ConstSignature, EnumData, EnumVariantData, FieldData, FunctionData,
         FunctionSignature, GenericParamSource, GenericParamView, Generics, GenericsQuery, ImplData,
-        ItemLookupFacts, ItemLookupIndex, ItemLookupQuery, ItemLookupQueryCache,
-        ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStore, ItemStoreBuilder,
-        ItemStoreQuery, LangItemIndex, SelfTypeOwner, SemanticItemSource, SemanticItemView,
-        StaticData, StructData, TraitData, TraitImplSelfHead, TypeAliasData, TypeAliasSignature,
+        ItemLookupEnv, ItemLookupIndex, ItemLookupQuery, ItemLookupShard, ItemResolutionQuery,
+        ItemStore, ItemStoreBuilder, ItemStoreQuery, LangItemIndex, LookupAnswer, LookupKeys,
+        LookupQuestion, SelfTypeOwner, SemanticItemSource, SemanticItemView, StaticData,
+        StructData, TraitData, TraitImplSelfHead, TypeAliasData, TypeAliasSignature,
         TypePathContext, TypePathResolution, UnionData,
     },
     reader::{CrateItemSource, ItemReader},

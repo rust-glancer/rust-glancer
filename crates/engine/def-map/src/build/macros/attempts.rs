@@ -56,7 +56,7 @@ pub(crate) fn collect_expansion_attempts<E>(
     macro_source_file_resolutions: &MacroSourceFileResolutions,
 ) -> anyhow::Result<Vec<MacroExpansionAttempt>>
 where
-    E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static> + MacroDefinitionEnv,
+    E: CrateResolutionEnv + MacroDefinitionEnv,
 {
     let mut attempts = Vec::new();
 
@@ -356,8 +356,7 @@ impl MacroExpansionAttempt {
         macro_source_file_resolutions: &MacroSourceFileResolutions,
     ) -> anyhow::Result<Self>
     where
-        E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
-            + MacroDefinitionEnv,
+        E: CrateResolutionEnv + MacroDefinitionEnv,
     {
         // First normalize the syntactic call into a path and argument list. Calls that are not
         // item-shaped macro invocations are marked done so the worklist can move on.

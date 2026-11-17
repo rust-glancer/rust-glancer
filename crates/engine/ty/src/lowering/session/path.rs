@@ -4,6 +4,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ItemOwner, TypeAliasRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathAnchor, TypeRef};
 use rg_semantic_ir::{GenericParamSource, SelfTypeOwner, SemanticItemSource, TypePathResolution};
+use rg_source::ReadError;
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
 use crate::{
@@ -17,15 +18,15 @@ use crate::{
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     pub(crate) fn lower_type_path(
         &mut self,
         path: &TypePath,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         if path.anchor.is_some() {
             return self.lower_anchored_type_path(path, impl_trait_mode, inference);
         }
@@ -162,7 +163,7 @@ where
     ///
     /// In `struct Wrapper<T = u32>`, `Self` means `Wrapper<T>`, including before `T` is known.
     /// An impl supplies its full receiver spelling, as in `impl<T> Wrapper<Vec<T>>`.
-    fn lower_self(&mut self) -> Result<Option<Ty<'s>>, D::Error> {
+    fn lower_self(&mut self) -> Result<Option<Ty<'s>>, ReadError> {
         let TypeLoweringAnchor::Context(context) = self.anchor else {
             return Ok(None);
         };
@@ -201,7 +202,7 @@ where
         path: &TypePath,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         let Some(anchor) = &path.anchor else {
             return Ok(self.cx.unknown());
         };
@@ -247,7 +248,7 @@ where
         &mut self,
         alias: TypeAliasRef,
         syntax_args: &[ItemGenericArg],
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         self.lower_alias_with_mode(alias, syntax_args, ImplTraitMode::Opaque, None)
     }
 
@@ -257,7 +258,7 @@ where
         syntax_args: &[ItemGenericArg],
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         if self.alias_stack.contains(&alias) {
             return Ok(self.cx.unknown());
         }

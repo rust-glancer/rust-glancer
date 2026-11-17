@@ -9,15 +9,16 @@ mod context;
 mod data;
 mod generics;
 mod lang_item;
-mod lookup_facts;
+mod lookup_env;
 mod lookup_index;
+mod lookup_keys;
+mod lookup_shard;
 mod query;
 mod signature;
 mod store;
 mod type_path_resolution;
 mod view;
 
-pub(crate) use self::lookup_index::TraitItemTraitRefs;
 pub use self::{
     context::{SelfTypeOwner, TypePathContext},
     data::{
@@ -26,11 +27,13 @@ pub use self::{
     },
     generics::{GenericParamSource, GenericParamView, Generics},
     lang_item::LangItemIndex,
-    lookup_facts::ItemLookupFacts,
+    lookup_env::ItemLookupEnv,
     lookup_index::{ItemLookupIndex, TraitImplSelfHead},
+    lookup_keys::LookupKeys,
+    lookup_shard::ItemLookupShard,
     query::{
-        GenericsQuery, ItemLookupQuery, ItemLookupQueryCache, ItemLookupQueryCacheStats,
-        ItemResolutionQuery, ItemStoreQuery, SemanticItemSource,
+        GenericsQuery, ItemLookupQuery, ItemResolutionQuery, ItemStoreQuery, LookupAnswer,
+        LookupQuestion, SemanticItemSource,
     },
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
     store::{ItemStore, ItemStoreBuilder},

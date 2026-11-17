@@ -25,6 +25,7 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
             .line_index()
             .expect("fixture line index should load");
         let view_db = IndexedViewDb::new(
+            view.semantic().db(),
             view.semantic().definitions(),
             view.semantic().items(),
             view.body_reader(),
@@ -34,7 +35,7 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
 
         let mut occurrences = Vec::new();
         for occurrence in SourceOccurrenceView::new(&view_db)
-            .occurrences_in_crate(*target, Some(file_id))
+            .occurrences_in_crate(*target, Some(file_id), None)
             .expect("fixture source occurrences should scan")
         {
             let (fact, _, occurrence_file, span, role, surface) = occurrence.into_parts();

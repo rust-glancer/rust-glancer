@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use rg_std::{Cancelable, CancellationToken, Cancelled, OperationError};
+use rg_std::{Cancelable, CancellationToken, Cancelled};
 
 struct NameCollector {
     cancellation: CancellationToken,
@@ -155,42 +155,25 @@ fn explicit_checks_borrow_the_source_once_and_identify_the_call_site() {
 #[test]
 fn cancellation_and_source_errors_keep_their_identity() {
     let cancellation = CancellationToken::new();
-    let source_error = (|| -> Result<(), OperationError<std::io::Error>> {
+    let source_error = (|| -> Result<(), Box<dyn Error>> {
         rg_std::check_cancel!(cancellation);
         // A source failure still belongs to the source even if cancellation arrives during it.
         cancellation.cancel();
-        Err(OperationError::Source(std::io::Error::other(
-            "read declaration shard",
-        )))
+        Err(std::io::Error::other("read declaration shard").into())
     })()
     .expect_err("source failed");
-    assert!(matches!(source_error, OperationError::Source(_)));
+    assert!(source_error.downcast_ref::<std::io::Error>().is_some());
 
-    let cancelled = (|| -> Result<(), OperationError<std::convert::Infallible>> {
+    let cancelled = (|| -> Result<(), Box<dyn Error>> {
         rg_std::check_cancel!(cancellation, "read declarations");
         Ok(())
     })()
     .expect_err("operation was cancelled");
-    assert!(matches!(cancelled, OperationError::Cancelled(_)));
-    let cause = cancelled.source().expect("typed cancellation cause");
     assert_eq!(
-        cause
+        cancelled
             .downcast_ref::<Cancelled>()
             .expect("cancellation is preserved")
             .checkpoint(),
         "read declarations"
-    );
-
-    let erased = (|| -> Result<(), Box<dyn Error>> {
-        rg_std::check_cancel!(cancellation, "erased error");
-        Ok(())
-    })()
-    .expect_err("operation was cancelled");
-    assert_eq!(
-        erased
-            .downcast_ref::<Cancelled>()
-            .expect("cancellation is preserved")
-            .checkpoint(),
-        "erased error"
     );
 }

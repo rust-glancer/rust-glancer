@@ -462,39 +462,33 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(symbols)
     }
 
-    /// Return workspace-wide symbols for all included crates.
-    pub fn workspace_symbols(&self) -> Result<Vec<IndexedSymbolEntry>> {
+    /// Search compact names before acquiring declarations for rendering the matches.
+    pub fn workspace_symbols(&self, query: &str) -> Result<Vec<IndexedSymbolEntry>> {
+        let needle = query.to_lowercase();
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
-
-        for crate_ref in index.included_crates()? {
-            rg_std::check_cancel!(self.db, "symbol collection");
-            for declaration in index.module_declarations(crate_ref)? {
-                let Some(module) = self
-                    .declaration(declaration)
-                    .context("read workspace module declaration")?
-                else {
+        for krate in index.included_crates()? {
+            for candidate in self.db.semantic_ir.symbol_names(krate)? {
+                rg_std::check_cancel!(self.db, "workspace symbol discovery");
+                if !candidate.name.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                let Some(declaration) = self.declaration(candidate.declaration)? else {
                     continue;
                 };
-                let container_name = match declaration {
-                    DeclarationRef::Module(module_ref) => {
-                        index.module_container_name(module_ref)?
+                let container = if let Some(container) = candidate.container {
+                    match self.declaration(container)? {
+                        Some(parent) => self.child_container_name(&parent)?,
+                        None => None,
                     }
-                    DeclarationRef::LocalDef(_)
-                    | DeclarationRef::Item(_)
-                    | DeclarationRef::Field(_)
-                    | DeclarationRef::EnumVariant(_)
-                    | DeclarationRef::BodyBinding(_) => None,
+                } else if let DeclarationRef::Module(module) = candidate.declaration {
+                    index.module_container_name(module)?
+                } else {
+                    None
                 };
-                symbols.push(IndexedSymbolEntry::new(module, container_name));
-            }
-
-            for item in index.module_owned_items(crate_ref, None)? {
-                self.push_workspace_item(&item, None, &mut symbols)
-                    .context("project workspace symbol item")?;
+                symbols.push(IndexedSymbolEntry::new(declaration, container));
             }
         }
-
         Ok(symbols)
     }
 
@@ -537,32 +531,6 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(Some(
             SourceOutlineNode::new(declaration).with_children(children),
         ))
-    }
-
-    /// Push an indexed item tree into the flat workspace-symbol list.
-    fn push_workspace_item(
-        &self,
-        item: &IndexedItem,
-        container_name: Option<String>,
-        symbols: &mut Vec<IndexedSymbolEntry>,
-    ) -> Result<()> {
-        let Some(declaration) = self.declaration(item.declaration())? else {
-            return Ok(());
-        };
-        let child_container_name = self.child_container_name(&declaration)?;
-        if declaration.kind() != SymbolKind::Impl {
-            symbols.push(IndexedSymbolEntry::new(declaration, container_name));
-        }
-
-        for child in item.children() {
-            rg_std::check_cancel!(self.db, "symbol collection");
-            let IndexedItemChild::Declaration(child) = child else {
-                continue;
-            };
-            self.push_workspace_item(child, child_container_name.clone(), symbols)?;
-        }
-
-        Ok(())
     }
 
     /// Return the container name inherited by children of a declaration.

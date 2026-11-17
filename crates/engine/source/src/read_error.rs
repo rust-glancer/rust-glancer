@@ -1,6 +1,7 @@
-use rg_std::{Cancelled, OperationError};
+use rg_std::Cancelled;
 
 /// Semantic reads may stop because their query failed or their request was cancelled.
+/// Missing declarations are ordinary results; either failure must reach the operation boundary.
 #[derive(Debug)]
 pub enum ReadError {
     Query(ajika::Error),
@@ -40,12 +41,9 @@ impl std::error::Error for ReadError {
     }
 }
 
-impl From<OperationError<Self>> for ReadError {
-    fn from(error: OperationError<Self>) -> Self {
-        match error {
-            OperationError::Source(error) => error,
-            OperationError::Cancelled(cancelled) => Self::Cancelled(cancelled),
-        }
+impl From<Cancelled> for ReadError {
+    fn from(error: Cancelled) -> Self {
+        Self::Cancelled(error)
     }
 }
 

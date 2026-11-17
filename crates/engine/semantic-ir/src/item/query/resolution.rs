@@ -5,6 +5,7 @@
 
 use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
 use rg_ir_model::{CrateRef, DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef};
+use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::{ItemStoreQuery, SemanticItemSource};
@@ -20,7 +21,7 @@ pub struct ItemResolutionQuery<'a, D, I> {
 impl<'a, D, I> ItemResolutionQuery<'a, D, I>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
         Self {
@@ -33,7 +34,7 @@ where
         &self.items
     }
 
-    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, D::Error> {
+    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, ReadError> {
         self.def_maps.target_pointer_width(crate_ref)
     }
 
@@ -42,7 +43,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<TypePathResolution, D::Error> {
+    ) -> Result<TypePathResolution, ReadError> {
         if path.is_self_type() {
             return Ok(match context.self_owner {
                 Some(SelfTypeOwner::TypeDef(type_def)) => TypePathResolution::SelfType(type_def),
@@ -74,7 +75,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<TypePathResolution, D::Error> {
+    ) -> Result<TypePathResolution, ReadError> {
         let result =
             self.def_maps
                 .name_resolver()
@@ -89,7 +90,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
+    ) -> Result<UniqueVec<SemanticItemRef>, ReadError> {
         if path.is_self_type() {
             let item = match self.resolve_type_path(context, path)? {
                 TypePathResolution::SelfType(type_def) | TypePathResolution::TypeDef(type_def) => {
@@ -120,7 +121,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<UniqueVec<TypeDefRef>, D::Error> {
+    ) -> Result<UniqueVec<TypeDefRef>, ReadError> {
         Ok(self
             .semantic_items_for_path(from, path)?
             .into_iter()
@@ -135,7 +136,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, ReadError> {
         Ok(self
             .semantic_items_for_path(from, path)?
             .into_iter()
@@ -151,7 +152,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
+    ) -> Result<UniqueVec<SemanticItemRef>, ReadError> {
         let result = self
             .def_maps
             .name_resolver()
@@ -166,7 +167,7 @@ where
     fn semantic_items_for_defs(
         &self,
         defs: Vec<DefId>,
-    ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
+    ) -> Result<UniqueVec<SemanticItemRef>, ReadError> {
         let mut resolved_items = UniqueVec::new();
         for def in defs {
             if let DefId::Local(local_def) = def

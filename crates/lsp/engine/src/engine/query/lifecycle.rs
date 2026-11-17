@@ -27,7 +27,7 @@ use rg_lsp_proto::{
     EditorDocumentSnapshot, EngineError, GlobalPositionSnapshot, QueryError, QueryScope, QueryValue,
 };
 use rg_project::Project;
-use rg_std::{CancellationToken, Cancelled};
+use rg_std::{Cancelable, CancellationToken, Cancelled};
 
 use super::QueryRunner;
 use crate::{engine::command::QueryResponder, memory::MemoryReporter};
@@ -100,13 +100,13 @@ impl<'a> QueryCancellation<'a> {
     }
 }
 
-impl rg_std::Cancelable for QueryCancellation<'_> {
+impl Cancelable for QueryCancellation<'_> {
     /// Stop at a named query boundary if nobody can receive the result anymore.
     fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), Cancelled> {
         if (self.response_is_closed)() {
             self.request.cancel();
         }
-        rg_std::Cancelable::check_cancelled(self.request, checkpoint)
+        Cancelable::check_cancelled(self.request, checkpoint)
     }
 }
 
@@ -365,7 +365,8 @@ mod tests {
         DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
         OpenDocumentsRevision, QueryError, QueryScope, QueryValue,
     };
-    use rg_std::CancellationToken;
+    use rg_source::ReadError;
+    use rg_std::{Cancelable, CancellationToken};
     use tokio::sync::oneshot;
 
     use super::QueryContext;
@@ -578,10 +579,12 @@ mod tests {
                     let token = control.token();
                     token.cancel();
                     let error = if source_failed {
-                        rg_std::OperationError::Source(std::io::Error::other("source read failed"))
+                        ReadError::Query(ajika::Error::application(std::io::Error::other(
+                            "source read failed",
+                        )))
                     } else {
-                        rg_std::OperationError::Cancelled(
-                            rg_std::Cancelable::check_cancelled(&token, "test scan")
+                        ReadError::Cancelled(
+                            Cancelable::check_cancelled(&token, "test scan")
                                 .expect_err("request was cancelled"),
                         )
                     };

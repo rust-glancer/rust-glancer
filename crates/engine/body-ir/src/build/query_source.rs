@@ -53,8 +53,6 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
 }
 
 impl DefMapSource for BodyBuildQuerySource<'_, '_> {
-    type Error = ReadError;
-
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
         match origin {
             DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
@@ -97,8 +95,6 @@ impl DefMapSource for BodyBuildQuerySource<'_, '_> {
 }
 
 impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource<'_, 'db> {
-    type Error = ReadError;
-
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'source>>, ReadError> {
         match item.origin() {
             DefMapRef::Crate(_) => self.semantic_ir.item(item),

@@ -10,7 +10,6 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{BuiltinMacroExprKind, ExprId, FieldKey, StmtId, identity::DeclarationRef};
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
-use rg_source::ReadError;
 use rg_ty::{
     PrimitiveTy,
     solver::{AdtTy, List, TraitApplication, Ty, TyShape},
@@ -33,8 +32,8 @@ pub(crate) struct BreakTarget<'s, 'query> {
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     /// Infer one expression against its expectation and store its type in inference state.
     /// Shared variables carry later evidence without revisiting this subtree.

@@ -57,9 +57,13 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
             &mut best,
         )?;
 
-        // Rust permits item declarations inside bodies, including trait implementations. Loading
-        // only bodies from this file preserves the store's normal file-granular residency.
-        for (body_ref, _) in self.db.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        // Rust permits item declarations inside bodies, including trait implementations. Owner spans
+        // let us select only bodies that can contain this cursor.
+        for (body_ref, _) in
+            self.db
+                .body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             self.scan_items(
                 items.semantic_items_for_origin(DefMapRef::Body(body_ref))?,
                 &mut best,

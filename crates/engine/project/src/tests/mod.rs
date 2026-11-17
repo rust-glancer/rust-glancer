@@ -1,5 +1,6 @@
 mod cargo_build_outputs;
 mod current_source;
+mod demand_driven;
 mod file_queries;
 mod generated_modules;
 mod utils;
@@ -431,7 +432,7 @@ pub struct AlreadyApplied;
 }
 
 #[test]
-fn eager_indexing_includes_body_references_and_rename() {
+fn saved_queries_include_body_references_and_rename() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -1416,7 +1417,7 @@ pub struct Root;
 }
 
 #[test]
-fn persisted_lookup_facts_follow_dependency_declarations() {
+fn persisted_lookup_env_follows_dependency_declarations() {
     let source = r#"
 //- /Cargo.toml
 [workspace]
@@ -1460,7 +1461,7 @@ pub struct App;
                 app,
                 &rg_std::CancellationToken::new(),
             )
-            .expect("saved lookup facts should load");
+            .expect("saved lookup environment should load");
             let selected = query
                 .lang_trait(rg_item_tree::LangItem::Deref)
                 .expect("dependency supplies the language item");

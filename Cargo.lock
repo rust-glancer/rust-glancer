@@ -2282,6 +2282,7 @@ dependencies = [
  "rg_item_tree",
  "rg_profile",
  "rg_semantic_ir",
+ "rg_source",
  "rg_std",
  "rg_text",
  "rg_wincode_utils",

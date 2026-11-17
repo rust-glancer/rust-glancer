@@ -4,6 +4,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef, WherePredicate};
 use rg_semantic_ir::{GenericParamSource, SemanticItemSource, TypePathResolution};
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_text::Name;
 use rustc_type_ir::{ClauseKind, inherent::IntoKind as _};
@@ -17,15 +18,15 @@ use crate::solver::{
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     /// Lower a trait bound with `Self` already known.
     pub fn lower_trait_ref(
         &mut self,
         trait_ty: &TypeRef,
         self_ty: Ty<'s>,
-    ) -> Result<Option<TraitRefLowering<'s>>, D::Error> {
+    ) -> Result<Option<TraitRefLowering<'s>>, ReadError> {
         self.lower_trait_ref_with_mode(trait_ty, self_ty, ImplTraitMode::Opaque, None)
     }
 
@@ -35,7 +36,7 @@ where
         self_ty: Ty<'s>,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<Option<TraitRefLowering<'s>>, D::Error> {
+    ) -> Result<Option<TraitRefLowering<'s>>, ReadError> {
         let TypeRef::Path(path) = trait_ty else {
             return Ok(None);
         };
@@ -61,7 +62,7 @@ where
     pub(crate) fn resolve_trait_def(
         &self,
         trait_ty: &TypeRef,
-    ) -> Result<Option<TraitDefRef>, D::Error> {
+    ) -> Result<Option<TraitDefRef>, ReadError> {
         let TypeRef::Path(path) = trait_ty else {
             return Ok(None);
         };
@@ -83,7 +84,7 @@ where
         self_ty: Ty<'s>,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<TraitRefLowering<'s>, D::Error> {
+    ) -> Result<TraitRefLowering<'s>, ReadError> {
         let application =
             self.lower_trait_application(path, trait_ref, self_ty, impl_trait_mode, inference)?;
         let syntax_args = path
@@ -109,7 +110,7 @@ where
         self_ty: Ty<'s>,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<TraitApplication<'s>, D::Error> {
+    ) -> Result<TraitApplication<'s>, ReadError> {
         let generics = self
             .item_paths
             .generics()
@@ -157,7 +158,7 @@ where
     pub fn trait_applications_for_type(
         &mut self,
         ty: Ty<'s>,
-    ) -> Result<UniqueVec<TraitApplication<'s>>, D::Error> {
+    ) -> Result<UniqueVec<TraitApplication<'s>>, ReadError> {
         let mut applications = UniqueVec::new();
         let mut clauses = self.lower_clauses()?;
         // A prefix like `Object::` can name an alias for `dyn Service`. Its methods come
@@ -187,7 +188,7 @@ where
     /// Generic-parameter bounds, where-clauses, and supertrait bounds are stored separately in
     /// source data, but all contribute to the returned list. Declaration parameters stay generic
     /// here; a particular call or impl candidate substitutes its arguments later.
-    pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause<'s>>, D::Error> {
+    pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause<'s>>, ReadError> {
         let generics = self.item_paths.generics().generics(self.owner)?;
         let mut inline_bounds = Vec::new();
         for param in generics.iter() {
@@ -281,7 +282,7 @@ where
         subject: Ty<'s>,
         bounds: &[TypeBound],
         clauses: &mut Vec<Clause<'s>>,
-    ) -> Result<(), D::Error> {
+    ) -> Result<(), ReadError> {
         for bound in bounds {
             let Some(trait_ty) = bound.required_trait_ty() else {
                 continue;
@@ -299,7 +300,7 @@ where
         syntax_args: &[ItemGenericArg],
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<Vec<AssocTypeBinding<'s>>, D::Error> {
+    ) -> Result<Vec<AssocTypeBinding<'s>>, ReadError> {
         let mut bindings = Vec::new();
         for arg in syntax_args {
             let output_name;

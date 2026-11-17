@@ -18,13 +18,15 @@ use std::time::Instant;
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
+use rg_def_map::DefinitionReader;
 use rg_ir_model::{
-    BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FileId, FunctionId, FunctionRef, ImplRef,
-    ItemOwner, ModuleRef, Span, StaticId, StaticRef, TraitDefRef,
+    BodyId, BodyKey, BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FileId, FunctionId,
+    FunctionRef, ImplRef, ItemOwner, ModuleRef, SavedBodyOwner, Span, StaticId, StaticRef,
+    TraitDefRef,
 };
-use rg_parse::{CurrentSource, DeclarationAssociationIndex};
-use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
-use rg_std::ExpectedUnique;
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, Package};
+use rg_semantic_ir::{ItemLookupQuery, ItemReader, ItemStoreQuery};
+use rg_std::{CancellationToken, ExpectedUnique};
 
 use super::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
@@ -32,7 +34,7 @@ use super::{
     syntax_owner::SyntaxBodyOwner,
 };
 use crate::{
-    BodyOwner, CurrentBody,
+    BodyOwner, BodyReader, BodySource, CurrentBody,
     build::{
         lower::{
             BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
@@ -56,36 +58,34 @@ pub(super) struct CurrentBodyBuildOutcome {
 /// when no saved declaration matches. It then hands the roots to the same lowering and resolution
 /// stages used by saved builds. The resulting bodies exist only for this analysis request.
 pub(super) struct CurrentBodyBuilder<'source, 'db> {
-    parse_package: &'source rg_parse::Package,
+    parse_package: &'source Package,
     cfg: CfgEvaluator<'source>,
-    def_map: &'source rg_def_map::DefinitionReader<'db>,
-    semantic_ir: &'source rg_semantic_ir::ItemReader<'db>,
-    saved_body_ir: &'source crate::BodyReader<'db>,
+    def_map: &'source DefinitionReader<'db>,
+    semantic_ir: &'source ItemReader<'db>,
+    saved_body_ir: &'source BodyReader<'db>,
     crate_ref: CrateRef,
     file: FileId,
     current_source: &'source CurrentSource,
     associations: &'source DeclarationAssociationIndex,
-    item_lookup_cache: ItemLookupQueryCache,
     selection: CurrentSourceSelection,
-    cancellation: rg_std::CancellationToken,
+    cancellation: CancellationToken,
 }
 
 impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     /// Prepare current-body construction for one explicit selection policy.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        parse_package: &'source rg_parse::Package,
+        parse_package: &'source Package,
         cfg: CfgEvaluator<'source>,
-        def_map: &'source rg_def_map::DefinitionReader<'db>,
-        semantic_ir: &'source rg_semantic_ir::ItemReader<'db>,
-        saved_body_ir: &'source crate::BodyReader<'db>,
+        def_map: &'source DefinitionReader<'db>,
+        semantic_ir: &'source ItemReader<'db>,
+        saved_body_ir: &'source BodyReader<'db>,
         crate_ref: CrateRef,
         file: FileId,
         current_source: &'source CurrentSource,
         associations: &'source DeclarationAssociationIndex,
-        item_lookup_cache: ItemLookupQueryCache,
         selection: CurrentSourceSelection,
-        cancellation: rg_std::CancellationToken,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             parse_package,
@@ -97,7 +97,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             file,
             current_source,
             associations,
-            item_lookup_cache,
             selection,
             cancellation,
         }
@@ -156,7 +155,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         let saved_items = self
             .semantic_ir
             .all_items(DefMapRef::Crate(self.crate_ref))?;
-        let saved_bodies = self.saved_body_ir.bodies(self.crate_ref, Some(self.file))?;
         let saved_owners = SavedRootOwnerIndex::new(&saved_items, self.file);
         let mut roots = Vec::<PreparedCurrentRoot>::new();
         let mut unavailable = Vec::new();
@@ -181,16 +179,16 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             let root = match saved_root {
                 ExpectedUnique::One((current_owner, saved_owner)) => {
                     let current_span = Span::from_text_range(current_owner.syntax().text_range());
-                    let body_ref = match saved_bodies
-                        .iter()
-                        .find(|(_, body)| body.owner() == saved_owner)
-                        .map(|(body_ref, _)| *body_ref)
-                    {
-                        Some(body_ref) => body_ref,
-                        None => {
-                            synthetic_body_ref().context("allocate request-only body identity")?
-                        }
+                    let owner = match saved_owner {
+                        BodyOwner::Function(item) => SavedBodyOwner::Function(item.id),
+                        BodyOwner::Const(item) => SavedBodyOwner::Const(item.id),
+                        BodyOwner::Static(item) => SavedBodyOwner::Static(item.id),
                     };
+                    let body_ref = BodyKey {
+                        krate: self.crate_ref,
+                        owner,
+                    }
+                    .body(BodyId(0));
                     let owner_module = self
                         .owner_module(saved_owner)?
                         .context("saved body owner has no module")?;
@@ -276,6 +274,13 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // functions and initializers declared inside these roots. The nested-body index lets an
         // unchanged declaration keep its saved `BodyRef`; crate lookup continues to come from the
         // saved project rather than publishing request-local items globally.
+        let saved_bodies =
+            self.saved_body_ir
+                .bodies_matching(self.crate_ref, Some(self.file), &|owner| {
+                    roots
+                        .iter()
+                        .any(|root| root.body_ref.root.owner() == Some(owner.owner))
+                })?;
         let saved_nested_bodies = SavedNestedBodyIndex::new(
             self.saved_body_ir,
             self.crate_ref,
@@ -284,13 +289,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             roots.iter().map(|root| root.body_ref),
         )?;
 
-        let item_lookup_query = ItemLookupQuery::build_with_cache(
-            *self.semantic_ir,
-            self.crate_ref,
-            &self.item_lookup_cache,
-            &cancellation,
-        )
-        .context("build the current body's visible item lookup query")?;
+        let item_lookup_query =
+            ItemLookupQuery::build_from(*self.semantic_ir, self.crate_ref, &cancellation)
+                .context("build the current body's visible item lookup query")?;
         let task_source = BodyTaskSource::Current {
             package: self.parse_package,
             file: self.file,
@@ -410,7 +411,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                 });
                 if !is_context {
                     complete_impls.push(SelectedImpl {
-                        source: crate::BodySource::written(local.file_id, local.span),
+                        source: BodySource::written(local.file_id, local.span),
                         impl_ref,
                     });
                 }

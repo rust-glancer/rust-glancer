@@ -19,7 +19,6 @@ declare_metrics! {
             /// Wall time for the full Ajika run, including routing, checkpointing and release.
             duration QUERY_OPERATION = "query_operation" [title "Query operation total"];
             duration DECLARATIONS = "declarations" [title "Declaration demand"];
-            duration PREFILL_BODIES = "body_prefill" [title "Body prefill"];
             duration SOURCE_VALIDATION = "source_validation" [title "Source validation"];
         }
 

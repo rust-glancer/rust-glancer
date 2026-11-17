@@ -13,6 +13,7 @@ mod type_ref;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef, TypeAliasRef, TypeParamRef};
 use rg_semantic_ir::SemanticItemSource;
+use rg_source::ReadError;
 use rg_text::Name;
 use rustc_type_ir::TyKind;
 
@@ -58,15 +59,15 @@ pub struct TypeLoweringSession<'s, 'lower, 'query, D, I, R> {
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     pub(crate) fn new(
         item_paths: &'lower ItemPathQuery<'query, D, I>,
         resolver: &'lower R,
         cx: SolverInterner<'s>,
         env: TypeLoweringEnv,
-    ) -> Result<Self, D::Error> {
+    ) -> Result<Self, ReadError> {
         let generics = item_paths.generics().generics(env.owner)?;
         let subst = Substitution::identity(cx, generics.iter().map(|p| p.param()));
 
@@ -116,8 +117,8 @@ where
         &mut self,
         owner: GenericDefRef,
         anchor: TypeLoweringAnchor,
-        lower: impl FnOnce(&mut Self) -> Result<T, D::Error>,
-    ) -> Result<T, D::Error> {
+        lower: impl FnOnce(&mut Self) -> Result<T, ReadError>,
+    ) -> Result<T, ReadError> {
         let previous_owner = self.owner;
         let previous_anchor = self.anchor;
         self.owner = owner;
@@ -128,7 +129,7 @@ where
         result
     }
 
-    fn anchor_for_owner(&self, owner: GenericDefRef) -> Result<TypeLoweringAnchor, D::Error> {
+    fn anchor_for_owner(&self, owner: GenericDefRef) -> Result<TypeLoweringAnchor, ReadError> {
         if owner == self.owner {
             return Ok(self.anchor);
         }
@@ -156,7 +157,7 @@ where
         );
     }
 
-    fn param_by_name(&self, name: &str) -> Result<Option<GenericParamRef>, D::Error> {
+    fn param_by_name(&self, name: &str) -> Result<Option<GenericParamRef>, ReadError> {
         Ok(self
             .item_paths
             .generics()

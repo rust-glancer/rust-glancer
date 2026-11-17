@@ -1,11 +1,10 @@
 //! Prepare and infer one saved body owner with the same worklist as current-source analysis.
 
 use rg_cfg_eval::CfgEvaluator;
+use rg_def_map::{CrateDefMapReader, DefinitionReader};
 use rg_ir_model::{BodyId, BodyKey, BodyRoot, EvaluatedConstValue, SavedBodyOwner};
-use rg_semantic_ir::{
-    ItemLookupQuery, ItemLookupQueryCache, TargetDeclarationReader, target_declarations,
-};
-use rg_source::ReadError;
+use rg_semantic_ir::{ItemLookupQuery, ItemReader, TargetDeclarationReader, target_declarations};
+use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
 use rg_workspace::{PackageInput, TargetInput};
 use wincode::{SchemaRead, SchemaWrite};
@@ -16,7 +15,7 @@ use super::{
     },
     state::CrateBodyBuildState,
 };
-use crate::{BodyStore, resolution::BodyResolutionContext};
+use crate::{BodyStore, profile::metric, resolution::BodyResolutionContext};
 
 #[derive(Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SavedBody {
@@ -27,10 +26,8 @@ pub struct SavedBody {
 /// Query a single outer owner. The current target directory establishes whether the owner still
 /// exists; an older record cannot supply its previous body after that declaration disappears.
 #[ajika::query(returns(ref))]
-pub fn saved_body(
-    db: &rg_source::QueryContext<'_>,
-    key: BodyKey,
-) -> ajika::Result<Option<SavedBody>> {
+pub fn saved_body(db: &QueryContext<'_>, key: BodyKey) -> ajika::Result<Option<SavedBody>> {
+    metric::OWNERS.inc();
     let declarations = target_declarations(db, key.krate)?;
     let owners = declarations.body_owners.value_ref(db)?;
     let Some(owner) = owners
@@ -42,8 +39,8 @@ pub fn saved_body(
     };
 
     let readers = TargetDeclarationReader::for_target(db, key.krate)?;
-    let definitions: rg_def_map::DefinitionReader<'_> = rg_def_map::CrateDefMapReader(&readers);
-    let items = rg_semantic_ir::ItemReader(&readers);
+    let definitions: DefinitionReader<'_> = CrateDefMapReader(&readers);
+    let items = ItemReader(&readers);
     let package = PackageInput::at(key.krate.package);
     let edition = package.edition(db)?;
     let cfg = package.cfg(db)?;
@@ -61,15 +58,13 @@ pub fn saved_body(
         if lowered.bodies().is_empty() {
             return Ok(None);
         }
-        let lookup_cache = ItemLookupQueryCache::new();
         let initializer = if matches!(
             key.owner,
             SavedBodyOwner::Const(_) | SavedBodyOwner::Static(_)
         ) {
             // Saved declaration hover needs the same value as the old initializer pass. Evaluate
             // it from the owner's lowered expression before that temporary syntax is dropped.
-            let lookup =
-                ItemLookupQuery::build_with_cache(items, key.krate, &lookup_cache, &cancellation)?;
+            let lookup = ItemLookupQuery::build_from(items, key.krate, &cancellation)?;
             let lowered_root = &lowered.bodies()[BodyId(0)];
             BodyResolutionContext::new(
                 &definitions,
@@ -93,7 +88,7 @@ pub fn saved_body(
             lowered,
             cancellation,
         )
-        .resolve(&definitions, &items, &lookup_cache, cfg)?;
+        .resolve(&definitions, &items, cfg)?;
         bodies.shrink_to_fit();
         Ok(Some(SavedBody {
             bodies,

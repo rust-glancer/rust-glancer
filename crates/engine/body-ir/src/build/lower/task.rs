@@ -5,7 +5,7 @@
 //! it groups those scheduled owners by file, opens each parsed file once, finds the matching AST
 //! item by span, and then delegates the actual expression lowering to `BodyLowering`.
 
-use std::{borrow::Cow, collections::HashMap, path::Path};
+use std::{borrow::Cow, path::Path};
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
@@ -13,9 +13,11 @@ use rg_ir_model::{
     BodyId, ConstRef, CrateRef, DefMapRef, FileId, FunctionRef, ModuleRef, SavedBodyOwner, Span,
     StaticRef,
 };
-use rg_parse::CurrentSource;
+use rg_parse::{CurrentSource, Package, saved_syntax};
 use rg_semantic_ir::BodyOwnerData;
-use rg_syntax::{AstNode as _, SyntaxKind, ast};
+use rg_source::QueryContext;
+use rg_std::CancellationToken;
+use rg_syntax::{AstNode as _, SourceFile, SyntaxKind, TextRange, ast};
 use rg_text::RustEdition;
 
 use super::{
@@ -69,13 +71,13 @@ impl BodyLoweringTask {
 /// captured document while retaining the saved package for any other source reached by lowering.
 #[derive(Clone, Copy)]
 pub(crate) enum BodyTaskSource<'a> {
-    Parsed(&'a rg_parse::Package),
+    Parsed(&'a Package),
     Tracked {
-        db: &'a rg_source::QueryContext<'a>,
+        db: &'a QueryContext<'a>,
         edition: RustEdition,
     },
     Current {
-        package: &'a rg_parse::Package,
+        package: &'a Package,
         file: FileId,
         source: &'a CurrentSource,
     },
@@ -117,7 +119,7 @@ pub(crate) struct BodyTaskLowering<'a> {
     source: BodyTaskSource<'a>,
     crate_bodies: &'a mut LoweredCrateBodies,
     cfg: CfgEvaluator<'a>,
-    cancellation: &'a rg_std::CancellationToken,
+    cancellation: &'a CancellationToken,
 }
 
 impl<'a> BodyTaskLowering<'a> {
@@ -125,7 +127,7 @@ impl<'a> BodyTaskLowering<'a> {
         source: BodyTaskSource<'a>,
         crate_bodies: &'a mut LoweredCrateBodies,
         cfg: CfgEvaluator<'a>,
-        cancellation: &'a rg_std::CancellationToken,
+        cancellation: &'a CancellationToken,
     ) -> Self {
         Self {
             source,
@@ -183,9 +185,7 @@ impl<'a> BodyTaskLowering<'a> {
         }
 
         let syntax = match self.source {
-            BodyTaskSource::Tracked { db, edition } => {
-                rg_parse::saved_syntax(db, file_id, edition)?.tree()
-            }
+            BodyTaskSource::Tracked { db, edition } => saved_syntax(db, file_id, edition)?.tree(),
             BodyTaskSource::Parsed(package) | BodyTaskSource::Current { package, .. } => package
                 .parsed_file(file_id)
                 .with_context(|| format!("fetch parsed source file {file_id:?}"))?
@@ -202,49 +202,33 @@ impl<'a> BodyTaskLowering<'a> {
         tasks: &[BodyLoweringTask],
         lowered: &mut Vec<LoweredBodyTask>,
         macro_expansion: &mut dyn BodyMacroExpansionContext,
-        syntax: &rg_syntax::SourceFile,
+        syntax: &SourceFile,
     ) -> anyhow::Result<()> {
-        // Tasks are span-based so both top-level Semantic IR items and body-local items can use
-        // the same lowering path. Build all three file-local lookup maps in one walk so we do not
-        // revisit every body expression for each item kind.
-        let mut functions_by_span = HashMap::new();
-        let mut consts_by_span = HashMap::new();
-        let mut statics_by_span = HashMap::new();
-        for node in syntax.syntax().descendants() {
-            match node.kind() {
-                SyntaxKind::FN => {
-                    let range = node.text_range();
-                    let function = ast::Fn::cast(node).expect("FN node should cast to a function");
-                    functions_by_span
-                        .insert((u32::from(range.start()), u32::from(range.end())), function);
-                }
-                SyntaxKind::CONST => {
-                    let range = node.text_range();
-                    let konst = ast::Const::cast(node).expect("CONST node should cast to a const");
-                    consts_by_span
-                        .insert((u32::from(range.start()), u32::from(range.end())), konst);
-                }
-                SyntaxKind::STATIC => {
-                    let range = node.text_range();
-                    let static_item =
-                        ast::Static::cast(node).expect("STATIC node should cast to a static");
-                    statics_by_span.insert(
-                        (u32::from(range.start()), u32::from(range.end())),
-                        static_item,
-                    );
-                }
-                _ => {}
-            }
-        }
-
+        // Each query already selected its owner. Seeking its exact range avoids walking every
+        // expression in the file again for each neighboring owner. Generated or stale ranges
+        // without a matching written declaration keep the same absent-body result.
         for task in tasks {
             rg_std::check_cancel!(self.cancellation, "body lowering task");
+            let range = TextRange::new(task.span.start.into(), task.span.end.into());
+            if !syntax.syntax().text_range().contains_range(range) {
+                continue;
+            }
+            let kind = match task.owner {
+                BodyOwner::Function(_) => SyntaxKind::FN,
+                BodyOwner::Const(_) => SyntaxKind::CONST,
+                BodyOwner::Static(_) => SyntaxKind::STATIC,
+            };
+            let Some(node) = syntax
+                .syntax()
+                .covering_element(range)
+                .ancestors()
+                .find(|node| node.text_range() == range && node.kind() == kind)
+            else {
+                continue;
+            };
             match task.owner {
                 BodyOwner::Function(_) => {
-                    let Some(ast_fn) = functions_by_span.get(&Self::span_key(task.span)).cloned()
-                    else {
-                        continue;
-                    };
+                    let ast_fn = ast::Fn::cast(node).expect("body task kind matches syntax");
                     let Some(body_ast) = ast_fn.body() else {
                         continue;
                     };
@@ -267,10 +251,7 @@ impl<'a> BodyTaskLowering<'a> {
                     });
                 }
                 BodyOwner::Const(_) => {
-                    let Some(ast_const) = consts_by_span.get(&Self::span_key(task.span)).cloned()
-                    else {
-                        continue;
-                    };
+                    let ast_const = ast::Const::cast(node).expect("body task kind matches syntax");
                     let Some(body_ast) = ast_const.body() else {
                         continue;
                     };
@@ -293,10 +274,8 @@ impl<'a> BodyTaskLowering<'a> {
                     });
                 }
                 BodyOwner::Static(_) => {
-                    let Some(ast_static) = statics_by_span.get(&Self::span_key(task.span)).cloned()
-                    else {
-                        continue;
-                    };
+                    let ast_static =
+                        ast::Static::cast(node).expect("body task kind matches syntax");
                     let Some(body_ast) = ast_static.body() else {
                         continue;
                     };
@@ -322,10 +301,6 @@ impl<'a> BodyTaskLowering<'a> {
         }
 
         Ok(())
-    }
-
-    fn span_key(span: Span) -> (u32, u32) {
-        (span.start, span.end)
     }
 
     fn task_range_for_file(tasks: &[BodyLoweringTask], file_id: FileId) -> std::ops::Range<usize> {

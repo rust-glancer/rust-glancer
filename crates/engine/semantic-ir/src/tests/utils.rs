@@ -247,6 +247,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "impls",
                     lookup_query
                         .impls_for_type(ty)
+                        .expect("candidate lookup succeeds")
+                        .into_iter()
                         .map(|impl_ref| self.render_impl_ref(&reader, impl_ref))
                         .collect(),
                 );

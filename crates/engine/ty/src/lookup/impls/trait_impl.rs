@@ -7,7 +7,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::TraitImplRef;
 use rg_semantic_ir::SemanticItemSource;
-use rg_std::OperationError;
+use rg_source::ReadError;
 
 use super::ImplQuery;
 use crate::{
@@ -19,8 +19,8 @@ use crate::{
 impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
-    R: SolverScope<Error = D::Error>,
+    I: SemanticItemSource<'query> + Clone,
+    R: SolverScope,
 {
     /// Match one trait impl against any canonical receiver shape.
     ///
@@ -31,12 +31,9 @@ where
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &Ty,
-    ) -> Result<Option<TraitSelection>, OperationError<D::Error>> {
+    ) -> Result<Option<TraitSelection>, ReadError> {
         let item_query = self.context.item_paths().items();
-        let Some(impl_data) = item_query
-            .impl_data(trait_impl.impl_ref)
-            .map_err(OperationError::Source)?
-        else {
+        let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
         if !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref) {

@@ -3,6 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    sync::Arc,
 };
 
 use rg_def_map::{
@@ -12,14 +13,15 @@ use rg_def_map::{
 use rg_ir_model::{CrateRef, DefMapRef, FileId, LocalDefRef, SemanticItemRef};
 use rg_item_tree::ItemTrees;
 use rg_parse::TargetFileManifest;
-use rg_source::ReadError;
-use rg_std::{OperationError, Shrink as _};
+use rg_source::{QueryContext, ReadError};
+use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::impl_headers::impl_header_resolutions;
 use crate::{
-    BodyOwnerData, CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemReader,
-    ItemResolutionQuery, ItemStore, LangItemIndex, SemanticItemSource, SemanticItemView,
+    BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex, ItemLookupShard, ItemReader,
+    ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer, LookupKeys, LookupQuestion,
+    SemanticItemSource, SemanticItemView, SymbolNameData,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
@@ -37,13 +39,16 @@ pub struct TargetDeclarations {
     definitions: CrateData,
     items: ItemStore,
     lang_items: LangItemIndex,
-    lookup: ItemLookupIndex,
+    lookup_env: ItemLookupEnv,
+    lookup_shards: Vec<ajika::Output<ItemLookupShard>>,
+    lookup_keys: LookupKeys,
     body_owners: Vec<BodyOwnerData>,
+    symbol_names: Vec<SymbolNameData>,
 }
 
 #[ajika::query]
 pub fn target_declarations(
-    db: &rg_source::QueryContext<'_>,
+    db: &QueryContext<'_>,
     krate: CrateRef,
 ) -> ajika::Result<TargetDeclarations> {
     let dependencies = TargetDeclarationReader::for_target(db, krate)?;
@@ -51,7 +56,7 @@ pub fn target_declarations(
     let (built, trees, sources) =
         CrateData::build_target(db, krate, &DefMapQuery::new(definitions))?;
     let mut data = built.data;
-    let (items, lookup) =
+    let (items, lookup_env, lookup) =
         ItemStore::build_target(db, &data, trees, built.generated_items, &dependencies)?;
     let mut body_owners = Vec::new();
     for owner in BodyOwnerData::for_crate(&items, data.def_map()) {
@@ -73,18 +78,36 @@ pub fn target_declarations(
         macro_expansion_limit: built.macro_expansion_limit,
     };
     let lang_items = items.lang_items().clone();
-    TargetDeclarations::new(db, metadata, data, items, lang_items, lookup, body_owners)
+    let symbol_names = SymbolNameData::for_target(&items, data.def_map());
+    let (lookup_keys, shards) = lookup.into_parts();
+    let lookup_shards = shards
+        .into_iter()
+        .enumerate()
+        .map(|(shard, data)| db.output(("lookup", shard as u32), data.into()))
+        .collect::<ajika::Result<Vec<_>>>()?;
+    TargetDeclarations::new(
+        db,
+        metadata,
+        data,
+        items,
+        lang_items,
+        lookup_env,
+        lookup_shards,
+        lookup_keys,
+        body_owners,
+        symbol_names,
+    )
 }
 
 impl ItemStore {
     /// Lower a target's settled scopes into semantic items and build their lookup index.
     pub fn build_target(
-        db: &rg_source::QueryContext<'_>,
+        db: &QueryContext<'_>,
         data: &CrateData,
         trees: ItemTrees,
         generated_items: GeneratedItemStore,
-        dependencies: &(impl CrateDataSource<Error = ReadError> + CrateItemSource),
-    ) -> ajika::Result<(Self, ItemLookupIndex)> {
+        dependencies: &(impl CrateDataSource + CrateItemSource),
+    ) -> ajika::Result<(Self, ItemLookupEnv, ItemLookupIndex)> {
         let mut items = Self::lower_crate(data.def_map(), &trees, &generated_items)
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
         drop(trees);
@@ -102,12 +125,9 @@ impl ItemStore {
             impl_header_resolutions(&items, &ItemResolutionQuery::new(definitions, local))?;
         let visible_crates =
             DefMapQuery::new(definitions).item_lookup_crates_from(items.crate_ref())?;
-        let facts =
-            ItemLookupFacts::build(visible_crates, &items, ItemReader(dependencies), || {
-                db.check_cancelled()
-                    .map_err(|error| OperationError::Source(ReadError::Query(error)))
-            })
-            .map_err(ReadError::from)?;
+        let env = ItemLookupEnv::build(visible_crates, &items, ItemReader(dependencies), || {
+            db.check_cancelled().map_err(ReadError::Query)
+        })?;
 
         let mut self_heads = HashMap::new();
         for header in headers {
@@ -120,24 +140,19 @@ impl ItemStore {
                 self_heads.insert(header.impl_ref, head);
             }
         }
-        let mut lookup = ItemLookupIndex::build_from_store(&items, &self_heads, facts);
+        let mut lookup = ItemLookupIndex::build_from_store(&items, &self_heads);
         items.shrink_to_fit();
         lookup.shrink_to_fit();
-        Ok((items, lookup))
+        Ok((items, env, lookup))
     }
 }
 
 #[ajika::query(transient)]
-fn visible_targets(
-    db: &rg_source::QueryContext<'_>,
-    root: CrateRef,
-) -> ajika::Result<Vec<CrateRef>> {
+fn visible_targets(db: &QueryContext<'_>, root: CrateRef) -> ajika::Result<HashSet<CrateRef>> {
     let mut reached = HashSet::new();
     let mut pending = vec![root];
-    let mut targets = Vec::new();
     while let Some(krate) = pending.pop() {
         if reached.insert(krate) {
-            targets.push(krate);
             let roots = CrateDependencies::at(krate).roots(db)?;
             pending.extend(
                 roots
@@ -147,38 +162,49 @@ fn visible_targets(
             );
         }
     }
-    Ok(targets)
+    Ok(reached)
 }
 
 /// Restricts declaration reads to the targets in this view. Ajika retains the payloads for
 /// the consuming query frame.
 pub struct TargetDeclarationReader<'db> {
-    db: &'db rg_source::QueryContext<'db>,
-    targets: HashSet<CrateRef>,
+    db: &'db QueryContext<'db>,
+    targets: Arc<HashSet<CrateRef>>,
 }
 
 impl<'db> TargetDeclarationReader<'db> {
-    /// The host has already accepted the complete target directory for this operation.
+    /// The host has already accepted the complete target set for this operation.
     pub fn for_project(
-        db: &'db rg_source::QueryContext<'db>,
+        db: &'db QueryContext<'db>,
         targets: impl IntoIterator<Item = CrateRef>,
     ) -> Self {
         Self {
             db,
-            targets: targets.into_iter().collect(),
+            targets: Arc::new(targets.into_iter().collect()),
         }
     }
 
     /// Read declarations for one target and the dependencies visible to it.
-    pub fn for_target(
-        db: &'db rg_source::QueryContext<'db>,
-        krate: CrateRef,
-    ) -> ajika::Result<Self> {
+    pub fn for_target(db: &'db QueryContext<'db>, krate: CrateRef) -> ajika::Result<Self> {
         let targets = visible_targets(db, krate)?;
-        Ok(Self {
-            db,
-            targets: targets.iter().copied().collect(),
-        })
+        Ok(Self { db, targets })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lookup_entry_count(&self, krate: CrateRef) -> usize {
+        let declarations = target_declarations(self.db, krate).expect("fixture declarations");
+        declarations
+            .lookup_shards
+            .value_ref(self.db)
+            .expect("fixture lookup shards")
+            .iter()
+            .map(|shard| {
+                shard
+                    .value_ref(self.db)
+                    .expect("fixture lookup shard")
+                    .entry_count()
+            })
+            .sum()
     }
 
     pub fn targets(&self) -> impl Iterator<Item = CrateRef> + '_ {
@@ -207,8 +233,6 @@ impl fmt::Debug for TargetDeclarationReader<'_> {
 }
 
 impl CrateDataSource for TargetDeclarationReader<'_> {
-    type Error = ReadError;
-
     fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
         self.acquire(krate, |result| &result.definitions)
             .map_err(ReadError::Query)
@@ -265,9 +289,26 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
             .map_err(ReadError::Query)
     }
 
-    fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {
-        self.acquire(krate, |result| &result.lookup)
+    fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
+        self.acquire(krate, |result| &result.lookup_env)
             .map_err(ReadError::Query)
+    }
+
+    fn lookup_candidates(
+        &self,
+        use_site: CrateRef,
+        question: &LookupQuestion,
+    ) -> Result<LookupAnswer, ReadError> {
+        super::lookup::lookup_candidates(self.db, use_site, question.clone())
+            .cloned()
+            .map_err(ReadError::Query)
+    }
+
+    fn symbol_names(&self, krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {
+        Ok(self
+            .acquire(krate, |result| &result.symbol_names)
+            .map_err(ReadError::Query)?
+            .map_or(&[], Vec::as_slice))
     }
 
     fn crates(&self) -> Vec<CrateRef> {
@@ -284,9 +325,7 @@ struct LocalDeclarations<'a, D> {
     items: &'a ItemStore,
 }
 
-impl<D: CrateDataSource<Error = ReadError>> CrateDataSource for LocalDeclarations<'_, D> {
-    type Error = ReadError;
-
+impl<D: CrateDataSource> CrateDataSource for LocalDeclarations<'_, D> {
     fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
         if krate == self.items.crate_ref() {
             return Ok(Some(self.definitions));
@@ -296,8 +335,6 @@ impl<D: CrateDataSource<Error = ReadError>> CrateDataSource for LocalDeclaration
 }
 
 impl<'a, D: CrateItemSource> SemanticItemSource<'a> for LocalDeclarations<'a, &'a D> {
-    type Error = ReadError;
-
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         if item.origin() == self.items.origin() {
             return Ok(self.items.semantic_item_view(item));

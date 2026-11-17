@@ -127,7 +127,6 @@ impl<'db> BodyIrView<'db> {
 }
 
 impl DefMapSource for BodyIrView<'_> {
-    type Error = ReadError;
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
         match origin {
             DefMapRef::Crate(target) => self
@@ -162,7 +161,6 @@ impl DefMapSource for BodyIrView<'_> {
 }
 
 impl<'a> SemanticItemSource<'a> for &'a BodyIrView<'_> {
-    type Error = ReadError;
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         match item.origin() {
             DefMapRef::Crate(_) => self.semantic.items().item(item),

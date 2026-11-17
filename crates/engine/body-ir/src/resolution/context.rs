@@ -54,8 +54,8 @@ impl<D, I> rg_std::Cancelable for BodyResolutionContext<'_, D, I> {
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Clone,
-    I: SemanticItemSource<'a, Error = ReadError> + Clone,
+    D: DefMapSource + Clone,
+    I: SemanticItemSource<'a> + Clone,
 {
     pub fn new(
         def_maps: D,
@@ -114,8 +114,8 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'a, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'a> + Copy,
 {
     pub(crate) fn def_map_query(&self) -> DefMapQuery<D> {
         DefMapQuery::new(self.def_maps)
@@ -221,16 +221,14 @@ where
 
 impl<'a, D, I> TypePathResolver for BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'a, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'a> + Copy,
 {
-    type Error = ReadError;
-
     fn resolve_type_path(
         &self,
         anchor: TypeLoweringAnchor,
         path: &Path,
-    ) -> Result<TypePathResolution, Self::Error> {
+    ) -> Result<TypePathResolution, ReadError> {
         match anchor {
             TypeLoweringAnchor::Scope(scope) => {
                 self.type_path_query().resolve_in_scope(scope, path)
@@ -244,8 +242,8 @@ where
 
 impl<'a, D, I> rg_ty::solver::SolverScope for BodyResolutionContext<'a, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'a, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'a> + Copy,
 {
     fn local_trait_impls(
         &self,

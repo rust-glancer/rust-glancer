@@ -48,7 +48,10 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_dot(&self) -> Result<Option<DotCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (body_ref, body) in
+            self.body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             // An unfinished body can end exactly at the cursor. Completion therefore accepts the
             // closed end of the body span in addition to ordinary offsets inside it.
             if !body.source().span.touches(self.offset) {

@@ -58,7 +58,10 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_path(&self) -> Result<Option<PathCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (body_ref, body) in
+            self.body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             // A body can end at the cursor while its last path is still being typed.
             if !body.source().span.touches(self.offset) {
                 continue;
@@ -97,7 +100,10 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     ) -> Result<Option<BodyAssociatedTypeBindingSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (body_ref, body) in
+            self.body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             if !body.source().span.touches(self.offset) {
                 continue;
             }

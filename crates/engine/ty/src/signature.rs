@@ -12,6 +12,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::FunctionQualifiers;
 use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
+use rg_source::ReadError;
 use rustc_type_ir::TypeVisitableExt as _;
 
 use crate::{
@@ -59,7 +60,7 @@ pub struct SemanticSignatureQuery<'query, D, I, R = ItemPathQuery<'query, D, I>>
 impl<'query, D, I> SemanticSignatureQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
         Self {
@@ -72,8 +73,8 @@ where
 impl<'query, D, I, R> SemanticSignatureQuery<'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     /// Build signature queries with the path semantics of the requesting layer.
     ///
@@ -91,7 +92,7 @@ where
     /// Parameters are visited in source order before the return type. Keeping that walk in one
     /// session gives argument-position parameters and opaque return occurrences repeatable
     /// owner-local identities.
-    pub fn function(&self, function: FunctionRef) -> Result<Option<CallableSignature>, D::Error> {
+    pub fn function(&self, function: FunctionRef) -> Result<Option<CallableSignature>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -107,7 +108,7 @@ where
     pub fn generic_param_default(
         &self,
         param: GenericParamRef,
-    ) -> Result<Option<GenericArg>, D::Error> {
+    ) -> Result<Option<GenericArg>, ReadError> {
         let owner = param.owner();
         let generics = self.item_paths.generics().generics(owner)?;
         let Some(param) = generics.iter().find(|data| data.param() == param) else {
@@ -175,7 +176,7 @@ where
     /// Path lookup has no inference table in which to allocate use-site variables. Keep each
     /// generic position as a kind-correct unknown instead of leaking the declaration's own `T`
     /// into the body. Direct calls replace these placeholders with stable call-owned slots.
-    pub fn function_item_ty(&self, function: FunctionRef) -> Result<Option<Ty>, D::Error> {
+    pub fn function_item_ty(&self, function: FunctionRef) -> Result<Option<Ty>, ReadError> {
         if self.item_paths.items().function_data(function)?.is_none() {
             return Ok(None);
         }
@@ -195,7 +196,7 @@ where
     pub fn function_type_param_bounds(
         &self,
         param: TypeParamRef,
-    ) -> Result<Vec<TraitRefLowering>, D::Error> {
+    ) -> Result<Vec<TraitRefLowering>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -206,7 +207,7 @@ where
         })
     }
 
-    pub fn field_ty(&self, field: FieldRef) -> Result<Option<Ty>, D::Error> {
+    pub fn field_ty(&self, field: FieldRef) -> Result<Option<Ty>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -219,7 +220,7 @@ where
         &self,
         variant: EnumVariantRef,
         field_index: usize,
-    ) -> Result<Option<Ty>, D::Error> {
+    ) -> Result<Option<Ty>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -228,7 +229,7 @@ where
         })
     }
 
-    pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
+    pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -237,7 +238,7 @@ where
         })
     }
 
-    pub fn type_alias_ty(&self, alias: TypeAliasRef) -> Result<Option<Ty>, D::Error> {
+    pub fn type_alias_ty(&self, alias: TypeAliasRef) -> Result<Option<Ty>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -254,7 +255,7 @@ where
     pub fn opaque_bounds(
         &self,
         opaque: &OpaqueTy,
-    ) -> Result<Option<Vec<TraitRefLowering>>, D::Error> {
+    ) -> Result<Option<Vec<TraitRefLowering>>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         let bounds = lowering.with_storage(|cx| {
             Ok(lowering
@@ -278,7 +279,7 @@ where
         ))
     }
 
-    pub fn const_ty(&self, konst: ConstRef) -> Result<Option<Ty>, D::Error> {
+    pub fn const_ty(&self, konst: ConstRef) -> Result<Option<Ty>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -287,7 +288,7 @@ where
         })
     }
 
-    pub fn static_ty(&self, static_ref: StaticRef) -> Result<Option<Ty>, D::Error> {
+    pub fn static_ty(&self, static_ref: StaticRef) -> Result<Option<Ty>, ReadError> {
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -300,12 +301,12 @@ where
 impl<'query, D, I> SemanticSignatureQuery<'query, D, I>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query>,
 {
     pub(crate) fn trait_header_from(
         item_paths: &ItemPathQuery<'query, D, I>,
         trait_ref: TraitDefRef,
-    ) -> Result<Option<TraitHeader>, D::Error> {
+    ) -> Result<Option<TraitHeader>, ReadError> {
         let lowering = TypeLoweringQuery::new(item_paths, item_paths);
         lowering.with_storage(|cx| {
             Ok(lowering

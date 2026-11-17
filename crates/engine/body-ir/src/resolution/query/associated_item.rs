@@ -32,8 +32,8 @@ pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
 
 impl<'query, D, I> BodyAssociatedItemQuery<'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -640,7 +640,6 @@ where
             &self.context,
         )
         .normalize_ty(&ty)
-        .map_err(Into::into)
     }
 }
 

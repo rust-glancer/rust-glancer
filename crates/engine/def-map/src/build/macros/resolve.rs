@@ -34,9 +34,7 @@ pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
 
 impl<'a, E> ItemMacroResolver<'a, E>
 where
-    E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
-        + MacroDefinitionEnv
-        + ?Sized,
+    E: CrateResolutionEnv + MacroDefinitionEnv + ?Sized,
 {
     pub(super) fn new(env: &'a E, state: &'a CrateBuilder) -> Self {
         Self { env, state }

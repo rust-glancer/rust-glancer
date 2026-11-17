@@ -9,12 +9,14 @@
 //! inputs distinct instead of forcing scanners to choose a navigation result.
 
 use anyhow::Context as _;
+use rg_body_ir::ExprKind;
 use rg_def_map::BodyMacroExpander;
 use rg_ir_model::{
     BodyBindingRef, CrateRef, FieldKey, FileId, GenericDefRef, ModuleRef, Path, Span,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
+use rg_parse::Package;
 use rg_semantic_ir::TypePathContext;
 use rg_syntax::SourceFile;
 
@@ -24,7 +26,7 @@ use super::scan::{
     RecordFieldKeySurface, SignatureSourceCandidate, SignatureSourceScanner, ValueReferenceSource,
     ValueReferenceSurface,
 };
-use crate::{IndexedViewDb, item::declaration::DeclarationView};
+use crate::{IndexedViewDb, item::declaration::DeclarationView, source::ReferenceSourceSelection};
 
 /// Why an indexed source occurrence exists in the scanned source surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,7 +315,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     /// Find caller-written format templates through macro expansion, without loading bodies.
     pub fn format_string_spans(
         &self,
-        package: &rg_parse::Package,
+        package: &Package,
         crate_ref: CrateRef,
         file: FileId,
         syntax: &SourceFile,
@@ -338,16 +340,14 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         };
 
         let label = match &expr_data.kind {
-            rg_body_ir::ExprKind::Path { path }
-            | rg_body_ir::ExprKind::Record {
+            ExprKind::Path { path }
+            | ExprKind::Record {
                 path: Some(path), ..
             } => path
                 .as_def_map_path()
                 .and_then(|path| path.last_segment_label()),
-            rg_body_ir::ExprKind::MethodCall { method_name, .. } => Some(method_name.to_string()),
-            rg_body_ir::ExprKind::Field { field, .. } => {
-                field.as_ref().map(|field| field.declaration_label())
-            }
+            ExprKind::MethodCall { method_name, .. } => Some(method_name.to_string()),
+            ExprKind::Field { field, .. } => field.as_ref().map(|field| field.declaration_label()),
             _ => None,
         };
         Ok(label)
@@ -453,7 +453,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        source: &rg_syntax::SourceFile,
+        source: &SourceFile,
         offset: u32,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         Ok(
@@ -511,6 +511,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: Option<FileId>,
+        selection: Option<&ReferenceSourceSelection>,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
@@ -519,7 +520,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
-        occurrences.extend(self.body_occurrences_in_crate(crate_ref, file_id)?);
+        occurrences.extend(self.body_occurrences_in_crate(crate_ref, file_id, selection)?);
         for candidate in SignatureSourceScanner::in_crate(self.db, crate_ref, file_id).scan()? {
             if let Some(occurrence) = self
                 .signature_occurrence(crate_ref, candidate, file_id)
@@ -540,9 +541,10 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: Option<FileId>,
+        selection: Option<&ReferenceSourceSelection>,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
-        for candidate in BodySourceScanner::new(self.db, crate_ref, file_id).scan()? {
+        for candidate in BodySourceScanner::new(self.db, crate_ref, file_id, selection).scan()? {
             if let Some(occurrence) = self
                 .body_occurrence(crate_ref, candidate, file_id)
                 .context("convert body occurrence")?

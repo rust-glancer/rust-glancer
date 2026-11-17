@@ -18,6 +18,7 @@ mod session;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, Path, ScopeId};
 use rg_semantic_ir::{SemanticItemSource, TypePathContext, TypePathResolution};
+use rg_source::ReadError;
 
 pub use self::{query::TypeLoweringQuery, session::TypeLoweringSession};
 use crate::lookup::ItemPathQuery;
@@ -38,26 +39,22 @@ pub enum TypeLoweringAnchor {
 /// Body IR implements lexical lookup for `Scope`; ordinary item signatures use the definition
 /// resolver for `Context`. All projection after this identity lookup remains in this module.
 pub trait TypePathResolver {
-    type Error;
-
     fn resolve_type_path(
         &self,
         anchor: TypeLoweringAnchor,
         path: &Path,
-    ) -> Result<TypePathResolution, Self::Error>;
+    ) -> Result<TypePathResolution, ReadError>;
 }
 
 impl<R> TypePathResolver for &R
 where
     R: TypePathResolver + ?Sized,
 {
-    type Error = R::Error;
-
     fn resolve_type_path(
         &self,
         anchor: TypeLoweringAnchor,
         path: &Path,
-    ) -> Result<TypePathResolution, Self::Error> {
+    ) -> Result<TypePathResolution, ReadError> {
         R::resolve_type_path(*self, anchor, path)
     }
 }
@@ -65,15 +62,13 @@ where
 impl<'query, D, I> TypePathResolver for ItemPathQuery<'query, D, I>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query>,
 {
-    type Error = D::Error;
-
     fn resolve_type_path(
         &self,
         anchor: TypeLoweringAnchor,
         path: &Path,
-    ) -> Result<TypePathResolution, Self::Error> {
+    ) -> Result<TypePathResolution, ReadError> {
         match anchor {
             TypeLoweringAnchor::Scope(_) => Ok(TypePathResolution::Unknown),
             TypeLoweringAnchor::Context(context) => {

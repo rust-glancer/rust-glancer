@@ -346,7 +346,7 @@ impl LocalDefMapBuildState {
         cancellation: &CancellationToken,
     ) -> anyhow::Result<DefMap>
     where
-        S: DefMapSource<Error = ReadError> + Copy,
+        S: DefMapSource + Copy,
     {
         rg_std::check_cancel!(cancellation, "local import resolution");
         // Only modules containing `use` items receive imported bindings. Lend those buffers;
@@ -401,7 +401,7 @@ struct LocalDefMapFinalizationEnv<'state, S> {
 
 impl<S> LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = ReadError> + Copy,
+    S: DefMapSource + Copy,
 {
     fn is_active_body_origin(&self, origin: DefMapRef) -> bool {
         origin == DefMapRef::Body(self.state.body_ref)
@@ -410,14 +410,12 @@ where
 
 impl<S> NameResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = ReadError> + Copy,
+    S: DefMapSource + Copy,
 {
-    type Error = ReadError;
-
     fn module_metadata(
         &self,
         module_ref: ModuleRef,
-    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error> {
+    ) -> Result<Option<ModuleResolutionView<'_>>, ReadError> {
         if self.is_active_body_origin(module_ref.origin) {
             return Ok(self
                 .state
@@ -436,7 +434,7 @@ where
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, ReadError> {
         if self.is_active_body_origin(module_ref.origin) {
             return Ok(self
                 .state
@@ -455,7 +453,7 @@ where
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, ReadError> {
         if self.is_active_body_origin(module_ref.origin) {
             return Ok(self
                 .state
@@ -481,7 +479,7 @@ where
     fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, Self::Error> {
+    ) -> Result<Option<&LocalDefData>, ReadError> {
         if self.is_active_body_origin(local_def_ref.origin) {
             return Ok(self.state.builder.local_def(local_def_ref.local_def));
         }
@@ -492,7 +490,7 @@ where
     fn local_enum_variant_data(
         &self,
         variant_ref: LocalEnumVariantRef,
-    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+    ) -> Result<Option<&LocalEnumVariantData>, ReadError> {
         if self.is_active_body_origin(variant_ref.origin) {
             return Ok(self
                 .state
@@ -506,7 +504,7 @@ where
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
-    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, ReadError> {
         if self.is_active_body_origin(enum_def.origin) {
             return Ok(self
                 .state
@@ -521,12 +519,12 @@ where
 
 impl<S> MacroDefinitionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = ReadError> + Copy,
+    S: DefMapSource + Copy,
 {
     fn macro_definition_view<'a>(
         &'a self,
         def: DefId,
-    ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error> {
+    ) -> Result<Option<MacroDefinitionView<'a>>, ReadError> {
         let DefId::Local(def_ref) = def else {
             return Ok(None);
         };
@@ -551,28 +549,24 @@ where
 
 impl<S> CrateResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = ReadError> + Copy,
+    S: DefMapSource + Copy,
 {
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error> {
+    fn extern_root(&self, crate_ref: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
         self.def_maps.extern_root(crate_ref, name)
     }
 
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.def_maps.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.def_maps.root_module(crate_ref)
     }
 }
 
 impl<S> ImportCollectionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
-    S: DefMapSource<Error = ReadError> + Copy,
+    S: DefMapSource + Copy,
 {
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>> {
         (0..self.state.builder.module_count())

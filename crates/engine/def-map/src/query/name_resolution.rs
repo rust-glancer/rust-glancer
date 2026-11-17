@@ -11,6 +11,7 @@
 //! updates belong to construction; these queries only inspect the names available at the time.
 
 use rg_ir_model::{DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef, Path, PathRoot};
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -83,7 +84,7 @@ impl<'env, E: ?Sized> NameResolver<'env, E> {
 
 impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
     /// Return every namespace a resolved definition occupies when inserted through an import.
-    pub fn namespaces_for_def(&self, def: DefId) -> Result<NamespaceSet, E::Error> {
+    pub fn namespaces_for_def(&self, def: DefId) -> Result<NamespaceSet, ReadError> {
         match def {
             DefId::Module(_) => Ok(NamespaceSet::TYPES),
             DefId::Local(local_def_ref) => Ok(self
@@ -108,7 +109,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         path: &Path,
         terminal_filter: NamespaceSet,
-    ) -> Result<ResolvePathResult, E::Error> {
+    ) -> Result<ResolvePathResult, ReadError> {
         if !path.is_relative() {
             return Ok(Self::unresolved_at(0));
         }
@@ -166,7 +167,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         module_ref: ModuleRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<DefId>, E::Error> {
+    ) -> Result<Vec<DefId>, ReadError> {
         let Some(entry) = self.env.module_scope_entry(module_ref, name)? else {
             return Ok(Vec::new());
         };
@@ -179,7 +180,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         entry: NameBindingsView<'_>,
         filter: NamespaceSet,
-    ) -> Result<Vec<DefId>, E::Error> {
+    ) -> Result<Vec<DefId>, ReadError> {
         let mut defs = UniqueVec::new();
         for namespace in filter.iter() {
             if let Some(binding) = entry.binding(namespace)
@@ -198,7 +199,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         mut container: DefId,
         segments: &[Name],
         first_segment: usize,
-    ) -> Result<PrefixResolution, E::Error> {
+    ) -> Result<PrefixResolution, ReadError> {
         for (offset, segment) in segments.iter().enumerate() {
             let next = match container {
                 DefId::Module(module) => self
@@ -230,7 +231,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         name: &str,
         filter: NamespaceSet,
         segment: usize,
-    ) -> Result<ResolvePathResult, E::Error> {
+    ) -> Result<ResolvePathResult, ReadError> {
         let resolved = match container {
             DefId::Module(module) => {
                 self.resolve_lexical_name_in_module(importing_module, module, name, filter)?
@@ -258,7 +259,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         module: ModuleRef,
         name: &str,
         namespace: Namespace,
-    ) -> Result<Option<NameBinding>, E::Error> {
+    ) -> Result<Option<NameBinding>, ReadError> {
         let Some(binding) = self
             .env
             .module_scope_entry(module, name)?
@@ -277,7 +278,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         enum_def: LocalDefRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Option<LocalEnumVariantRef>, E::Error> {
+    ) -> Result<Option<LocalEnumVariantRef>, ReadError> {
         if !self
             .env
             .local_def_kind(enum_def)?
@@ -302,7 +303,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Option<NameBindingsView<'_>>, E::Error> {
+    ) -> Result<Option<NameBindingsView<'_>>, ReadError> {
         let mut current = Some(importing_module);
         while let Some(module_ref) = current {
             if let Some(entry) = self.env.module_scope_entry(module_ref, name)? {
@@ -330,7 +331,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         binding: &NameBinding,
-    ) -> Result<bool, E::Error> {
+    ) -> Result<bool, ReadError> {
         self.visibility_is_visible(importing_module, binding.visibility)
     }
 
@@ -344,7 +345,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         source: &NameBinding,
         import: &ImportData,
         provenance: NameBindingProvenance,
-    ) -> Result<Option<NameBinding>, E::Error> {
+    ) -> Result<Option<NameBinding>, ReadError> {
         if !self.binding_is_visible(importing_module, source)? {
             return Ok(None);
         }
@@ -365,7 +366,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         left: Visibility,
         right: Visibility,
-    ) -> Result<Visibility, E::Error> {
+    ) -> Result<Visibility, ReadError> {
         Ok(match (left, right) {
             (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
             (Visibility::Invisible, visibility) | (visibility, Visibility::Invisible) => visibility,
@@ -381,7 +382,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         })
     }
 
-    fn local_def_crate_visibility(&self, def: DefId) -> Result<Option<Visibility>, E::Error> {
+    fn local_def_crate_visibility(&self, def: DefId) -> Result<Option<Visibility>, ReadError> {
         let DefId::Local(local_def) = def else {
             return Ok(None);
         };
@@ -403,7 +404,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         visibility: Visibility,
-    ) -> Result<bool, E::Error> {
+    ) -> Result<bool, ReadError> {
         match visibility {
             Visibility::Public => Ok(true),
             Visibility::Module(visible_from) => {
@@ -418,7 +419,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         left: Visibility,
         right: Visibility,
-    ) -> Result<Option<Visibility>, E::Error> {
+    ) -> Result<Option<Visibility>, ReadError> {
         match (left, right) {
             (Visibility::Invisible, _) | (_, Visibility::Invisible) => Ok(None),
             (Visibility::Public, visibility) | (visibility, Visibility::Public) => {
@@ -441,7 +442,7 @@ impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         module: ModuleRef,
         ancestor: ModuleRef,
-    ) -> Result<bool, E::Error> {
+    ) -> Result<bool, ReadError> {
         if module.origin != ancestor.origin {
             return Ok(false);
         }
@@ -472,8 +473,8 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         source_module: ModuleRef,
         filter: NamespaceSet,
-        mut visit: impl FnMut(&Name, Namespace, &NameBinding) -> Result<(), E::Error>,
-    ) -> Result<(), E::Error> {
+        mut visit: impl FnMut(&Name, Namespace, &NameBinding) -> Result<(), ReadError>,
+    ) -> Result<(), ReadError> {
         for (name, entry) in self.env.module_scope_entries(source_module)? {
             for namespace in filter.iter() {
                 if let Some(binding) = entry.binding(namespace)
@@ -492,7 +493,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         source_module: ModuleRef,
         name: &Name,
-    ) -> Result<Option<NameBinding>, E::Error> {
+    ) -> Result<Option<NameBinding>, ReadError> {
         self.binding_in_module(importing_module, source_module, name, Namespace::Macros)
     }
 
@@ -503,7 +504,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         module_scope_modules: impl IntoIterator<Item = ModuleRef>,
         name: &Name,
-    ) -> Result<UnqualifiedMacroBindings, E::Error> {
+    ) -> Result<UnqualifiedMacroBindings, ReadError> {
         let mut module_scope = None;
         for module in module_scope_modules {
             module_scope = self.visible_macro_binding(importing_module, module, name)?;
@@ -533,7 +534,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         path: &Path,
         terminal_filter: NamespaceSet,
-    ) -> Result<ResolvePathResult, E::Error> {
+    ) -> Result<ResolvePathResult, ReadError> {
         self.resolve_path_segments(
             importing_module,
             path.root(),
@@ -547,7 +548,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<DefId>, E::Error> {
+    ) -> Result<Vec<DefId>, ReadError> {
         let mut defs = UniqueVec::new();
         for (_, binding) in self.import_bindings(importing_module, path, NamespaceSet::ALL)? {
             defs.push(binding.def);
@@ -560,7 +561,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         path: &Path,
-    ) -> Result<Option<ModuleRef>, E::Error> {
+    ) -> Result<Option<ModuleRef>, ReadError> {
         Ok(
             match self.resolve_prefix(importing_module, path.root(), path.segments())? {
                 PrefixResolution::Resolved(DefId::Module(module)) => Some(module),
@@ -574,7 +575,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         path: &Path,
-    ) -> Result<Option<GlobImportSource>, E::Error> {
+    ) -> Result<Option<GlobImportSource>, ReadError> {
         let PrefixResolution::Resolved(def) =
             self.resolve_prefix(importing_module, path.root(), path.segments())?
         else {
@@ -594,7 +595,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         path: &Path,
-    ) -> Result<Option<NameBinding>, E::Error> {
+    ) -> Result<Option<NameBinding>, ReadError> {
         let Some((terminal, prefix)) = path.segments().split_last() else {
             return Ok(None);
         };
@@ -624,7 +625,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         path: &Path,
         terminal_filter: NamespaceSet,
-    ) -> Result<Vec<(Namespace, NameBinding)>, E::Error> {
+    ) -> Result<Vec<(Namespace, NameBinding)>, ReadError> {
         let Some((terminal, prefix)) = path.segments().split_last() else {
             let resolved = self.resolve_path(importing_module, path, terminal_filter)?;
             let mut bindings = Vec::new();
@@ -687,7 +688,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         root: PathRoot,
         segments: &[Name],
         terminal_filter: NamespaceSet,
-    ) -> Result<ResolvePathResult, E::Error> {
+    ) -> Result<ResolvePathResult, ReadError> {
         let Some((terminal, prefix)) = segments.split_last() else {
             let module = if terminal_filter.contains(Namespace::Types) {
                 self.root_module(importing_module, root)?
@@ -743,7 +744,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         importing_module: ModuleRef,
         root: PathRoot,
         segments: &[Name],
-    ) -> Result<PrefixResolution, E::Error> {
+    ) -> Result<PrefixResolution, ReadError> {
         let (first, remaining, first_segment) = match root {
             PathRoot::Relative | PathRoot::Absolute => {
                 let Some((first, remaining)) = segments.split_first() else {
@@ -777,7 +778,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         root: PathRoot,
-    ) -> Result<Option<ModuleRef>, E::Error> {
+    ) -> Result<Option<ModuleRef>, ReadError> {
         match root {
             PathRoot::DollarCrate(crate_ref) => self.env.root_module(crate_ref),
             PathRoot::SelfModule => Ok(Some(importing_module)),
@@ -804,7 +805,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         absolute: bool,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<PerNs<Option<NameBinding>>, E::Error> {
+    ) -> Result<PerNs<Option<NameBinding>>, ReadError> {
         let mut bindings = PerNs::default();
         if absolute {
             if filter.contains(Namespace::Types) {
@@ -871,7 +872,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         module_ref: ModuleRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<(Namespace, NameBinding)>, E::Error> {
+    ) -> Result<Vec<(Namespace, NameBinding)>, ReadError> {
         let Some(entry) = self.env.module_scope_entry(module_ref, name)? else {
             return Ok(Vec::new());
         };
@@ -893,7 +894,7 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         enum_def: LocalDefRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<(Namespace, NameBinding)>, E::Error> {
+    ) -> Result<Vec<(Namespace, NameBinding)>, ReadError> {
         if !self
             .env
             .local_def_kind(enum_def)?

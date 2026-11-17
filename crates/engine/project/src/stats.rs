@@ -60,12 +60,11 @@ impl MacroExpansionLimitBuildSummary {
     }
 }
 
-/// Coarse counters for the published source graph and startup body selection.
+/// Coarse counters for the published source graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProjectStats {
     pub package_count: usize,
     pub workspace_package_count: usize,
     pub target_count: usize,
     pub file_count: usize,
-    pub prefilled_body_count: usize,
 }

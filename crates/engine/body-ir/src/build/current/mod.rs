@@ -14,7 +14,7 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
 use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, FileId, Span};
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, enclosing_inline_module_path};
-use rg_semantic_ir::{ItemLookupQueryCache, ItemReader};
+use rg_semantic_ir::ItemReader;
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast};
 
@@ -60,7 +60,6 @@ pub struct CurrentSourceBuilder<'request, 'db> {
     semantic_ir: &'request ItemReader<'db>,
     saved_bodies: &'request BodyReader<'db>,
     source: &'request CurrentSource,
-    lookup_cache: ItemLookupQueryCache,
     cancellation: rg_std::CancellationToken,
 }
 
@@ -76,7 +75,6 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         semantic_ir: &'request ItemReader<'db>,
         saved_bodies: &'request BodyReader<'db>,
         source: &'request CurrentSource,
-        lookup_cache: ItemLookupQueryCache,
         cancellation: rg_std::CancellationToken,
     ) -> Self {
         Self {
@@ -84,7 +82,6 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             semantic_ir,
             saved_bodies,
             source,
-            lookup_cache,
             cancellation,
         }
     }
@@ -132,7 +129,6 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             file,
             self.source,
             associations,
-            self.lookup_cache.clone(),
             selection,
             self.cancellation.clone(),
         )

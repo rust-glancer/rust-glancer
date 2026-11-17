@@ -16,6 +16,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ImplRef, ModuleRef, PrimitiveTy, TraitDefRef, TypeDefRef};
 use rg_item_tree::TypeRef;
+use rg_source::ReadError;
 use rg_std::ExpectedUnique;
 
 use crate::{
@@ -40,10 +41,10 @@ pub(crate) struct ImplHeaderResolution {
 pub(crate) fn impl_header_resolutions<'a, D, I>(
     items: &ItemStore,
     query: &ItemResolutionQuery<'a, D, I>,
-) -> Result<Vec<ImplHeaderResolution>, D::Error>
+) -> Result<Vec<ImplHeaderResolution>, ReadError>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a>,
 {
     let mut resolutions = Vec::new();
     for (impl_ref, data) in items.impls_with_refs() {
@@ -91,10 +92,10 @@ fn trait_impl_self_head<'a, D, I>(
     impl_ref: ImplRef,
     data: &crate::ImplData,
     resolved_self_ty: &ExpectedUnique<TypeDefRef>,
-) -> Result<Option<TraitImplSelfHead>, D::Error>
+) -> Result<Option<TraitImplSelfHead>, ReadError>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a>,
 {
     let head = match &data.self_ty {
         TypeRef::Unit => Some(TraitImplSelfHead::Unit),
@@ -143,10 +144,10 @@ fn resolve_type_defs_from_ref<'a, D, I>(
     query: &ItemResolutionQuery<'a, D, I>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<ExpectedUnique<TypeDefRef>, D::Error>
+) -> Result<ExpectedUnique<TypeDefRef>, ReadError>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a>,
 {
     let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());
@@ -163,10 +164,10 @@ fn resolve_traits_from_ref<'a, D, I>(
     query: &ItemResolutionQuery<'a, D, I>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<ExpectedUnique<TraitDefRef>, D::Error>
+) -> Result<ExpectedUnique<TraitDefRef>, ReadError>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a>,
 {
     let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());

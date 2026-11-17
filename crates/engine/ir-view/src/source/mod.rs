@@ -9,6 +9,7 @@
 mod completion;
 mod documentation;
 mod occurrence;
+mod references;
 mod scan;
 
 #[cfg(test)]
@@ -32,4 +33,5 @@ pub use self::{
         IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole,
         IndexedSourceSurface, IndexedTypePath, IndexedTypePathScope, SourceOccurrenceView,
     },
+    references::ReferenceSourceSelection,
 };

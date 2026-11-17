@@ -4,6 +4,10 @@ use rg_profile::{ProfileDescriptor, declare_metrics};
 
 declare_metrics! {
     pub(crate) mod metric {
+        scope "body_ir.saved" {
+            /// Outer owners computed by the saved-body provider; reuse does not increment this.
+            counter OWNERS = "owners";
+        }
         scope "body_ir.const_eval" {
             /// Body-local and current-root const and static initializers submitted for evaluation.
             counter LOCAL_CONST_INITIALIZERS = "local.initializers";
@@ -39,14 +43,7 @@ declare_metrics! {
             counter TRAIT_SURFACE_CACHE_HITS = "trait_surfaces.hits";
             /// Distinct scope-and-surface pairs filtered for one body.
             counter TRAIT_SURFACE_CACHE_MISSES = "trait_surfaces.misses";
-            /// Distinct ordered dependency sets that allocated lookup-result storage.
-            counter DEPENDENCY_CACHE_CONSTRUCTIONS = "dependency_caches.constructed";
-            /// Use-site queries that reused lookup-result storage for a dependency set.
-            counter DEPENDENCY_CACHE_REUSES = "dependency_caches.reused";
-            /// Dependency lookup keys served from previously computed results.
-            counter DEPENDENCY_RESULT_HITS = "dependency_results.hits";
-            /// Dependency lookup keys computed from persisted indexes for the first time.
-            counter DEPENDENCY_RESULT_MISSES = "dependency_results.misses";
+
         }
     }
 }

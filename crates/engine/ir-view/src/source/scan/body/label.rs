@@ -46,7 +46,10 @@ impl<'txn, 'db> LabelScopeScanner<'txn, 'db> {
     /// Return enclosing labels from the nearest target outward.
     pub(crate) fn labels(&self) -> Result<Vec<String>, ReadError> {
         let mut labels = Vec::new();
-        for (_, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (_, body) in self
+            .body_ir
+            .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             if !body.source().span.touches(self.offset) {
                 continue;
             }

@@ -9,7 +9,9 @@ use rg_ir_model::{
     BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, LocalDefRef,
     SemanticItemRef, Span,
 };
-use rg_semantic_ir::{SemanticItemSource, SemanticItemView, TargetDeclarationReader};
+use rg_semantic_ir::{
+    BodyOwnerData, SemanticItemSource, SemanticItemView, TargetDeclarationReader,
+};
 use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
@@ -22,8 +24,9 @@ pub(crate) trait BodySource: Send + Sync + std::fmt::Debug {
         &self,
         krate: CrateRef,
         file: Option<FileId>,
-        masked: &dyn Fn(FileId) -> bool,
+        selected: &dyn Fn(&BodyOwnerData) -> bool,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError>;
+    fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError>;
     fn body(&self, body: BodyRef) -> Result<Option<(BodyView<'_>, &BodyLocalItems)>, ReadError>;
     fn initializer(
         &self,
@@ -123,8 +126,44 @@ impl<'db> BodyReader<'db> {
         crate_ref: CrateRef,
         file: Option<FileId>,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
-        let mut saved = self.saved.bodies(crate_ref, file, &|file| {
-            self.current.masks_file(crate_ref, file)
+        self.bodies_matching(crate_ref, file, &|_| true)
+    }
+
+    /// Discover saved owners visible in this view before computing them. A changed current file
+    /// masks its saved owners; its prepared bodies are added separately by `bodies_matching`.
+    pub fn owners(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<impl Iterator<Item = &BodyOwnerData> + Clone, ReadError> {
+        Ok(self
+            .saved
+            .owners(crate_ref)?
+            .iter()
+            .filter(move |owner| !self.current.masks_file(crate_ref, owner.file)))
+    }
+
+    /// A cursor selects enclosing outer owners. Speculative syntax may end before the cursor;
+    /// its known declaration start still selects that one owner and its nested work.
+    pub fn bodies_at(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+        offset: u32,
+        owner_start: Option<u32>,
+    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
+        self.bodies_matching(crate_ref, Some(file), &|owner| {
+            owner.span.touches(offset) || owner_start == Some(owner.span.start)
+        })
+    }
+
+    pub fn bodies_matching(
+        &self,
+        crate_ref: CrateRef,
+        file: Option<FileId>,
+        selected: &dyn Fn(&BodyOwnerData) -> bool,
+    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
+        let mut saved = self.saved.bodies(crate_ref, file, &|owner| {
+            !self.current.masks_file(crate_ref, owner.file) && selected(owner)
         })?;
         saved.retain(|(body_ref, body)| {
             !self.current.contains_body(*body_ref)
@@ -190,8 +229,6 @@ impl<'db> BodyReader<'db> {
 }
 
 impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
-    type Error = ReadError;
-
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         let DefMapRef::Body(body) = item.origin() else {
             return Ok(None);

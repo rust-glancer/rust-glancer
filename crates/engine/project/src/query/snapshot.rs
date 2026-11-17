@@ -38,6 +38,7 @@ impl<'a> ProjectSnapshot<'a> {
 
     pub(crate) fn view_db(&self) -> IndexedViewDb<'a> {
         IndexedViewDb::new(
+            self.db,
             rg_def_map::CrateDefMapReader(self.declarations),
             rg_semantic_ir::ItemReader(self.declarations),
             rg_body_ir::BodyReader::new(self.db, self.declarations),

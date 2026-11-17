@@ -10,7 +10,7 @@ mod trait_impl;
 use rg_def_map::DefMapSource;
 use rg_ir_model::ImplRef;
 use rg_semantic_ir::SemanticItemSource;
-use rg_std::OperationError;
+use rg_source::ReadError;
 
 pub(crate) use self::candidates::TraitImplFilter;
 pub use self::receiver::{InherentImplMatch, ReceiverImplMatches};
@@ -31,7 +31,7 @@ pub struct ImplQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
 impl<'query, D, I> ImplQuery<'query, D, I, ItemPathQuery<'query, D, I>>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let resolver = context.item_paths().clone();
@@ -42,15 +42,15 @@ where
 impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
-    R: SolverScope<Error = D::Error>,
+    I: SemanticItemSource<'query> + Clone,
+    R: SolverScope,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
         Self { context, resolver }
     }
 
     /// Lower the impl's receiver and positional trait arguments without its requirements.
-    pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
+    pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, ReadError> {
         let lowering = TypeLoweringQuery::new(self.context.item_paths(), &self.resolver);
         lowering.with_storage(|cx| {
             Ok(lowering
@@ -65,7 +65,7 @@ where
         &self,
         impl_ref: ImplRef,
         receiver_ty: &Ty,
-    ) -> Result<Option<Substitution>, OperationError<D::Error>> {
+    ) -> Result<Option<Substitution>, ReadError> {
         TraitSelectionQuery::with_resolver(self.context.clone(), &self.resolver)
             .match_impl_header(impl_ref, receiver_ty)
     }
