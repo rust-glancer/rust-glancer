@@ -459,11 +459,11 @@ pub fn run() {
 }
 
 fn query(title: &'static str, marker: &'static str, label: &'static str) -> AnalysisQuery {
-    AnalysisQuery::complete_with_source(title, marker).matching(label)
+    AnalysisQuery::complete(title, marker).matching(label)
 }
 
 fn app_query(title: &'static str, marker: &'static str, label: &'static str) -> AnalysisQuery {
-    AnalysisQuery::complete_with_source(title, marker)
+    AnalysisQuery::complete(title, marker)
         .in_lib("app")
         .matching(label)
 }

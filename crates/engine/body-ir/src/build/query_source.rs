@@ -46,7 +46,7 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
     }
 
     fn body_local_items(self, body_ref: BodyRef) -> Option<&'a BodyLocalItems> {
-        if body_ref.key() != Some(self.key) {
+        if body_ref.key() != self.key {
             return None;
         }
 

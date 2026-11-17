@@ -45,8 +45,9 @@ fn closure_ty(index: usize) -> Ty {
 }
 
 fn body_ref() -> BodyRef {
+    // The fixture's sole function owns the closure identities used by these state tests.
     BodyRef {
-        root: BodyRoot::Local,
+        root: BodyRoot::Function(0),
         crate_ref: CrateRef {
             package: PackageSlot(0),
             crate_id: CrateId(0),
@@ -67,6 +68,7 @@ fn with_state(exprs: usize, bindings: usize, run: impl for<'s> FnOnce(InferenceS
 //- /src/lib.rs crate:inference_state
 pub struct User;
 pub struct Vec<T>(T);
+pub fn owner() {}
 "#,
     );
     fixture.inspect(|view| {

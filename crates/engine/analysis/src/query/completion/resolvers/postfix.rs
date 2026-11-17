@@ -25,7 +25,7 @@ use crate::{
         SyntheticCompletionTarget,
     },
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             SyntheticCompletionCandidate, SyntheticCompletionRenderer, escape_lsp_snippet_text,
@@ -41,11 +41,11 @@ use crate::{
 /// exact source span that can safely be replaced.
 pub(super) struct PostfixCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> PostfixCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

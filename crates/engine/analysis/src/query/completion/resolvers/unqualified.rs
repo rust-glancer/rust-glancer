@@ -29,7 +29,7 @@ use crate::{
     },
     query::{
         completion::{
-            CompletionQuery,
+            CompletionContext,
             candidates::{
                 CompletionCandidateSource, DefinitionCompletionCandidate,
                 GenericScopeCompletionCandidate, LexicalCompletionCandidate,
@@ -57,11 +57,11 @@ const ENABLE_AUTO_IMPORT_COMPLETIONS: bool = false;
 /// Combines unqualified candidate families while preserving namespace-aware shadowing.
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 
@@ -225,36 +225,20 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         )
         .context("render module completion candidates")?;
 
-        if let Some(auto_import_occupied) = auto_import_occupied {
-            // Exact request syntax is shared with the coordinator. Semantic-only API callers do
-            // not have that tree, so load the active source for this source-edit policy and still
-            // build at most one syntax tree on their request path.
-            let loaded_source = if syntax_context.is_none() {
-                Some(
-                    self.analysis
-                        .sources
-                        .text(self.query.file_id)
-                        .context("load auto-import source text")?,
-                )
-            } else {
-                None
-            };
-            let loaded_syntax = loaded_source
-                .as_deref()
-                .and_then(|source| CompletionSyntaxContext::at(Some(source), self.query.offset));
-            if let Some(syntax_context) = syntax_context.or(loaded_syntax.as_ref()) {
-                let planner = ImportEditPlanner::for_completion(syntax_context, edit);
-                self.push_auto_import_completions(
-                    syntax,
-                    auto_import_candidates,
-                    filter,
-                    &auto_import_occupied,
-                    &planner,
-                    edit,
-                    &mut completions,
-                )
-                .context("render auto-import completion candidates")?;
-            }
+        if let Some(auto_import_occupied) = auto_import_occupied
+            && let Some(syntax_context) = syntax_context
+        {
+            let planner = ImportEditPlanner::for_completion(syntax_context, edit);
+            self.push_auto_import_completions(
+                syntax,
+                auto_import_candidates,
+                filter,
+                &auto_import_occupied,
+                &planner,
+                edit,
+                &mut completions,
+            )
+            .context("render auto-import completion candidates")?;
         }
 
         self.push_expected_variant_completions(

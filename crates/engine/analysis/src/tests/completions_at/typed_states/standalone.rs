@@ -35,7 +35,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    req$0 // complete_with_source("trait member before closing brace").matching("required")
+    req$0 // complete("trait member before closing brace").matching("required")
 }
 
 //- /src/trait_eof.rs
@@ -47,7 +47,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    req$0 // complete_with_source("trait member at EOF").matching("required")
+    req$0 // complete("trait member at EOF").matching("required")
 //- /src/trait_fn_closed.rs
 trait Service {
     fn required(&self);
@@ -56,7 +56,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    fn req$0 // complete_with_source("function trait member before closing brace").matching("required")
+    fn req$0 // complete("function trait member before closing brace").matching("required")
 }
 
 //- /src/trait_fn_eof.rs
@@ -67,7 +67,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    fn req$0 // complete_with_source("function trait member at EOF").matching("required")
+    fn req$0 // complete("function trait member at EOF").matching("required")
 //- /src/trait_empty.rs
 trait Service {
     type Output;
@@ -77,33 +77,33 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    $0 // complete_with_source("trait member before its first prefix at EOF").matching("required")
+    $0 // complete("trait member before its first prefix at EOF").matching("required")
 //- /src/macro_edit.rs
 macro_rules! local_item {
     () => { struct Generated; };
 }
 
-local_i$0!(); // complete_with_source("module macro before invocation suffix").matching("local_item")
+local_i$0!(); // complete("module macro before invocation suffix").matching("local_item")
 
 //- /src/macro_forward.rs
 macro_rules! local_item {
     () => { struct Generated; };
 }
 
-local_i$0 // complete_with_source("module macro at EOF").matching("local_item")
+local_i$0 // complete("module macro at EOF").matching("local_item")
 //- /src/module_edit.rs
-mod pars$0; // complete_with_source("module declaration before semicolon").matching("parser")
+mod pars$0; // complete("module declaration before semicolon").matching("parser")
 
 //- /src/module_edit/parser.rs
 pub struct Parser;
 
 //- /src/module_forward.rs
-mod pars$0 // complete_with_source("module declaration at EOF").matching("parser")
+mod pars$0 // complete("module declaration at EOF").matching("parser")
 //- /src/module_forward/parser.rs
 pub struct Parser;
 
 //- /src/module_empty.rs
-mod $0 // complete_with_source("module declaration before its first prefix at EOF").matching("parser")
+mod $0 // complete("module declaration before its first prefix at EOF").matching("parser")
 //- /src/module_empty/parser.rs
 pub struct Parser;
 "#,

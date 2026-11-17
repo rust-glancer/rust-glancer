@@ -24,26 +24,26 @@ pub struct Wrapper<T>(T);
 pub fn consume(_: u8) {}
 
 //- /src/import.rs
-use $0 // complete_with_source("empty import at EOF").matching("crate")
+use $0 // complete("empty import at EOF").matching("crate")
 //- /src/qualified_import.rs
-use crate::$0 // complete_with_source("empty qualified import segment at EOF").matching("VisibleType")
+use crate::$0 // complete("empty qualified import segment at EOF").matching("VisibleType")
 //- /src/type_position.rs
 pub struct SignatureVisibleType;
 
-pub fn run(_: $0 // complete_with_source("empty signature type at EOF").matching("SignatureVisibleType")
+pub fn run(_: $0 // complete("empty signature type at EOF").matching("SignatureVisibleType")
 //- /src/qualified_type.rs
-pub fn run(_: crate::$0 // complete_with_source("empty qualified signature segment at EOF").matching("VisibleType")
+pub fn run(_: crate::$0 // complete("empty qualified signature segment at EOF").matching("VisibleType")
 //- /src/expression.rs
 pub fn run(local_value: u8) {
-    let _ = $0 // complete_with_source("empty body expression at EOF").matching("local_value")
+    let _ = $0 // complete("empty body expression at EOF").matching("local_value")
 //- /src/argument.rs
 pub fn run(local_value: u8) {
-    crate::consume($0 // complete_with_source("empty call argument at EOF").matching("local_value")
+    crate::consume($0 // complete("empty call argument at EOF").matching("local_value")
 //- /src/generic_argument.rs
 pub struct GenericVisibleType;
 
 pub fn run() {
-    let _: crate::Wrapper<$0 // complete_with_source("empty generic argument at EOF").matching("GenericVisibleType")
+    let _: crate::Wrapper<$0 // complete("empty generic argument at EOF").matching("GenericVisibleType")
 "#,
         expect![[r#"
             kw crate // empty import at EOF
@@ -70,18 +70,18 @@ pub mod statement;
 pub mod type_keyword;
 
 //- /src/type_keyword.rs
-pub fn run(_: dy$0 // complete_keywords_with_source("type keyword at EOF").matching("dyn")
+pub fn run(_: dy$0 // complete_keywords("type keyword at EOF").matching("dyn")
 //- /src/impl_trait.rs
-pub fn run(_: im$0 // complete_keywords_with_source("impl Trait keyword at EOF").matching("impl")
+pub fn run(_: im$0 // complete_keywords("impl Trait keyword at EOF").matching("impl")
 //- /src/statement.rs
 pub fn run() {
-    le$0 // complete_keywords_with_source("statement keyword at EOF").matching("let")
+    le$0 // complete_keywords("statement keyword at EOF").matching("let")
 //- /src/expression.rs
 pub fn run() {
-    let _ = ma$0 // complete_keywords_with_source("expression keyword at EOF").matching("match")
+    let _ = ma$0 // complete_keywords("expression keyword at EOF").matching("match")
 //- /src/pattern.rs
 pub fn run(value: bool) {
-    let re$0 // complete_keywords_with_source("pattern keyword at EOF").matching("ref")
+    let re$0 // complete_keywords("pattern keyword at EOF").matching("ref")
 "#,
         expect![[r#"
             kw dyn // type keyword at EOF
@@ -107,27 +107,27 @@ pub mod trait_impl;
 pub mod trait_list;
 
 //- /src/source_file.rs
-f$0 // complete_keywords_with_source("source-file item at EOF").matching("fn")
+f$0 // complete_keywords("source-file item at EOF").matching("fn")
 //- /src/inline_module.rs
 pub mod inner {
-    f$0 // complete_keywords_with_source("module item at EOF").matching("fn")
+    f$0 // complete_keywords("module item at EOF").matching("fn")
 //- /src/inherent_impl.rs
 struct Model;
 
 impl Model {
-    f$0 // complete_keywords_with_source("inherent impl item at EOF").matching("fn")
+    f$0 // complete_keywords("inherent impl item at EOF").matching("fn")
 //- /src/trait_list.rs
 trait Service {
-    f$0 // complete_keywords_with_source("trait item at EOF").matching("fn")
+    f$0 // complete_keywords("trait item at EOF").matching("fn")
 //- /src/trait_impl.rs
 trait Service {}
 struct Model;
 
 impl Service for Model {
-    f$0 // complete_keywords_with_source("trait impl item at EOF").matching("fn")
+    f$0 // complete_keywords("trait impl item at EOF").matching("fn")
 //- /src/extern_block.rs
 extern "C" {
-    f$0 // complete_keywords_with_source("extern block item at EOF").matching("fn")
+    f$0 // complete_keywords("extern block item at EOF").matching("fn")
 "#,
         expect![[r#"
             kw fn // source-file item at EOF
@@ -153,15 +153,15 @@ pub mod after_pub;
 pub mod after_unsafe;
 
 //- /src/after_pub.rs
-pub f$0 // complete_keywords_with_source("after pub at EOF").matching("fn")
+pub f$0 // complete_keywords("after pub at EOF").matching("fn")
 //- /src/after_unsafe.rs
-unsafe f$0 // complete_keywords_with_source("after unsafe at EOF").matching("fn")
+unsafe f$0 // complete_keywords("after unsafe at EOF").matching("fn")
 //- /src/after_async.rs
-async f$0 // complete_keywords_with_source("after async at EOF").matching("fn")
+async f$0 // complete_keywords("after async at EOF").matching("fn")
 //- /src/after_extern.rs
-extern c$0 // complete_keywords_with_source("after extern at EOF").matching("crate")
+extern c$0 // complete_keywords("after extern at EOF").matching("crate")
 //- /src/after_const.rs
-const f$0 // complete_keywords_with_source("after const at EOF").matching("fn")
+const f$0 // complete_keywords("after const at EOF").matching("fn")
 "#,
         expect![[r#"
             kw fn // after pub at EOF
@@ -189,27 +189,27 @@ pub enum Event {
 }
 
 pub fn qualified_edit(event: Event) {
-    let Event::Sta$0 = event; // complete_with_source("qualified name pattern with suffix").matching("Start")
-    let Event::Dat$0(_) = event; // complete_with_source("tuple pattern with suffix").matching("Data")
-    let Event::Sto$0 { code: _ } = event; // complete_with_source("record pattern with suffix").matching("Stop")
+    let Event::Sta$0 = event; // complete("qualified name pattern with suffix").matching("Start")
+    let Event::Dat$0(_) = event; // complete("tuple pattern with suffix").matching("Data")
+    let Event::Sto$0 { code: _ } = event; // complete("record pattern with suffix").matching("Stop")
 }
 
 pub fn unqualified_unfinished(event: Event) {
-    let Sta$0 = event // complete_with_source("unqualified expected pattern without semicolon").matching("Start")
+    let Sta$0 = event // complete("unqualified expected pattern without semicolon").matching("Start")
 }
 
 pub fn unqualified_edit(event: Event) {
-    let Sta$0 = event; // complete_with_source("unqualified expected pattern with suffix").matching("Start")
+    let Sta$0 = event; // complete("unqualified expected pattern with suffix").matching("Start")
 }
 
 //- /src/eof.rs
 pub fn run(event: crate::Event) {
     match event {
-        crate::Event::Sta$0 // complete_with_source("qualified name pattern at EOF").matching("Start")
+        crate::Event::Sta$0 // complete("qualified name pattern at EOF").matching("Start")
 //- /src/empty_qualified_eof.rs
 pub fn run(event: crate::Event) {
     match event {
-        crate::Event::$0 // complete_with_source("empty qualified pattern segment at EOF").matching("Start")
+        crate::Event::$0 // complete("empty qualified pattern segment at EOF").matching("Start")
 "#,
         expect![[r#"
             ev Start // qualified name pattern with suffix

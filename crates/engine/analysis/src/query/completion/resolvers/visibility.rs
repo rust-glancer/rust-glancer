@@ -20,7 +20,7 @@ use crate::{
         SyntheticCompletionTarget,
     },
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
         render::{
             CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
@@ -38,11 +38,11 @@ use crate::{
 /// either candidate set.
 pub(super) struct VisibilityCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> VisibilityCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

@@ -30,7 +30,7 @@ use crate::{
         SyntheticCompletionTarget,
     },
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
@@ -48,11 +48,11 @@ use crate::{
 /// semantic value names from the body surrounding the format string.
 pub(super) struct SpecializedCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

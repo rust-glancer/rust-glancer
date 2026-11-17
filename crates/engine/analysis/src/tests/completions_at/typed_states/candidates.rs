@@ -40,75 +40,75 @@ impl MemberTarget {
 }
 
 pub fn lexical_unfinished(local_value: u8) {
-    let _ = local_v$0 // complete_with_source("unfinished lexical candidate").in_lib("app").matching("local_value")
+    let _ = local_v$0 // complete("unfinished lexical candidate").in_lib("app").matching("local_value")
 }
 
 pub fn generic_unfinished<GenericTy>() {
-    let _: Gener$0 // complete_with_source("unfinished generic candidate").in_lib("app").matching("GenericTy")
+    let _: Gener$0 // complete("unfinished generic candidate").in_lib("app").matching("GenericTy")
 }
 
 pub fn primitive_unfinished() {
-    let _: u1$0 // complete_with_source("unfinished primitive candidate").in_lib("app").matching("u16")
+    let _: u1$0 // complete("unfinished primitive candidate").in_lib("app").matching("u16")
 }
 
 pub fn macro_unfinished() {
-    let _ = local_m$0 // complete_with_source("unfinished macro candidate").in_lib("app").matching("local_macro")
+    let _ = local_m$0 // complete("unfinished macro candidate").in_lib("app").matching("local_macro")
 }
 
 pub fn qualified_macro_unfinished() {
-    let _ = crate::exported_m$0 // complete_with_source("unfinished qualified macro candidate").in_lib("app").matching("exported_macro")
+    let _ = crate::exported_m$0 // complete("unfinished qualified macro candidate").in_lib("app").matching("exported_macro")
 }
 
 pub fn module_unfinished() {
-    let _: crate::module::ModuleT$0 // complete_with_source("unfinished module candidate").in_lib("app").matching("ModuleType")
+    let _: crate::module::ModuleT$0 // complete("unfinished module candidate").in_lib("app").matching("ModuleType")
 }
 
 pub fn associated_unfinished() {
-    let _ = MemberTarget::ne$0 // complete_with_source("unfinished associated candidate").in_lib("app").matching("new")
+    let _ = MemberTarget::ne$0 // complete("unfinished associated candidate").in_lib("app").matching("new")
 }
 
 pub fn field_unfinished(target: MemberTarget) {
-    let _ = target.field_n$0 // complete_with_source("unfinished field candidate").in_lib("app").matching("field_name")
+    let _ = target.field_n$0 // complete("unfinished field candidate").in_lib("app").matching("field_name")
 }
 
 pub fn method_unfinished(target: MemberTarget) {
-    target.method_n$0 // complete_with_source("unfinished method candidate").in_lib("app").matching("method_name")
+    target.method_n$0 // complete("unfinished method candidate").in_lib("app").matching("method_name")
 }
 
 pub fn lexical_edit(local_value: u8) {
-    let _ = local_v$0 + 1; // complete_with_source("edited lexical candidate").in_lib("app").matching("local_value")
+    let _ = local_v$0 + 1; // complete("edited lexical candidate").in_lib("app").matching("local_value")
 }
 
 pub fn generic_edit<GenericTy>() {
-    let _: Gener$0 = todo!(); // complete_with_source("edited generic candidate").in_lib("app").matching("GenericTy")
+    let _: Gener$0 = todo!(); // complete("edited generic candidate").in_lib("app").matching("GenericTy")
 }
 
 pub fn primitive_edit() {
-    let _: u1$0 = 0; // complete_with_source("edited primitive candidate").in_lib("app").matching("u16")
+    let _: u1$0 = 0; // complete("edited primitive candidate").in_lib("app").matching("u16")
 }
 
 pub fn macro_edit() {
-    let _ = local_m$0!(); // complete_with_source("edited macro candidate").in_lib("app").matching("local_macro")
+    let _ = local_m$0!(); // complete("edited macro candidate").in_lib("app").matching("local_macro")
 }
 
 pub fn qualified_macro_edit() {
-    let _ = crate::exported_m$0!(); // complete_with_source("edited qualified macro candidate").in_lib("app").matching("exported_macro")
+    let _ = crate::exported_m$0!(); // complete("edited qualified macro candidate").in_lib("app").matching("exported_macro")
 }
 
 pub fn module_edit() {
-    let _: crate::module::ModuleT$0 = todo!(); // complete_with_source("edited module candidate").in_lib("app").matching("ModuleType")
+    let _: crate::module::ModuleT$0 = todo!(); // complete("edited module candidate").in_lib("app").matching("ModuleType")
 }
 
 pub fn associated_edit() {
-    let _ = MemberTarget::ne$0(); // complete_with_source("edited associated candidate").in_lib("app").matching("new")
+    let _ = MemberTarget::ne$0(); // complete("edited associated candidate").in_lib("app").matching("new")
 }
 
 pub fn field_edit(target: MemberTarget) {
-    let _ = target.field_n$0 + 1; // complete_with_source("edited field candidate").in_lib("app").matching("field_name")
+    let _ = target.field_n$0 + 1; // complete("edited field candidate").in_lib("app").matching("field_name")
 }
 
 pub fn method_edit(target: MemberTarget) {
-    target.method_n$0(); // complete_with_source("edited method candidate").in_lib("app").matching("method_name")
+    target.method_n$0(); // complete("edited method candidate").in_lib("app").matching("method_name")
 }
 "#,
         expect![[r#"
@@ -144,11 +144,11 @@ pub struct AutoImportedType;
 
 //- /app/src/lib.rs crate:app root:app deps:catalog
 pub fn auto_import_unfinished() {
-    let _: AutoImportedT$0 // complete_with_source("unfinished auto-import candidate").in_lib("app").matching("AutoImportedType")
+    let _: AutoImportedT$0 // complete("unfinished auto-import candidate").in_lib("app").matching("AutoImportedType")
 }
 
 pub fn auto_import_edit() {
-    let _: AutoImportedT$0 = todo!(); // complete_with_source("edited auto-import candidate").in_lib("app").matching("AutoImportedType")
+    let _: AutoImportedT$0 = todo!(); // complete("edited auto-import candidate").in_lib("app").matching("AutoImportedType")
 }
 "#,
         expect![[r#"
@@ -185,15 +185,15 @@ impl Target {
     pub fn method_name(&self) {}
 }
 
-local_m$0!(); // complete_verbose_with_source("module macro edit").matching("local_macro")
-crate::exported_m$0!(); // complete_verbose_with_source("qualified module macro edit").matching("exported_macro")
+local_m$0!(); // complete_verbose("module macro edit").matching("local_macro")
+crate::exported_m$0!(); // complete_verbose("qualified module macro edit").matching("exported_macro")
 
 pub fn run(target: Target) {
-    plain_f$0(); // complete_verbose_with_source("function edit").matching("plain_function")
-    let _ = local_m$0!(); // complete_verbose_with_source("body macro edit").matching("local_macro")
-    let _ = crate::exported_m$0!(); // complete_verbose_with_source("qualified body macro edit").matching("exported_macro")
-    let _ = Target::ne$0(); // complete_verbose_with_source("associated function edit").matching("new")
-    target.method_n$0(); // complete_verbose_with_source("method edit").matching("method_name")
+    plain_f$0(); // complete_verbose("function edit").matching("plain_function")
+    let _ = local_m$0!(); // complete_verbose("body macro edit").matching("local_macro")
+    let _ = crate::exported_m$0!(); // complete_verbose("qualified body macro edit").matching("exported_macro")
+    let _ = Target::ne$0(); // complete_verbose("associated function edit").matching("new")
+    target.method_n$0(); // complete_verbose("method edit").matching("method_name")
 }
 "#,
         expect![[r#"

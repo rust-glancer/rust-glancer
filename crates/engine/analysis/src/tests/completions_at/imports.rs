@@ -34,9 +34,9 @@ pub mod macros {
 
 //- /app/src/lib.rs crate:app root:app deps:catalog
 fn use_it() {
-    let _: catalog::hidden_first::Sha$0; // complete_with_source("visible re-export after hidden source").in_lib("app").matching("Shared")
-    let _: catalog::visible_first::Sha$0; // complete_with_source("visible re-export before hidden source").in_lib("app").matching("Shared")
-    catalog::macros::facade_$0!(); // complete_with_source("macro re-export overrides declaration attributes").in_lib("app").matching("facade_macro")
+    let _: catalog::hidden_first::Sha$0; // complete("visible re-export after hidden source").in_lib("app").matching("Shared")
+    let _: catalog::visible_first::Sha$0; // complete("visible re-export before hidden source").in_lib("app").matching("Shared")
+    catalog::macros::facade_$0!(); // complete("macro re-export overrides declaration attributes").in_lib("app").matching("facade_macro")
 }
 "#,
         expect![[r#"
@@ -97,18 +97,18 @@ pub fn make_widget() {}
 use catalog::collections::BTreeMap;
 
 fn types() {
-    let _: HashM$0; // complete_verbose_with_source("coalesced HashMap import").in_lib("app").matching("HashMap")
-    let _: Wid$0; // complete_verbose_with_source("ambiguous imports").in_lib("app").matching("Widget")
-    let _: RankedW$0; // complete_verbose_with_source("short re-export path").in_lib("app").matching("RankedWidget")
-    let _: PublicW$0; // complete_verbose_with_source("public re-export").in_lib("app").matching("PublicWidget")
-    let _: SecretW$0; // complete_with_source("hidden re-export").in_lib("app").matching("SecretWidget")
-    let _: HiddenW$0; // complete_with_source("hidden declaration").in_lib("app").matching("HiddenWidget")
-    let _: UnstableW$0; // complete_with_source("unstable declaration").in_lib("app").matching("UnstableWidget")
-    let _: DisabledW$0; // complete_with_source("cfg-disabled declaration").in_lib("app").matching("DisabledWidget")
+    let _: HashM$0; // complete_verbose("coalesced HashMap import").in_lib("app").matching("HashMap")
+    let _: Wid$0; // complete_verbose("ambiguous imports").in_lib("app").matching("Widget")
+    let _: RankedW$0; // complete_verbose("short re-export path").in_lib("app").matching("RankedWidget")
+    let _: PublicW$0; // complete_verbose("public re-export").in_lib("app").matching("PublicWidget")
+    let _: SecretW$0; // complete("hidden re-export").in_lib("app").matching("SecretWidget")
+    let _: HiddenW$0; // complete("hidden declaration").in_lib("app").matching("HiddenWidget")
+    let _: UnstableW$0; // complete("unstable declaration").in_lib("app").matching("UnstableWidget")
+    let _: DisabledW$0; // complete("cfg-disabled declaration").in_lib("app").matching("DisabledWidget")
 }
 
 fn values() {
-    make_w$0; // complete_verbose_with_source("value auto-import").in_lib("app").matching("make_widget")
+    make_w$0; // complete_verbose("value auto-import").in_lib("app").matching("make_widget")
 }
 "#,
         expect![[r#"

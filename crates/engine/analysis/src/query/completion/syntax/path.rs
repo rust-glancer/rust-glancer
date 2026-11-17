@@ -11,11 +11,11 @@ use crate::query::completion::site::{
 };
 
 impl CompletionSyntaxContext<'_> {
-    /// Read a `use` path from current syntax without requiring the import to be saved first.
+    /// Read a `use` path from the speculative syntax.
     ///
     /// Nested use trees split a path across several AST nodes: `use std::{sync::Ar$0}` stores
     /// `std` on the outer tree and `sync::Ar` on the inner one. Join those pieces here, then use the
-    /// enclosing module path to look up names in the saved project.
+    /// enclosing module path to look up names in the active snapshot.
     pub(crate) fn import_completion_syntax(&self) -> Option<ImportCompletionSyntax> {
         if !self.inside_use_item() {
             return None;
@@ -36,30 +36,15 @@ impl CompletionSyntaxContext<'_> {
         }
         trees.reverse();
 
-        let leaf_index = trees.len().checked_sub(1)?;
-        let mut qualifier_parts = Vec::new();
-        for (index, tree) in trees.iter().enumerate() {
-            let Some(path) = tree.path() else {
-                continue;
-            };
-            let path_text = path.syntax().text().to_string();
-            if index == leaf_index {
-                if let Some(qualifier) = Self::marker_path_qualifier(&path_text)? {
-                    qualifier_parts.push(qualifier.to_string());
-                }
-            } else {
-                qualifier_parts.push(path_text);
-            }
-        }
-
-        let qualifier = if qualifier_parts.is_empty() {
-            None
-        } else {
-            Some(Path::from_macro_path_text(
-                &qualifier_parts.join("::"),
-                None,
-            )?)
-        };
+        // Split off the marker after joining the path. In `use ::st$0`, the qualifier is just
+        // the absolute root; rendering and reparsing that qualifier would lose it.
+        let path = trees
+            .iter()
+            .filter_map(ast::UseTree::path)
+            .map(|path| path.syntax().text().to_string())
+            .collect::<Vec<_>>()
+            .join("::");
+        let qualifier = Self::marker_path_qualifier(&path)?;
         Some(ImportCompletionSyntax::new(
             self.inline_module_path(),
             qualifier,
@@ -68,7 +53,7 @@ impl CompletionSyntaxContext<'_> {
 
     /// Return the owner of a record whose first field has not been typed yet.
     ///
-    /// The saved parser may not lower `User { $0` as a record at all. The speculative marker makes
+    /// The ordinary parser may not lower `User { $0` as a record at all. The speculative marker makes
     /// that intent unambiguous, so completion carries only the owner spelling into semantic scope
     /// lookup and keeps the replacement span empty.
     pub(crate) fn empty_record_owner(&self) -> Option<Path> {
@@ -90,6 +75,14 @@ impl CompletionSyntaxContext<'_> {
             {
                 return None;
             }
+            let fields = ancestors
+                .iter()
+                .find_map(|node| ast::RecordExprFieldList::cast(node.clone()))?;
+            // Existing fields and update syntax belong to the indexed record site. Empty-list
+            // recovery has no field metadata and would offer names that are already present.
+            if fields.fields().count() != 1 || fields.dotdot_token().is_some() {
+                return None;
+            }
             ancestors
                 .iter()
                 .find_map(|node| ast::RecordExpr::cast(node.clone()))?
@@ -101,6 +94,12 @@ impl CompletionSyntaxContext<'_> {
             if field.colon_token().is_some()
                 || field.syntax().text().to_string().trim() != Self::MARKER
             {
+                return None;
+            }
+            let fields = ancestors
+                .iter()
+                .find_map(|node| ast::RecordPatFieldList::cast(node.clone()))?;
+            if fields.fields().count() != 1 || fields.rest_pat().is_some() {
                 return None;
             }
             ancestors
@@ -269,6 +268,19 @@ impl CompletionSyntaxContext<'_> {
         }
 
         let ancestors = self.marker.parent()?.ancestors().collect::<Vec<_>>();
+        // A bare record field needs the indexed list's existing fields and rest-pattern rules.
+        // Treating it as an empty expression would route to unrelated names in the body scope.
+        if ancestors
+            .iter()
+            .find_map(|node| ast::RecordExprField::cast(node.clone()))
+            .is_some_and(|field| field.colon_token().is_none())
+            || ancestors
+                .iter()
+                .find_map(|node| ast::RecordPatField::cast(node.clone()))
+                .is_some_and(|field| field.colon_token().is_none())
+        {
+            return None;
+        }
         if ancestors
             .iter()
             .any(|node| ast::GenericArgList::can_cast(node.kind()))

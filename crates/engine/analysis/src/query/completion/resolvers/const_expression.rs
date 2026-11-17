@@ -20,7 +20,7 @@ use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionKind, SyntheticCompletionTarget},
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
@@ -37,11 +37,11 @@ use crate::{
 /// and associated/module constants. Boolean literals are added as language-owned rows.
 pub(super) struct ConstExpressionCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> ConstExpressionCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

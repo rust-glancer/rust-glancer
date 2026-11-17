@@ -17,7 +17,7 @@ use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionKind},
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
         pattern::{PatternCandidateRole, PatternCompletionPolicy},
         render::{
@@ -34,11 +34,11 @@ use crate::{
 /// are filtered by the surrounding type/value/pattern grammar and collapsed by stable identity.
 pub(super) struct PathCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

@@ -39,16 +39,12 @@ pub fn wanted() -> u8 { 1u8 }
             .expect("route selected file")
             .expect("target");
         let analysis = snapshot.analysis();
-        let text = fs::read_to_string(fixture.path("src/lib.rs")).expect("read selected file");
         let completions = analysis
-            .completions_at(
-                CompletionQuery::new(
-                    context.crate_ref,
-                    context.file,
-                    fixture.markers().position("completion").offset,
-                )
-                .with_source_text(&text),
-            )
+            .completions_at(CompletionQuery::new(
+                context.crate_ref,
+                context.file,
+                fixture.markers().position("completion").offset,
+            ))
             .expect("saved impl completion");
         assert!(completions.iter().any(|item| item.label == "required"));
     });

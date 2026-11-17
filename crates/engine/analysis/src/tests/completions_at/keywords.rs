@@ -6,28 +6,28 @@ fn completes_keywords_for_each_item_list_context() {
     check_analysis(
         r#"
 //- /src/lib.rs crate:analysis_item_list_keyword_completions
-$0 // complete_keywords_with_source("source-file items")
+$0 // complete_keywords("source-file items")
 
 pub mod nested {
-    $0 // complete_keywords_with_source("module items")
+    $0 // complete_keywords("module items")
 }
 
 pub struct Model;
 
 impl Model {
-    $0 // complete_keywords_with_source("inherent impl items")
+    $0 // complete_keywords("inherent impl items")
 }
 
 pub trait Service {
-    $0 // complete_keywords_with_source("trait items")
+    $0 // complete_keywords("trait items")
 }
 
 impl Service for Model {
-    $0 // complete_keywords_with_source("trait impl items")
+    $0 // complete_keywords("trait impl items")
 }
 
 extern "C" {
-    $0 // complete_keywords_with_source("extern block items")
+    $0 // complete_keywords("extern block items")
 }
 "#,
         expect![[r#"
@@ -109,27 +109,27 @@ pub mod scope {}
 pub trait Service {}
 
 pub struct Holder {
-    dyn_ty: dy$0, // complete_keywords_verbose_with_source("dyn type")
-    fn_ty: f$0, // complete_keywords_with_source("fn type")
-    for_ty: fo$0, // complete_keywords_with_source("for type")
-    no_impl_trait: im$0, // complete_keywords_with_source("impl Trait excluded from fields")
+    dyn_ty: dy$0, // complete_keywords_verbose("dyn type")
+    fn_ty: f$0, // complete_keywords("fn type")
+    for_ty: fo$0, // complete_keywords("for type")
+    no_impl_trait: im$0, // complete_keywords("impl Trait excluded from fields")
 }
 
 pub fn inspect(
-    value: im$0, // complete_keywords_with_source("impl Trait function parameter")
-) -> im$0 { // complete_keywords_with_source("impl Trait function return")
+    value: im$0, // complete_keywords("impl Trait function parameter")
+) -> im$0 { // complete_keywords("impl Trait function return")
     loop {}
 }
 
-mod visibility_context { pub(crate) f$0 } // complete_keywords_with_source("after visibility")
-mod unsafe_context { unsafe f$0 } // complete_keywords_with_source("after unsafe")
-mod async_context { async f$0 } // complete_keywords_with_source("after async")
-mod extern_context { extern c$0 } // complete_keywords_with_source("after extern")
-mod const_context { const f$0 } // complete_keywords_with_source("after const")
+mod visibility_context { pub(crate) f$0 } // complete_keywords("after visibility")
+mod unsafe_context { unsafe f$0 } // complete_keywords("after unsafe")
+mod async_context { async f$0 } // complete_keywords("after async")
+mod extern_context { extern c$0 } // complete_keywords("after extern")
+mod const_context { const f$0 } // complete_keywords("after const")
 
-mod extern_crate_context { extern crate dep$0; } // complete_keywords_with_source("extern crate name has no item fallback")
+mod extern_crate_context { extern crate dep$0; } // complete_keywords("extern crate name has no item fallback")
 mod restricted_visibility_context {
-    pub(in crate::scope$0) struct Hidden; // complete_keywords_with_source("restricted visibility has no item fallback")
+    pub(in crate::scope$0) struct Hidden; // complete_keywords("restricted visibility has no item fallback")
 }
 "#,
         expect![[r#"

@@ -92,32 +92,17 @@ impl BodyKey {
     }
 }
 
-/// Each outer declaration owns an independent body arena. Standalone inference kernels use
-/// a local arena with no owning declaration.
+/// Each outer declaration owns an independent body arena.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub enum BodyRoot {
-    /// Unowned identities used by standalone inference kernels.
-    Local,
     Function(u32),
     Const(u32),
     Static(u32),
-    TraitFunction {
-        owner: u32,
-        item: u32,
-    },
-    TraitConst {
-        owner: u32,
-        item: u32,
-    },
-    ImplFunction {
-        owner: u32,
-        item: u32,
-    },
-    ImplConst {
-        owner: u32,
-        item: u32,
-    },
+    TraitFunction { owner: u32, item: u32 },
+    TraitConst { owner: u32, item: u32 },
+    ImplFunction { owner: u32, item: u32 },
+    ImplConst { owner: u32, item: u32 },
 }
 
 impl BodyRoot {
@@ -175,13 +160,12 @@ impl BodyRoot {
             Self::ImplFunction { owner, .. } | Self::ImplConst { owner, .. } => {
                 ItemStoreId::Impl(ImplId(owner as usize))
             }
-            _ => ItemStoreId::Scope,
+            Self::Function(_) | Self::Const(_) | Self::Static(_) => ItemStoreId::Scope,
         }
     }
 
-    pub fn owner(self) -> Option<OuterBodyOwner> {
-        Some(match self {
-            Self::Local => return None,
+    pub fn owner(self) -> OuterBodyOwner {
+        match self {
             Self::Function(id)
             | Self::TraitFunction { item: id, .. }
             | Self::ImplFunction { item: id, .. } => OuterBodyOwner::Function {
@@ -195,7 +179,7 @@ impl BodyRoot {
                 id: ConstId(id as usize),
             },
             Self::Static(id) => OuterBodyOwner::Static(StaticId(id as usize)),
-        })
+        }
     }
 }
 
@@ -209,11 +193,11 @@ pub struct BodyRef {
 }
 
 impl BodyRef {
-    pub fn key(self) -> Option<BodyKey> {
-        Some(BodyKey {
+    pub fn key(self) -> BodyKey {
+        BodyKey {
             krate: self.crate_ref,
-            owner: self.root.owner()?,
-        })
+            owner: self.root.owner(),
+        }
     }
 }
 

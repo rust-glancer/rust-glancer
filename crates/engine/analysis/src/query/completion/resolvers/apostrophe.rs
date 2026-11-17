@@ -28,7 +28,7 @@ use crate::{
         SyntheticCompletionTarget,
     },
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         render::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
         site::{LabelCompletionContext, LifetimeCompletionContext},
         syntax::CompletionSyntaxContext,
@@ -41,11 +41,11 @@ use crate::{
 /// loop expressions, so the two namespaces never share candidates merely because both use `'`.
 pub(super) struct ApostropheCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

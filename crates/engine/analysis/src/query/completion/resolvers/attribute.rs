@@ -23,7 +23,7 @@ use crate::{
         SyntheticCompletionTarget,
     },
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
@@ -40,11 +40,11 @@ use crate::{
 /// features, or proc macros visible in the macro namespace.
 pub(super) struct AttributeCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> AttributeCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

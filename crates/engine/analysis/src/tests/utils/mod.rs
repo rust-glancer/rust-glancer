@@ -97,6 +97,7 @@ pub(super) struct AnalysisQuery {
     target: AnalysisTarget,
     kind: AnalysisQueryKind,
     completion_label_prefix: Option<String>,
+    completion_members_only: bool,
 }
 
 impl AnalysisQuery {
@@ -148,33 +149,16 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtVerbose)
     }
 
-    /// Run completion as if the saved fixture text were the document captured for this request.
-    pub(super) fn complete_with_source(title: &str, marker: &str) -> Self {
-        Self::new(title, marker, AnalysisQueryKind::CompletionsAtWithSource)
-    }
-
-    pub(super) fn complete_verbose_with_source(title: &str, marker: &str) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::CompletionsAtVerboseWithSource,
-        )
-    }
-
     /// Render only keyword rows from a full request-local completion query.
-    pub(super) fn complete_keywords_with_source(title: &str, marker: &str) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::CompletionKeywordsAtWithSource,
-        )
+    pub(super) fn complete_keywords(title: &str, marker: &str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::CompletionKeywordsAt)
     }
 
-    pub(super) fn complete_keywords_verbose_with_source(title: &str, marker: &str) -> Self {
+    pub(super) fn complete_keywords_verbose(title: &str, marker: &str) -> Self {
         Self::new(
             title,
             marker,
-            AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource,
+            AnalysisQueryKind::CompletionKeywordsAtVerbose,
         )
     }
 
@@ -214,6 +198,12 @@ impl AnalysisQuery {
         self
     }
 
+    /// Keep field and method rows after running the full completion query.
+    pub(super) fn members(mut self) -> Self {
+        self.completion_members_only = true;
+        self
+    }
+
     fn new(title: &str, marker: &str, kind: AnalysisQueryKind) -> Self {
         Self {
             title: title.to_string(),
@@ -221,6 +211,7 @@ impl AnalysisQuery {
             target: AnalysisTarget::lib(),
             kind,
             completion_label_prefix: None,
+            completion_members_only: false,
         }
     }
 }
@@ -300,10 +291,8 @@ enum AnalysisQueryKind {
     CodeActions(CodeActionTrigger),
     CompletionsAt,
     CompletionsAtVerbose,
-    CompletionsAtWithSource,
-    CompletionsAtVerboseWithSource,
-    CompletionKeywordsAtWithSource,
-    CompletionKeywordsAtVerboseWithSource,
+    CompletionKeywordsAt,
+    CompletionKeywordsAtVerbose,
     Hover,
 }
 
@@ -715,7 +704,10 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .expect("fixture code action query should resolve");
                 self.render_code_actions(actions, &source_text, &mut dump);
             }
-            AnalysisQueryKind::CompletionsAt => {
+            AnalysisQueryKind::CompletionsAt
+            | AnalysisQueryKind::CompletionsAtVerbose
+            | AnalysisQueryKind::CompletionKeywordsAt
+            | AnalysisQueryKind::CompletionKeywordsAtVerbose => {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_client_capabilities(CompletionClientCapabilities {
                         snippet_support: true,
@@ -725,51 +717,18 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .analysis()
                     .completions_at(completion_query)
                     .expect("fixture completion query should resolve");
-                Self::filter_completion_labels(query, &mut completions);
-                self.render_completions(completions, &mut dump);
-            }
-            AnalysisQueryKind::CompletionsAtVerbose => {
-                let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_client_capabilities(CompletionClientCapabilities {
-                        snippet_support: true,
-                    });
-                let mut completions = self
-                    .db
-                    .analysis()
-                    .completions_at(completion_query)
-                    .expect("fixture completion query should resolve");
-                Self::filter_completion_labels(query, &mut completions);
-                self.render_completions_verbose(completions, &mut dump);
-            }
-            AnalysisQueryKind::CompletionsAtWithSource
-            | AnalysisQueryKind::CompletionsAtVerboseWithSource
-            | AnalysisQueryKind::CompletionKeywordsAtWithSource
-            | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource => {
-                let source_text = SourceReader::new(self.db.semantic.db())
-                    .text(file_id)
-                    .expect("completion source text should load");
-                let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_source_text(&source_text)
-                    .with_client_capabilities(CompletionClientCapabilities {
-                        snippet_support: true,
-                    });
-                let mut completions = self
-                    .db
-                    .analysis()
-                    .completions_at(completion_query)
-                    .expect("fixture completion query should resolve");
-                Self::filter_completion_labels(query, &mut completions);
+                Self::filter_completions(query, &mut completions);
                 if matches!(
                     query.kind,
-                    AnalysisQueryKind::CompletionKeywordsAtWithSource
-                        | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource
+                    AnalysisQueryKind::CompletionKeywordsAt
+                        | AnalysisQueryKind::CompletionKeywordsAtVerbose
                 ) {
                     completions.retain(|completion| completion.kind == CompletionKind::Keyword);
                 }
                 if matches!(
                     query.kind,
-                    AnalysisQueryKind::CompletionsAtVerboseWithSource
-                        | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource
+                    AnalysisQueryKind::CompletionsAtVerbose
+                        | AnalysisQueryKind::CompletionKeywordsAtVerbose
                 ) {
                     self.render_completions_verbose(completions, &mut dump);
                 } else {
@@ -791,9 +750,19 @@ impl AnalysisQuerySnapshot<'_, '_> {
         dump
     }
 
-    fn filter_completion_labels(query: &AnalysisQuery, completions: &mut Vec<CompletionItem>) {
+    fn filter_completions(query: &AnalysisQuery, completions: &mut Vec<CompletionItem>) {
         if let Some(prefix) = &query.completion_label_prefix {
             completions.retain(|completion| completion.label.starts_with(prefix));
+        }
+        if query.completion_members_only {
+            completions.retain(|completion| {
+                matches!(
+                    completion.kind,
+                    CompletionKind::Field
+                        | CompletionKind::InherentMethod
+                        | CompletionKind::TraitMethod
+                )
+            });
         }
     }
 

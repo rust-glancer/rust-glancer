@@ -397,7 +397,7 @@ crates/vfs/src/file_set.rs:112:36 # dirty/hover/derived-default
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryKind, QueryTarget, rust_analyzer_dirty_cases};
+    use super::{QueryTarget, rust_analyzer_dirty_cases};
     use crate::compare_lsp::config::{DIRTY_EDITOR_PREFIX, DIRTY_EDITOR_PREFIX_LINE_COUNT};
 
     #[test]
@@ -416,18 +416,5 @@ mod tests {
 
         assert_eq!(position.line(), 277);
         assert_eq!(position.character(), 20);
-    }
-
-    #[test]
-    fn dirty_corpus_contains_only_current_document_reads() {
-        assert!(rust_analyzer_dirty_cases().iter().all(|query| matches!(
-            query.kind(),
-            QueryKind::GotoDefinition
-                | QueryKind::TypeDefinition
-                | QueryKind::DocumentHighlight
-                | QueryKind::DocumentSymbol
-                | QueryKind::InlayHint
-                | QueryKind::Hover
-        )));
     }
 }

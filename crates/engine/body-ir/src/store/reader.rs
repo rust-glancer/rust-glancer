@@ -51,10 +51,9 @@ impl<'db> BodyReader<'db> {
         if let ItemSourceKind::Body(source) = source.kind {
             // Resolving an occurrence only needs the location output. Keep this separate from
             // local declaration reads, which must observe prepared meaning alone.
-            let sources = if let Some(key) = source.body.key()
-                && self.targets.contains(&source.body.crate_ref)
-            {
-                let prepared = prepare_body(self.db, key).map_err(ReadError::Query)?;
+            let sources = if self.targets.contains(&source.body.crate_ref) {
+                let prepared =
+                    prepare_body(self.db, source.body.key()).map_err(ReadError::Query)?;
                 match prepared.as_ref() {
                     Some(prepared) => prepared
                         .sources
@@ -87,18 +86,14 @@ impl<'db> BodyReader<'db> {
     }
 
     pub fn body(&self, body: BodyRef) -> Result<Option<BodyView<'_>>, ReadError> {
-        let Some(key) = body.key() else {
-            return Ok(None);
-        };
-        Ok(self.owner(key)?.and_then(|owner| owner.body(body.body)))
+        Ok(self
+            .owner(body.key())?
+            .and_then(|owner| owner.body(body.body)))
     }
 
     fn body_local_items(&self, body: BodyRef) -> Result<Option<&BodyLocalItems>, ReadError> {
-        let Some(key) = body.key() else {
-            return Ok(None);
-        };
         Ok(self
-            .prepared_owner(key)?
+            .prepared_owner(body.key())?
             .and_then(|prepared| prepared.local_items.get(body.body)))
     }
 
@@ -230,12 +225,7 @@ impl<'db> BodyReader<'db> {
                 krate,
                 owner: owner.into(),
             },
-            DefMapRef::Body(body) => {
-                let Some(key) = body.key() else {
-                    return Ok(None);
-                };
-                key
-            }
+            DefMapRef::Body(body) => body.key(),
         };
         let Some(prepared) = self.prepared_owner(key)? else {
             return Ok(None);

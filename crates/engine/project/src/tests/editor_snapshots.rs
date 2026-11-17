@@ -172,10 +172,11 @@ pub fn inspect() { let result = Value.get(); let _ = result; }
                     snapshot.sources().text(destinations[0].file_id)?.as_ref(),
                     documents[0].text()
                 );
-                let completions = analysis.completions_at(
-                    CompletionQuery::new(context.crate_ref, context.file, call)
-                        .with_source_text(&text),
-                )?;
+                let completions = analysis.completions_at(CompletionQuery::new(
+                    context.crate_ref,
+                    context.file,
+                    call,
+                ))?;
                 assert!(
                     completions.iter().any(|item| item.label == "extra"),
                     "{completions:?}"

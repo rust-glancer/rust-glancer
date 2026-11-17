@@ -359,14 +359,22 @@ impl<'a> Analysis<'a> {
     /// lifetimes and labels, restricted visibility, const expressions, and recognized
     /// string/macro grammars.
     ///
-    /// The query carries the source position plus editor-local facts needed by those providers,
-    /// such as the live source buffer and snippet support.
+    /// Missing source text comes from this analysis snapshot. The caller can also supply its
+    /// captured text or reuse speculative syntax already prepared for the request.
     pub fn completions_at(
         &self,
         query: CompletionQuery<'_>,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         self.run_query("completions_at", || {
-            query::completion::CompletionResolver::new(self, query).completions_at()
+            let snapshot_text;
+            let source_text = match query.source_text {
+                Some(text) => text,
+                None => {
+                    snapshot_text = self.sources.text(query.file_id)?;
+                    &snapshot_text
+                }
+            };
+            query::completion::CompletionResolver::new(self, query, source_text).completions_at()
         })
     }
 

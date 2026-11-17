@@ -45,9 +45,10 @@
 //! and `rename`. For example, `rename("field", "new_name")` supplies the new name, while
 //! `references("uses", ReferenceQuery::all())` supplies the search scope.
 //!
-//! Completion queries can use `.matching("prefix")` to keep only relevant candidates; use
-//! `complete_verbose` when details or edits matter. The `complete_with_source` variants test
-//! completion with captured document text. Use `.in_lib("package")` or `.in_bin("package")`
+//! Completion queries can use `.matching("prefix")` to keep only relevant candidates or
+//! `.members()` to focus on fields and methods, excluding postfix suggestions. Both filter the
+//! full query's results. Use `complete_verbose` when details or edits matter.
+//! Use `.in_lib("package")` or `.in_bin("package")`
 //! to select a target in a workspace fixture. `check_analysis_with_fake_sysroot` adds the shared
 //! small standard-library fixture when the test needs it.
 //!
