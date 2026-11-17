@@ -34,6 +34,8 @@
 //! not decide labels, visibility at the cursor, or insertion text; those remain with the body and
 //! editor-facing adapters.
 
+use std::collections::HashSet;
+
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ItemStoreRef, TraitApplicability,
@@ -162,6 +164,7 @@ where
             )?;
         }
 
+        let mut matching_traits = None;
         for selection in matches.traits() {
             if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
@@ -171,6 +174,7 @@ where
                 selection.trait_impl.trait_ref,
                 selection.applicability,
                 filter,
+                &mut matching_traits,
                 &mut Vec::new(),
             )?;
         }
@@ -206,6 +210,7 @@ where
         filter: AssociatedItemFilter<'_>,
     ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let mut candidates = Vec::new();
+        let mut matching_traits = None;
         for application in applications {
             if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
@@ -215,6 +220,7 @@ where
                 application.def,
                 applicability,
                 filter,
+                &mut matching_traits,
                 &mut Vec::new(),
             )?;
         }
@@ -266,6 +272,7 @@ where
         trait_ref: TraitDefRef,
         applicability: TraitApplicability,
         filter: AssociatedItemFilter<'_>,
+        matching_traits: &mut Option<HashSet<TraitDefRef>>,
         lineage: &mut Vec<TraitDefRef>,
     ) -> Result<(), ReadError> {
         if lineage.contains(&trait_ref) {
@@ -277,15 +284,22 @@ where
         // Skip Child's member store when its name hints rule it out, but still read its header
         // below to reach Parent. Body-local declarations are not in the crate name index.
         let read_members = match filter {
-            AssociatedItemFilter::All => true,
-            AssociatedItemFilter::Named(_) => {
-                trait_ref.origin.as_crate_ref().is_none()
-                    || self
-                        .context
-                        .item_lookup()
-                        .traits_with_associated_items(filter)?
-                        .contains(&trait_ref)
+            AssociatedItemFilter::Named(_) if trait_ref.origin.as_crate_ref().is_some() => {
+                // Load the name index only when a crate trait needs it, then share membership
+                // checks across all roots and supertraits instead of copying the list per trait.
+                let traits = match matching_traits {
+                    Some(traits) => traits,
+                    None => matching_traits.insert(
+                        self.context
+                            .item_lookup()
+                            .traits_with_associated_items(filter)?
+                            .into_iter()
+                            .collect(),
+                    ),
+                };
+                traits.contains(&trait_ref)
             }
+            _ => true,
         };
         if read_members {
             self.push_assoc_items(candidates, trait_ref.member_store(), applicability, filter)?;
@@ -311,6 +325,7 @@ where
                     application.def,
                     applicability,
                     filter,
+                    matching_traits,
                     lineage,
                 )?;
             }
