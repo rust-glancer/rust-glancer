@@ -17,7 +17,6 @@ pub struct SourceOutlineDeclaration {
     kind: SymbolKind,
     file_id: FileId,
     span: Span,
-    selection_span: Span,
 }
 
 impl SourceOutlineDeclaration {
@@ -27,7 +26,6 @@ impl SourceOutlineDeclaration {
             kind: declaration.kind(),
             file_id: declaration.file_id(),
             span: declaration.span(),
-            selection_span: declaration.selection_span(),
         }
     }
 
@@ -37,7 +35,6 @@ impl SourceOutlineDeclaration {
             kind: SymbolKind::Field,
             file_id,
             span,
-            selection_span: span,
         }
     }
 
@@ -55,20 +52,6 @@ impl SourceOutlineDeclaration {
 
     pub fn span(&self) -> Span {
         self.span
-    }
-
-    pub fn selection_span(&self) -> Span {
-        self.selection_span
-    }
-
-    pub fn into_parts(self) -> (String, SymbolKind, FileId, Span, Span) {
-        (
-            self.name,
-            self.kind,
-            self.file_id,
-            self.span,
-            self.selection_span,
-        )
     }
 }
 
@@ -102,10 +85,6 @@ impl SourceOutlineNode {
 
     pub(crate) fn children_mut(&mut self) -> &mut Vec<SourceOutlineNode> {
         &mut self.children
-    }
-
-    pub fn into_parts(self) -> (SourceOutlineDeclaration, Vec<SourceOutlineNode>) {
-        (self.declaration, self.children)
     }
 }
 

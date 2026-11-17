@@ -10,10 +10,9 @@ use rg_std::CancellationToken;
 use crate::{AnalysisChangeSummary, Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
-fn file_local_requests_preserve_lazy_member_capture() {
-    for request in ["completion", "outline"] {
-        let fixture = ProjectSourceFixture::build_with_fake_sysroot(
-            r#"
+fn trait_impl_completion_preserves_lazy_member_capture() {
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        r#"
 //- /src/lib.rs crate:lazy_file_queries
 mod other;
 trait Service {
@@ -32,71 +31,55 @@ fn use_late() { let value = Late::wanted(); let _ = $result$value; }
 //- /src/methods.rs
 pub fn wanted() -> u8 { 1u8 }
 "#,
-        );
-        let project = fixture.build_project();
-        project.inspect(|snapshot| {
-            let context = snapshot
-                .file_context_for_path(fixture.path("src/lib.rs"))
-                .expect("route selected file")
-                .expect("target");
-            let analysis = snapshot.analysis();
-            match request {
-                "completion" => {
-                    let text =
-                        fs::read_to_string(fixture.path("src/lib.rs")).expect("read selected file");
-                    let completions = analysis
-                        .completions_at(
-                            CompletionQuery::new(
-                                context.crate_ref,
-                                context.file,
-                                fixture.markers().position("completion").offset,
-                            )
-                            .with_source_text(&text),
-                        )
-                        .expect("saved impl completion");
-                    assert!(completions.iter().any(|item| item.label == "required"));
-                }
-                "outline" => {
-                    let outline = analysis
-                        .document_symbols(context.crate_ref, context.file)
-                        .expect("selected file outline");
-                    assert!(outline.symbols.iter().any(|item| {
-                        item.name == "impl Selected"
-                            && item.children.iter().any(|child| child.name == "visible")
-                    }));
-                }
-                _ => unreachable!("request comes from the test vector"),
-            }
-        });
+    );
+    let project = fixture.build_project();
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route selected file")
+            .expect("target");
+        let analysis = snapshot.analysis();
+        let text = fs::read_to_string(fixture.path("src/lib.rs")).expect("read selected file");
+        let completions = analysis
+            .completions_at(
+                CompletionQuery::new(
+                    context.crate_ref,
+                    context.file,
+                    fixture.markers().position("completion").offset,
+                )
+                .with_source_text(&text),
+            )
+            .expect("saved impl completion");
+        assert!(completions.iter().any(|item| item.label == "required"));
+    });
 
-        // The request above needs no members from other.rs. Its include must still receive its
-        // first observation when we ask about Late, using the contents written here.
-        fs::write(
-            fixture.path("src/methods.rs"),
-            "pub fn wanted() -> u16 { 1u16 }\n",
-        )
-        .expect("write first include observation");
-        project.inspect(|snapshot| {
-            let context = snapshot
-                .file_context_for_path(fixture.path("src/other.rs"))
-                .expect("route unrelated file")
-                .expect("target");
-            assert_eq!(
-                snapshot
-                    .analysis()
-                    .type_at(
-                        context.crate_ref,
-                        context.file,
-                        fixture.markers().position("result").offset,
-                    )
-                    .expect("included signature")
-                    .expect("binding type")
-                    .primitive(),
-                Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U16)),
-                "{request} must leave unrelated members lazy"
-            );
-        });
-    }
+    // The request above needs no members from other.rs. Its include must still receive its
+    // first observation when we ask about Late, using the contents written here.
+    fs::write(
+        fixture.path("src/methods.rs"),
+        "pub fn wanted() -> u16 { 1u16 }\n",
+    )
+    .expect("write first include observation");
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/other.rs"))
+            .expect("route unrelated file")
+            .expect("target");
+        assert_eq!(
+            snapshot
+                .analysis()
+                .type_at(
+                    context.crate_ref,
+                    context.file,
+                    fixture.markers().position("result").offset,
+                )
+                .expect("included signature")
+                .expect("binding type")
+                .primitive(),
+            Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U16)),
+            "completion must leave unrelated members lazy"
+        );
+    });
 }
 
 #[test]
@@ -599,15 +582,6 @@ pub fn included() -> u16 { let local = 1u16; let _ = $inside$local; local }
                     .expect("local type")
                     .primitive(),
                 Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U16))
-            );
-            let outline = analysis
-                .document_symbols(context.crate_ref, context.file)
-                .expect("include outline");
-            assert!(
-                outline
-                    .symbols
-                    .iter()
-                    .any(|symbol| symbol.name == "included")
             );
             let rename = analysis
                 .rename(

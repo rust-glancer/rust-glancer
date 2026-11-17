@@ -26,8 +26,8 @@ pub use self::{
     model::{
         CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit,
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget, DocumentOutline, DocumentSymbol, DocumentationLink, Fold,
-        FoldKind, Highlight, HighlightKind, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
+        CompletionKind, CompletionTarget, DocumentSymbol, DocumentationLink, Fold, FoldKind,
+        Highlight, HighlightKind, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
         InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
         ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
         SyntheticCompletionTarget, WorkspaceSymbol,
@@ -265,14 +265,14 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    /// Returns best-effort inlay hints for one file.
+    /// Returns best-effort inlay hints in the requested source range.
     /// `max_length` is a soft character budget per type label. `None` skips length-based
     /// shortening; iterator simplification still applies, and tooltips retain concrete text.
     pub fn inlay_hints(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
         max_length: Option<usize>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         self.run_query("inlay_hints", || {
@@ -374,17 +374,6 @@ impl<'a> Analysis<'a> {
     pub fn code_actions(&self, query: CodeActionQuery<'_>) -> anyhow::Result<Vec<CodeAction>> {
         self.run_query("code_actions", || {
             query::code_action::CodeActionResolver::new(self, query).code_actions()
-        })
-    }
-
-    /// Returns a hierarchical outline for one file under the selected crate context.
-    pub fn document_symbols(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-    ) -> anyhow::Result<DocumentOutline> {
-        self.run_query("document_symbols", || {
-            query::symbols::SymbolCollector::new(self).document_symbols(crate_ref, file_id)
         })
     }
 

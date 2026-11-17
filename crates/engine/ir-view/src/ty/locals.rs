@@ -441,13 +441,13 @@ impl<'a, 'db> BodyView<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
     ) -> anyhow::Result<Vec<InferredBindingTy>> {
         let mut bindings = Vec::new();
         for (_, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, SourceSelection::written_file(file_id))
+            .bodies(crate_ref, SourceSelection::in_range(file_id, range))
             .context("read bodies for inferred bindings")?
         {
             // Function and closure parameters share a binding kind. Use the closure parameter
@@ -483,9 +483,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 if matches!(ty, Ty::Unknown) {
                     continue;
                 }
-                if range
-                    .is_some_and(|range| !range.touches(body.source_at(binding.source).span.end))
-                {
+                if !range.touches(body.source_at(binding.source).span.end) {
                     continue;
                 }
 
@@ -500,20 +498,22 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(bindings)
     }
 
-    /// Return call sites in one file that resolve to a single known function.
+    /// Return call sites from overlapping body owners that resolve to a single known function.
     ///
     /// This is the body-local view used by features that need to project declaration metadata, such
     /// as parameter names, onto concrete argument expressions without owning call resolution.
+    /// Calls retain all arguments so the caller can match parameter positions before selecting hints.
     pub fn resolved_function_calls(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
+        range: Span,
     ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
         let mut calls = Vec::new();
         for (body_ref, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, SourceSelection::written_file(file_id))
+            .bodies(crate_ref, SourceSelection::in_range(file_id, range))
             .context("read bodies for resolved calls")?
         {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
@@ -562,17 +562,18 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(calls)
     }
 
-    /// Return bodies that own body-local item groups in one file.
+    /// Return body-local item groups from owners overlapping the requested range.
     pub fn local_groups(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
+        range: Span,
     ) -> anyhow::Result<Vec<BodyLocalGroup>> {
         let mut groups = Vec::new();
         for (body_ref, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, SourceSelection::written_file(file_id))
+            .bodies(crate_ref, SourceSelection::in_range(file_id, range))
             .context("read body-local item groups")?
         {
             groups.push(BodyLocalGroup {

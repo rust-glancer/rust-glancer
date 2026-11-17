@@ -437,7 +437,7 @@ impl<'a> QueryRunner<'a> {
                 rg_std::check_cancel!(cancellation, "before inlay hint analysis");
                 let hints = current
                     .analysis
-                    .inlay_hints(target.crate_ref, target.file, Some(text_range), max_length)
+                    .inlay_hints(target.crate_ref, target.file, text_range, max_length)
                     .context("compute inlay hints")?;
 
                 let mut lsp_hints = hints

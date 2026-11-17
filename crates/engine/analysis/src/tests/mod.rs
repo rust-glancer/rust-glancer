@@ -54,9 +54,8 @@
 //! Use `check_analysis_queries` with an explicit `AnalysisQuery` list when one marker needs
 //! several queries, a line is too crowded, or an unfinished string would swallow the comment.
 //! Named markers help here: `AnalysisQuery::hover("type", "cursor")` targets `$cursor$`.
-//! Each marker name must identify one position in the fixture. For outlines, workspace symbol
-//! searches and inlay hints, use `check_document_symbols`, `check_workspace_symbols` or
-//! `check_inlay_hints` instead.
+//! Each marker name must identify one position in the fixture. For workspace symbol searches
+//! and inlay hints, use `check_workspace_symbols` or `check_inlay_hints` instead.
 //!
 //! Run a focused test with `just agent-debug test -p rg_analysis test_name`. To generate or
 //! update snapshots, add `--env UPDATE_EXPECT=1` before `test` and select one test at a time;
@@ -68,7 +67,6 @@ mod utils;
 
 mod code_actions;
 mod completions_at;
-mod document_symbols;
 mod goto_definition;
 mod goto_implementation;
 mod goto_type_definition;

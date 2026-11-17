@@ -20,10 +20,9 @@ use test_fixture::{
 use crate::{
     Analysis, CodeAction, CodeActionKind, CodeActionQuery, CodeActionTrigger,
     CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
-    CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
-    NavigationTargetKind, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SymbolAt, SymbolKind,
-    WorkspaceSymbol,
+    CompletionKind, CompletionQuery, HoverInfo, InlayHint, NavigationTarget, NavigationTargetKind,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
+    RenameResult, RenameTarget, SymbolAt, WorkspaceSymbol,
 };
 
 /// Queries written beside their markers are removed before the fixture reaches analysis.
@@ -53,26 +52,6 @@ pub(super) fn check_analysis_queries_with_fake_sysroot(
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let db = AnalysisFixtureDb::build_with_fake_sysroot(fixture);
     AnalysisQuerySnapshot::check(db, &markers, queries, expect);
-}
-
-pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
-    check_document_symbol_queries(fixture, &[query], expect);
-}
-
-pub(super) fn check_document_symbol_queries(
-    fixture: &str,
-    queries: &[DocumentSymbolsQuery],
-    expect: Expect,
-) {
-    AnalysisFixtureDb::build_from_crate(fixture_crate(fixture)).inspect(|db| {
-        let renderer = AnalysisSymbolSnapshot { db };
-        let actual = test_fixture::testonly::render_responses(
-            queries
-                .iter()
-                .map(|query| (query.title, renderer.render_document_symbols(query))),
-        );
-        expect.assert_eq(&actual);
-    });
 }
 
 pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect) {
@@ -243,27 +222,6 @@ impl AnalysisQuery {
             kind,
             completion_label_prefix: None,
         }
-    }
-}
-
-pub(super) struct DocumentSymbolsQuery {
-    title: &'static str,
-    path: &'static str,
-    target: AnalysisTarget,
-}
-
-impl DocumentSymbolsQuery {
-    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
-        Self {
-            title,
-            path,
-            target: AnalysisTarget::lib(),
-        }
-    }
-
-    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
-        self.target = AnalysisTarget::bin(package_name);
-        self
     }
 }
 
@@ -1402,30 +1360,6 @@ struct AnalysisSymbolSnapshot<'db> {
 }
 
 impl AnalysisSymbolSnapshot<'_> {
-    fn render_document_symbols(&self, query: &DocumentSymbolsQuery) -> String {
-        let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
-        let outline = self
-            .db
-            .analysis()
-            .document_symbols(target, file_id)
-            .expect("fixture document symbols should resolve");
-        let mut dump = String::new();
-
-        if outline.symbols.is_empty() {
-            writeln!(dump, "<none>").expect("string writes should not fail");
-            return dump;
-        }
-
-        self.render_document_symbol_list(
-            target.package,
-            outline.file_id,
-            &outline.symbols,
-            0,
-            &mut dump,
-        );
-        dump
-    }
-
     fn render_workspace_symbols(&self, query: &str) -> String {
         let symbols = self
             .db
@@ -1447,10 +1381,14 @@ impl AnalysisSymbolSnapshot<'_> {
 
     fn render_inlay_hints(&self, query: &InlayHintsQuery) -> String {
         let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
+        let text = SourceReader::new(self.db.semantic.db())
+            .text(file_id)
+            .expect("fixture source");
+        let range = Span::full_file(text.len() as u32);
         let hints = self
             .db
             .analysis()
-            .inlay_hints(target, file_id, None, None)
+            .inlay_hints(target, file_id, range, None)
             .expect("fixture inlay hints should resolve");
         let mut dump = String::new();
 
@@ -1463,53 +1401,6 @@ impl AnalysisSymbolSnapshot<'_> {
             self.render_inlay_hint(&hint, &mut dump);
         }
         dump
-    }
-
-    fn render_document_symbol_list(
-        &self,
-        package: PackageSlot,
-        file_id: FileId,
-        symbols: &[DocumentSymbol],
-        depth: usize,
-        dump: &mut String,
-    ) {
-        for symbol in symbols {
-            self.render_document_symbol(package, file_id, symbol, depth, dump);
-        }
-    }
-
-    fn render_document_symbol(
-        &self,
-        package: PackageSlot,
-        file_id: FileId,
-        symbol: &DocumentSymbol,
-        depth: usize,
-        dump: &mut String,
-    ) {
-        let indent = "  ".repeat(depth);
-        let selection = if symbol.selection_span == symbol.span {
-            String::new()
-        } else {
-            format!(
-                " selection {}",
-                self.render_source_span(file_id, symbol.selection_span)
-            )
-        };
-        let label = if symbol.kind == SymbolKind::Impl {
-            symbol.name.clone()
-        } else {
-            format!("{} {}", symbol.kind, symbol.name)
-        };
-
-        writeln!(
-            dump,
-            "{indent}{label} @ {}{}",
-            self.render_source_span(file_id, symbol.span),
-            selection
-        )
-        .expect("string writes should not fail");
-
-        self.render_document_symbol_list(package, file_id, &symbol.children, depth + 1, dump);
     }
 
     fn render_workspace_symbol(&self, symbol: &WorkspaceSymbol, dump: &mut String) {

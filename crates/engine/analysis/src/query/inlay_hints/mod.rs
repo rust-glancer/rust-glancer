@@ -41,7 +41,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let source = self.analysis.sources;
         let edition = self.analysis.view_db().crate_edition(crate_ref)?;
@@ -66,7 +66,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
         renderer: &TypeRenderer<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
@@ -100,16 +100,16 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
         source: &SourceReader<'_>,
         renderer: &TypeRenderer<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let mut hints = UniqueVec::new();
         for expr in BodyStructureView::new(self.analysis.view_db())
-            .method_chain_expr_tys(crate_ref, file_id)?
+            .method_chain_expr_tys(crate_ref, file_id, range)?
         {
             let expr_span = expr.span();
-            if range.is_some_and(|range| !range.touches(expr_span.end)) {
+            if !range.touches(expr_span.end) {
                 continue;
             }
             if !self.should_show_method_chain_expr_hint(
@@ -148,14 +148,14 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
         source: &SourceReader<'_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let members = MemberView::new(self.analysis.view_db());
         let edition = syntax_edition(self.analysis.view_db().crate_edition(crate_ref)?);
         let mut hints = UniqueVec::new();
-        for call in
-            BodyView::new(self.analysis.view_db()).resolved_function_calls(crate_ref, file_id)?
+        for call in BodyView::new(self.analysis.view_db())
+            .resolved_function_calls(crate_ref, file_id, range)?
         {
             let Some(function) = members
                 .function(call.function())
@@ -178,7 +178,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     continue;
                 }
                 let arg_span = arg.span();
-                if range.is_some_and(|range| !range.touches(arg_span.start)) {
+                if !range.touches(arg_span.start) {
                     continue;
                 }
                 let arg_text = source.text_for_span(call.file_id(), arg_span)?;
@@ -242,7 +242,6 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     // Recover the name already visible in `&user`, `user.clone()`, or `model.user`.
     // A plain identifier needs only lexing; wrappers and paths need the argument's syntax tree.
-    // Saved and edited text use the same rules without retaining trees or adding IR metadata.
     fn arg_hint_name(text: &str, edition: Edition) -> Option<Cow<'_, str>> {
         let text = text.trim();
         if matches!(

@@ -20,8 +20,8 @@ use crate::{
 };
 
 /// Owner metadata identifies bodies without lowering or inferring them. Enumerating methods can
-/// still open their trait/impl member stores, so file and cursor requests narrow owners first;
-/// a known `BodyKey` goes straight to its owner.
+/// still open their trait/impl member stores, so source requests narrow owners first by file,
+/// cursor, or range; a known `BodyKey` goes straight to its owner.
 #[derive(Clone)]
 pub struct BodyReader<'db> {
     db: &'db QueryContext<'db>,
@@ -143,6 +143,13 @@ impl<'db> BodyReader<'db> {
                 owner: root.owner,
             })
             .collect();
+        self.acquire_bodies(keys)
+    }
+
+    fn acquire_bodies(
+        &self,
+        keys: Vec<BodyKey>,
+    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
         // Selection happens before inference. Ajika owns the batch so parallel owners retain
         // their individual dependency frames and share any candidate queries they demand.
         let profile = ProfileThreadContext::capture();
@@ -193,17 +200,23 @@ impl<'db> BodyReader<'db> {
         offset: u32,
         owner_start: Option<u32>,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
-        let selection = SourceSelection::at(file, owner_start.unwrap_or(offset));
+        let Some(owner_start) = owner_start else {
+            return self.bodies(krate, SourceSelection::at(file, offset));
+        };
+        let selection = SourceSelection::at(file, owner_start);
         let mut selected = Vec::new();
         for owner in self.owners(krate, selection)? {
             let span = self
                 .declaration_location(krate, owner.source, owner.location)?
                 .span;
-            if span.touches(offset) || owner_start == Some(span.start) {
-                selected.push(owner.owner);
+            if span.touches(offset) || owner_start == span.start {
+                selected.push(BodyKey {
+                    krate,
+                    owner: owner.owner,
+                });
             }
         }
-        self.bodies_matching(krate, selection, &|owner| selected.contains(&owner.owner))
+        self.acquire_bodies(selected)
     }
 
     /// Read the initializer's computed value without loading source maps.

@@ -13,13 +13,15 @@ use rg_def_map::{
     GeneratedSourceStoreId,
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, FileId, ItemOwner, ItemStoreId, ItemStoreRef};
+use rg_item_tree::SourceLocations as _;
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, DeclarationSourceResolver,
-    ItemStore, LangItemIndex, SourceSelection, TargetDeclarationReader, target_declarations,
+    ItemSourceView, ItemStore, LangItemIndex, SourceSelection, TargetDeclarationReader,
+    target_declarations,
 };
 
 const OWNERS_PER_PAGE: usize = 64;
@@ -173,8 +175,8 @@ pub fn associated_declarations(
     AssociatedDeclarations::new(db, items, lang_items, sources, files, bodies).map(Some)
 }
 
-/// Gather body metadata through the same source selection used by signature scans. Owners are
-/// restricted to the selected file; matching an individual body range belongs to the caller.
+/// Select body owners before preparing or inferring them. Header bounds first narrow trait/impl
+/// stores; declaration bounds then select individual functions and initializers within them.
 pub fn body_owners(
     db: &QueryContext<'_>,
     krate: CrateRef,
@@ -203,7 +205,20 @@ pub fn body_owners(
                 .filter(in_selected_file),
         );
     }
-    Ok(owners)
+    let Some(bounds) = selection.bounds() else {
+        return Ok(owners);
+    };
+    let mut selected = Vec::new();
+    for owner in owners {
+        let sources = ItemSourceView::new(db, krate, owner.source)?;
+        if sources
+            .location(owner.location)
+            .is_some_and(|location| location.span.touches_span(bounds))
+        {
+            selected.push(owner);
+        }
+    }
+    Ok(selected)
 }
 
 /// Direct body identity already contains its member store; do not enumerate neighboring owners.

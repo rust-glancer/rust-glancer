@@ -3,32 +3,33 @@ use rg_ir_view::{
     SymbolKind,
     body::{BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView},
     display::syntax::SyntaxRenderer,
+    symbol::{SourceOutlineNode, SymbolView},
 };
 use rg_parse::SourceReader;
 
 use crate::{
     Analysis,
-    model::{DocumentSymbol, InlayHint, InlayHintKind, InlayHintPosition},
+    model::{InlayHint, InlayHintKind, InlayHintPosition},
 };
 
 pub(super) fn closing_brace_hints(
     analysis: &Analysis<'_>,
     crate_ref: CrateRef,
     file_id: FileId,
-    range: Option<Span>,
+    range: Span,
     source: &SourceReader<'_>,
 ) -> anyhow::Result<Vec<InlayHint>> {
     const MIN_LINE_DELTA: u32 = 20;
 
     let mut hints = Vec::new();
-    for candidate in ClosingBraceCandidate::collect(analysis, crate_ref, file_id, source)? {
+    for candidate in ClosingBraceCandidate::collect(analysis, crate_ref, file_id, range, source)? {
         let index = source.line_index(candidate.file_id)?;
         let open_line = index.position(candidate.open_offset()).line;
         let close_line = index.position(candidate.close_offset()).line;
         if close_line.saturating_sub(open_line) < MIN_LINE_DELTA {
             continue;
         }
-        if range.is_some_and(|range| !range.touches(candidate.close_span.end)) {
+        if !range.touches(candidate.close_span.end) {
             continue;
         }
 
@@ -59,15 +60,17 @@ impl ClosingBraceCandidate {
         analysis: &Analysis<'_>,
         crate_ref: CrateRef,
         file_id: FileId,
+        range: Span,
         source: &SourceReader<'_>,
     ) -> anyhow::Result<Vec<Self>> {
         let mut candidates = Vec::new();
-        let outline = analysis.document_symbols(crate_ref, file_id)?;
-        for symbol in outline.symbols {
-            Self::collect_document_symbol(outline.file_id, &symbol, &mut candidates);
+        let outline =
+            SymbolView::new(analysis.view_db()).source_outline(crate_ref, file_id, range)?;
+        for symbol in outline {
+            Self::collect_outline_node(&symbol, &mut candidates);
         }
-        for block in
-            BodyStructureView::new(analysis.view_db()).closing_brace_blocks(crate_ref, file_id)?
+        for block in BodyStructureView::new(analysis.view_db())
+            .closing_brace_blocks(crate_ref, file_id, range)?
         {
             let label = Self::body_block_label(analysis, crate_ref, &block, source)?;
             if let Some(candidate) = Self::from_block_span(block.file_id(), block.span(), label) {
@@ -77,19 +80,17 @@ impl ClosingBraceCandidate {
         Ok(candidates)
     }
 
-    fn collect_document_symbol(
-        file_id: FileId,
-        symbol: &DocumentSymbol,
-        candidates: &mut Vec<Self>,
-    ) {
-        if let Some(label) = Self::symbol_label(&symbol.name, symbol.kind)
-            && let Some(candidate) = Self::from_block_span(file_id, symbol.span, label)
+    fn collect_outline_node(symbol: &SourceOutlineNode, candidates: &mut Vec<Self>) {
+        let declaration = symbol.declaration();
+        if let Some(label) = Self::symbol_label(declaration.name(), declaration.kind())
+            && let Some(candidate) =
+                Self::from_block_span(declaration.file_id(), declaration.span(), label)
         {
             candidates.push(candidate);
         }
 
-        for child in &symbol.children {
-            Self::collect_document_symbol(file_id, child, candidates);
+        for child in symbol.children() {
+            Self::collect_outline_node(child, candidates);
         }
     }
 

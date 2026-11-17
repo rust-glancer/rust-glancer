@@ -27,5 +27,5 @@ pub use self::{
     references::ReferenceLocation,
     rename::{RenameEdit, RenameResult, RenameTarget},
     symbol::SymbolAt,
-    symbols::{DocumentOutline, DocumentSymbol, WorkspaceSymbol},
+    symbols::{DocumentSymbol, WorkspaceSymbol},
 };

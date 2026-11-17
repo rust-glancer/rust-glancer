@@ -72,8 +72,9 @@ pub fn neighbor() { let adjacent = 1u32; let _ = adjacent; }
                         "{name}"
                     );
                 }
+                let range = Span::full_file(text.len() as u32);
                 let hints = analysis
-                    .inlay_hints(target.0, target.1, None, None)
+                    .inlay_hints(target.0, target.1, range, None)
                     .expect("file hints");
                 let initialized = text.find("initialized =").expect("initializer binding") as u32;
                 assert!(
