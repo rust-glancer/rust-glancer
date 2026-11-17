@@ -2,7 +2,7 @@
 //!
 //! A reference lookup starts by resolving the cursor to one or more declarations. `ReferenceSubject`
 //! stores those declarations and their source locations. `ReferenceSearchHints` stores optional
-//! shortcuts, for example "this local binding only needs its own file" or "candidate references
+//! shortcuts, for example "this local binding only needs its owning body" or "candidate references
 //! must be spelled `field`".
 //!
 //! Hints are only used to skip work. The actual reference decision still comes from resolving a
@@ -15,15 +15,17 @@
 
 use std::collections::HashSet;
 
-use rg_ir_model::{CrateRef, DefMapRef, FileId, SemanticItemRef, Span, identity::DeclarationRef};
+use rg_ir_model::{
+    BodyKey, CrateRef, DefMapRef, FileId, SemanticItemRef, Span, identity::DeclarationRef,
+};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::declaration::{Declaration, DeclarationView},
     source::{IndexedSourceSurface, ReferenceSourceSelection, SourceOccurrenceView},
 };
-use rg_std::{ExpectedUnique, UniqueVec};
+use rg_std::UniqueVec;
 
-use super::search::{ReferenceScanTarget, ReferenceSearchLabel};
+use super::search::ReferenceSearchLabel;
 use crate::{model::SymbolAt, source_symbol::SourceSymbol};
 
 /// Request-local declaration identity for one reference lookup.
@@ -42,7 +44,7 @@ impl ReferenceSubject {
         let mut declaration_locations = Vec::new();
         let mut exact_labels = UniqueVec::new();
         let mut exact_labels_supported = true;
-        let mut local_scan_target = ExpectedUnique::new();
+        let mut local_owners = Some(UniqueVec::new());
 
         for declaration_ref in declarations {
             let declaration = declaration_view.declaration(*declaration_ref)?;
@@ -83,18 +85,15 @@ impl ReferenceSubject {
                 exact_labels_supported = false;
             }
 
-            // A local binding copied through a macro still belongs to its source file, even when
-            // its declaration cannot be edited. Keep that scope separate from editable occurrences.
-            // Every selected declaration must establish the same local scope to narrow the search.
-            if let Some(declaration) = &declaration
-                && ReferenceSearchHints::is_body_local_declaration(declaration_ref)
-            {
-                local_scan_target.push(ReferenceScanTarget {
-                    crate_ref: declaration.crate_ref(),
-                    file_id: Some(declaration.file_id()),
-                });
-            } else {
-                local_scan_target = ExpectedUnique::Ambiguous;
+            // Body identity survives expansion and includes. Its whole worklist contains nested
+            // declarations too; a physical file alone would both scan unrelated functions and
+            // miss uses in an included file. Keep every owner represented by a macro argument.
+            if let Some(owners) = &mut local_owners {
+                if let DefMapRef::Body(body) = declaration_ref.origin() {
+                    owners.push(body.key());
+                } else {
+                    local_owners = None;
+                }
             }
 
             // Navigation may lead to a whole macro invocation. Only an actual source occurrence
@@ -123,7 +122,7 @@ impl ReferenceSubject {
         };
         let hints = ReferenceSearchHints {
             exact_labels,
-            local_scan_target: local_scan_target.into_option(),
+            local_owners: local_owners.map(UniqueVec::into_vec),
         };
         Ok((subject, hints))
     }
@@ -140,7 +139,7 @@ impl ReferenceSubject {
 /// Request-local shortcuts that can narrow a reference scan without changing semantic matching.
 pub(super) struct ReferenceSearchHints {
     exact_labels: UniqueVec<ReferenceSearchLabel>,
-    local_scan_target: Option<ReferenceScanTarget>,
+    local_owners: Option<Vec<BodyKey>>,
 }
 
 impl ReferenceSearchHints {
@@ -174,8 +173,8 @@ impl ReferenceSearchHints {
         }
     }
 
-    pub(super) fn local_scan_target(&self) -> Option<ReferenceScanTarget> {
-        self.local_scan_target
+    pub(super) fn local_owners(&self) -> Option<&[BodyKey]> {
+        self.local_owners.as_deref()
     }
 
     /// Skip unrelated spellings before semantic resolution. Imported aliases with another spelling
@@ -226,19 +225,6 @@ impl ReferenceSearchHints {
                 SourceOccurrenceView::new(db).expr_source_label(*expr)
             }
             SymbolAt::Declaration { .. } | SymbolAt::FunctionBody { .. } => Ok(None),
-        }
-    }
-
-    fn is_body_local_declaration(declaration: &DeclarationRef) -> bool {
-        match *declaration {
-            DeclarationRef::Module(module) => matches!(module.origin, DefMapRef::Body(_)),
-            DeclarationRef::LocalDef(local_def) => matches!(local_def.origin, DefMapRef::Body(_)),
-            DeclarationRef::Item(item) => matches!(item.origin(), DefMapRef::Body(_)),
-            DeclarationRef::Field(field) => matches!(field.owner.origin, DefMapRef::Body(_)),
-            DeclarationRef::EnumVariant(variant) => {
-                matches!(variant.origin, DefMapRef::Body(_))
-            }
-            DeclarationRef::BodyBinding(_) => true,
         }
     }
 }

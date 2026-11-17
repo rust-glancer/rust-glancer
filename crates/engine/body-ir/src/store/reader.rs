@@ -124,38 +124,38 @@ impl<'db> BodyReader<'db> {
             .into_iter())
     }
 
-    pub fn bodies_matching(
+    pub fn bodies(
         &self,
         krate: CrateRef,
         selection: SourceSelection,
-        selected: &dyn Fn(&BodyOwnerData) -> bool,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
         let keys: Vec<_> = self
             .owners(krate, selection)?
-            .filter(|root| selected(root))
             .map(|root| BodyKey {
                 krate,
                 owner: root.owner,
             })
             .collect();
-        self.acquire_bodies(keys)
+        self.bodies_for_owners(&keys)
     }
 
-    fn acquire_bodies(
+    /// Read known worklists directly, including their nested bodies. No source-owner discovery
+    /// is needed when a resolved declaration already supplies the owning keys.
+    pub fn bodies_for_owners(
         &self,
-        keys: Vec<BodyKey>,
+        keys: &[BodyKey],
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
         // Selection happens before inference. Ajika owns the batch so parallel owners retain
         // their individual dependency frames and share any candidate queries they demand.
         let profile = ProfileThreadContext::capture();
         self.db
-            .parallel_map(&keys, |db, &key| {
+            .parallel_map(keys, |db, &key| {
                 let _profile = profile.enter();
                 body_store(db, key).map(|_| ())
             })
             .map_err(ReadError::Query)?;
         let mut bodies = Vec::new();
-        for key in keys {
+        for &key in keys {
             if let Some(owner) = self.owner(key)? {
                 bodies.extend(owner.body_views().map(|(id, view)| (key.body(id), view)));
             }
@@ -176,14 +176,6 @@ impl<'db> BodyReader<'db> {
                     "declaration occurrence is absent",
                 ))
             })
-    }
-
-    pub fn bodies(
-        &self,
-        krate: CrateRef,
-        selection: SourceSelection,
-    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
-        self.bodies_matching(krate, selection, &|_| true)
     }
 
     /// Speculative completion syntax may end before the cursor. Its declaration start can still
@@ -211,7 +203,7 @@ impl<'db> BodyReader<'db> {
                 });
             }
         }
-        self.acquire_bodies(selected)
+        self.bodies_for_owners(&selected)
     }
 
     /// Read the initializer's computed value without loading source maps.

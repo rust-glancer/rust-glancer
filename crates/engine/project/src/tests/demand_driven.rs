@@ -139,6 +139,9 @@ fn demo() {
     let bind!($binding$value) = 1u8;
     let _ = $usage$value;
 }
+fn neighbor() { let value = 4u8; let _ = value; }
+impl Value { fn same_file() { let value = 5u8; let _ = value; } }
+struct Value;
 //- /src/other.rs
 fn first() { let value = 2u8; let _ = value; }
 fn second() { let value = 3u8; let _ = value; }
@@ -163,7 +166,7 @@ fn second() { let value = 3u8; let _ = value; }
             },
         }];
         // Both the copied binding and its ordinary use identify the same local. Whether the
-        // declaration can be edited must not send either search into unrelated files.
+        // declaration can be edited must not send either search into unrelated owners.
         for marker in ["binding", "usage"] {
             assert_eq!(
                 analysis
