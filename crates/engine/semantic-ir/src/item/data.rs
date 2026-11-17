@@ -1,7 +1,7 @@
 use rg_def_map::ItemSource;
 use rg_ir_model::{
-    AssocItemId, EvaluatedConstValue, FileId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef,
-    ModuleRef, Mutability, Span, TraitDefRef, TypeDefRef,
+    AssocItemId, EvaluatedConstValue, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
+    Mutability, SourceId, TraitDefRef, TypeDefRef,
 };
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ImplPolarity, ParamKind,
@@ -17,7 +17,7 @@ use super::signature::{ConstSignature, FunctionSignature, TypeAliasSignature};
 #[derive(Debug, Clone, Copy)]
 pub struct FieldData<'a> {
     pub owner_module: ModuleRef,
-    pub file_id: FileId,
+    pub source: ItemSource,
     pub field: &'a FieldItem,
 }
 
@@ -29,7 +29,7 @@ pub struct FieldData<'a> {
 pub struct EnumVariantData<'a> {
     pub owner: TypeDefRef,
     pub owner_module: ModuleRef,
-    pub file_id: FileId,
+    pub source: ItemSource,
     pub variant: &'a EnumVariantItem,
 }
 
@@ -142,8 +142,8 @@ impl ImplData {
 pub struct FunctionData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
-    pub span: Span,
-    pub name_span: Option<Span>,
+    pub location: SourceId,
+    pub name_location: Option<SourceId>,
     pub owner: ItemOwner,
     pub name: Name,
     pub visibility: VisibilityLevel,
@@ -165,8 +165,8 @@ impl FunctionData {
 pub struct TypeAliasData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
-    pub span: Span,
-    pub name_span: Option<Span>,
+    pub location: SourceId,
+    pub name_location: Option<SourceId>,
     pub owner: ItemOwner,
     pub name: Name,
     pub visibility: VisibilityLevel,
@@ -179,8 +179,8 @@ pub struct TypeAliasData {
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
-    pub span: Span,
-    pub name_span: Option<Span>,
+    pub location: SourceId,
+    pub name_location: Option<SourceId>,
     pub owner: ItemOwner,
     pub name: Name,
     pub visibility: VisibilityLevel,
@@ -199,8 +199,8 @@ pub struct ConstData {
 pub struct StaticData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
-    pub span: Span,
-    pub name_span: Option<Span>,
+    pub location: SourceId,
+    pub name_location: Option<SourceId>,
     pub owner: ModuleRef,
     pub name: Name,
     pub visibility: VisibilityLevel,

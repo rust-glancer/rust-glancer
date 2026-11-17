@@ -83,7 +83,7 @@ impl ReferenceSourceSelection {
         if !labels.iter().any(|label| text.contains(label.as_str())) && !text.contains("include") {
             return Ok(owners
                 .clone()
-                .filter(|owner| !owner.written)
+                .filter(|owner| owner.source.as_item_tree().is_none())
                 .map(|owner| owner.owner)
                 .collect());
         }
@@ -124,31 +124,31 @@ impl ReferenceSourceSelection {
         }
         for owner in owners.clone() {
             rg_std::check_cancel!(db, "reference owner selection");
+            let span = db.source_span(DefMapRef::Crate(krate), owner.source, owner.location)?;
             // Generated owners and included source cannot be ruled out from the invocation's
             // written tokens. Keep them even without a matching label in the owner's span.
-            if !owner.written || Self::contains(&tokens, "include", owner.span) {
+            if owner.source.as_item_tree().is_none() || Self::contains(&tokens, "include", span) {
                 selected.insert(owner.owner);
                 continue;
             }
             for label in &labels {
-                if !Self::contains(&tokens, label, owner.span) {
+                if !Self::contains(&tokens, label, span) {
                     continue;
                 }
                 // A macro can move an argument into a different impl or module. Written owner
                 // context proves nothing about the expansion's interpretation of that token.
-                if Self::contains(&macro_arguments, label, owner.span) {
+                if Self::contains(&macro_arguments, label, span) {
                     selected.insert(owner.owner);
                     break;
                 }
                 // `Self` and relative module paths depend on where the token is written. A nested
                 // impl or module may change that scope, so only use the outer scope without one.
                 let plausible = match label.as_str() {
-                    "Self" if !Self::contains(&tokens, "impl", owner.span) => {
+                    "Self" if !Self::contains(&tokens, "impl", span) => {
                         self.accepts_self(db, krate, owner)?
                     }
                     "self" | "super" | "crate"
-                        if !self.modules.is_empty()
-                            && !Self::contains(&tokens, "mod", owner.span) =>
+                        if !self.modules.is_empty() && !Self::contains(&tokens, "mod", span) =>
                     {
                         self.accepts_module(db, owner.module, label)?
                     }

@@ -82,12 +82,16 @@ impl ReferenceSubject {
                 exact_labels_supported = false;
             }
 
-            if let Some(declaration) = declaration {
+            // Navigation may lead to a whole macro invocation. Only an actual source occurrence
+            // can be projected back into references, which rename also consumes as editable text.
+            if let Some(declaration) = declaration
+                && let Some(span) = declaration.editable_span()
+            {
                 declaration_locations.push(ReferenceSourceLocation {
                     declaration: *declaration_ref,
                     crate_ref: declaration.crate_ref(),
                     file_id: declaration.file_id(),
-                    span: declaration.selection_span(),
+                    span,
                 });
             }
         }

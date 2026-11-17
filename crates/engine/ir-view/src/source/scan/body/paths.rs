@@ -18,7 +18,7 @@ use rg_body_ir::{
     BodyAssociatedPathPrefix, BodyPath, BodyView, ExprKind, PatData, RecordExprField,
 };
 use rg_ir_model::{BodyRef, BodySource, ExprId, FieldKey, FileId, Path, ScopeId, Span};
-use rg_item_tree::{TypePath, TypeRef};
+use rg_item_tree::{SourceLocations as _, TypePath, TypeRef};
 
 use super::{
     BodySourceCandidate, ValueReferenceSource, ValueReferenceSurface, sites::BodyScanSites,
@@ -83,9 +83,10 @@ impl<'a> TypePathSourceScanner<'a> {
         }
 
         for (idx, segment) in path.segments.iter().enumerate() {
-            if self.offset_matches(segment.span)
-                && self.body.contains_source_span(source, segment.span)
-            {
+            let Some(span) = self.body.source_items().editable_span(segment.location) else {
+                continue;
+            };
+            if self.offset_matches(span) && self.body.contains_source_span(source, span) {
                 let file_id = source.file_id;
                 let Some(def_map_path) = path.as_def_map_path_prefix(idx) else {
                     continue;
@@ -96,14 +97,14 @@ impl<'a> TypePathSourceScanner<'a> {
                     path: def_map_path,
                     type_ref: self.offset.map(|_| {
                         TypeRef::Path(TypePath {
-                            source_span: path.source_span,
+                            location: path.location,
                             absolute: path.absolute,
                             anchor: path.anchor.clone(),
                             segments: path.segments[..=idx].to_vec(),
                         })
                     }),
                     file_id,
-                    span: segment.span,
+                    span,
                 });
             }
         }

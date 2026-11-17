@@ -210,7 +210,13 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         let Some(local) = def_map.local_impl(data.local_impl.local_impl) else {
                             continue;
                         };
-                        if local.file_id == file && local.span == saved_span {
+                        if local.file_id == file
+                            && self
+                                .saved_bodies
+                                .declaration_location(crate_ref, local.source, local.location)?
+                                .span
+                                == saved_span
+                        {
                             saved_impl.push(impl_ref);
                         }
                     }
@@ -260,10 +266,11 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             source_items: vec![root],
                             bindings: Vec::new(),
                         }];
+                        let source_items = items;
                         let items = LocalItemSource {
                             source,
                             scopes: &scopes,
-                            items: &items,
+                            items: &source_items,
                         }
                         .collect(body_ref, self.def_map, &self.cancellation)
                         .context("collect current impl declarations")?;
@@ -283,6 +290,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             impl_ref,
                             fallback_module,
                             items,
+                            source_items,
                             role: if body_owns_cursor {
                                 CurrentImplRole::Members
                             } else {

@@ -1,8 +1,14 @@
-use std::collections::HashMap;
+//! Source identities for declarations and the provenance retained from macro expansion.
+//!
+//! An item source tells readers which file, expansion, or body owns a declaration's occurrence
+//! IDs. Generated declarations also need the connection back to input tokens: their parsed syntax
+//! is temporary, and its offsets are not positions that an editor can navigate to or edit.
+
+use std::collections::{HashMap, HashSet};
 
 use rg_arena::Arena;
-use rg_ir_model::{BodyRef, FileId, Span};
-use rg_item_tree::{ItemNode, ItemTreeId, ItemTreeRef};
+use rg_ir_model::{BodyRef, FileId, PackageSlot, SourceId};
+use rg_item_tree::{DeclarationSourceStore, ItemNode, ItemTreeId, ItemTreeRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -10,6 +16,8 @@ use wincode::{SchemaRead, SchemaWrite};
 ///
 /// The id remains part of compact source provenance after the payload is discarded, just as an
 /// [`ItemTreeRef`] remains useful after the transient ItemTree phase has finished.
+/// It selects the same expansion slot in [`GeneratedItemStore`] during construction and in
+/// [`GeneratedSourceStore`] after declaration meaning has been lowered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
 #[shrink(leaf)]
@@ -45,6 +53,14 @@ pub struct BodyItemSourceRef {
 }
 
 /// Durable source identity for definitions collected into DefMap and later IR layers.
+///
+/// A declaration carries this alongside its [`SourceId`] values. `kind` tells a source reader
+/// whether to open a file table, follow a generated expansion, or read a body's table. Looking up
+/// an ID using `file_id` alone is not enough: two macro invocations in that file have separate
+/// generated tables whose IDs can overlap.
+///
+/// The item index inside `kind` selects a declaration payload. It is not the owner index in a
+/// `SourceId`; source owners are allocated separately while lowering that payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct ItemSource {
@@ -139,12 +155,12 @@ pub enum ItemSourceKind {
 
 /// Item-tree-shaped payload produced for one macro expansion or synthetic declaration.
 ///
-/// This data is intentionally construction-only. DefMap uses it while collecting scopes and
-/// Semantic IR copies the declaration facts it needs before the surrounding store is dropped.
+/// DefMap uses this while collecting scopes, and Semantic IR copies the declaration facts it
+/// needs. The item payload is then dropped; `locations` moves into [`GeneratedSourceStore`].
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
 pub(crate) struct GeneratedSourceData {
     pub(crate) origin_file_id: FileId,
-    pub(crate) origin_span: Span,
+    pub(crate) locations: GeneratedLocations,
     pub(crate) origin_source: ItemTreeRef,
     pub(crate) top_level: Vec<ItemTreeId>,
     pub(crate) items: Arena<ItemTreeId, ItemNode>,
@@ -172,6 +188,19 @@ pub struct GeneratedItemStore {
 }
 
 impl GeneratedItemStore {
+    /// Keep provenance after Semantic IR has copied the generated declaration meaning. Preserve
+    /// expansion slot order so existing [`GeneratedSourceId`] values still select the same source.
+    pub fn into_sources(self) -> GeneratedSourceStore {
+        GeneratedSourceStore {
+            sources: self
+                .sources
+                .into_vec()
+                .into_iter()
+                .map(|source| source.locations)
+                .collect(),
+        }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.sources.is_empty() && self.associated_macro_expansions.is_empty()
     }
@@ -203,5 +232,97 @@ impl GeneratedItemStore {
         self.associated_macro_expansions
             .get(&call)
             .map(Vec::as_slice)
+    }
+}
+
+/// The input-token origin of one occurrence recorded while lowering generated syntax.
+///
+/// This stores a token reference, not a byte range in either the generated text or its input file.
+/// A saved source view resolves it through the input file's occurrence table. If that file moves
+/// without changing its declaration structure, the token reference still yields the new position.
+///
+/// A copied macro argument can retain its own origin. Template syntax instead uses the invocation
+/// as a navigation fallback and has `editable: false`. For example, expanding `make!(User)` to
+/// `struct User; struct Generated;` gives `User` an input occurrence and `Generated` a fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub struct GeneratedLocation {
+    pub origin: rg_tt::Span,
+    pub editable: bool,
+}
+
+impl GeneratedLocation {
+    pub fn input_file(self) -> (PackageSlot, FileId) {
+        let anchor = self.origin.anchor;
+        (
+            PackageSlot(anchor.package as usize),
+            FileId::from_raw(anchor.file_id.raw_file_id()),
+        )
+    }
+}
+
+/// An expansion's occurrences and the file tables needed to interpret them.
+///
+/// Several items can share this table, such as a macro producing a struct and its impl. The input
+/// file list is collected once when the table is built. Opening a view for each generated item
+/// then loads only those file tables instead of scanning every occurrence in the expansion again.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct GeneratedExpansionLocations {
+    locations: DeclarationSourceStore<GeneratedLocation>,
+    input_files: Vec<(PackageSlot, FileId)>,
+}
+
+impl GeneratedExpansionLocations {
+    pub(crate) fn new(locations: DeclarationSourceStore<GeneratedLocation>) -> Self {
+        // Many declarations share one expansion. Discover its input files once, so reading each
+        // declaration's source does not revisit every occurrence in the expansion.
+        let mut input_files = locations
+            .entries()
+            .map(|location| location.input_file())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        // Keep the persisted representation stable regardless of hash iteration order.
+        input_files.sort_unstable();
+        Self {
+            locations,
+            input_files,
+        }
+    }
+
+    pub fn get(&self, occurrence: SourceId) -> Option<&GeneratedLocation> {
+        self.locations.get(occurrence)
+    }
+
+    pub fn input_files(&self) -> &[(PackageSlot, FileId)] {
+        &self.input_files
+    }
+}
+
+/// Choose whether generated declarations own occurrence mappings or reuse another item's IDs.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum GeneratedLocations {
+    /// Lowered expansion syntax has its own occurrence IDs, each mapped back to input tokens.
+    Expansion(GeneratedExpansionLocations),
+    /// A builtin derive copies bounds from its input declaration. Those occurrences still
+    /// belong to that input's source table; invented paths have no source occurrence.
+    /// A reader follows this source without changing the copied IDs.
+    Inherited(ItemSource),
+}
+
+/// Source mappings retained for a target after generated item payloads have been released.
+///
+/// [`GeneratedSourceId`] selects an expansion or inherited source here; [`SourceId`] selects an
+/// occurrence inside that source. Keeping this store separate from declaration meaning lets a
+/// source reader acquire provenance only when it needs physical positions.
+#[derive(Debug, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct GeneratedSourceStore {
+    sources: Vec<GeneratedLocations>,
+}
+
+impl GeneratedSourceStore {
+    pub fn get(&self, source: GeneratedSourceId) -> Option<&GeneratedLocations> {
+        self.sources.get(source.0)
     }
 }

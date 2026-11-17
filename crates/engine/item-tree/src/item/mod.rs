@@ -1,5 +1,5 @@
 use rg_cfg_eval::CfgExpr;
-use rg_ir_model::{FileId, Span};
+use rg_ir_model::{FileId, SourceId};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -87,8 +87,8 @@ pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.
     pub name: Option<Name>,
-    /// Source span of the declaration name, when the item has one.
-    pub name_span: Option<Span>,
+    /// Source location of the declaration name, when the item has one.
+    pub name_location: Option<SourceId>,
     pub visibility: VisibilityLevel,
     /// Target-dependent cfg gates attached to the item.
     pub cfg: CfgExpr,
@@ -100,45 +100,32 @@ pub struct ItemNode {
     pub user_facing_attrs: UserFacingAttrs,
     /// File where this item is declared.
     pub file_id: FileId,
-    /// Source span of the declaration.
-    pub span: Span,
+    /// Source location of the declaration.
+    pub location: SourceId,
 }
 
 impl ItemNode {
-    /// Creates an item node from source-like syntax that does not have target-specific cfg state.
-    pub fn source(
-        kind: ItemKind,
-        name: Option<Name>,
-        name_span: Option<Span>,
-        visibility: VisibilityLevel,
-        docs: Option<Documentation>,
-        span: Span,
-        file_id: FileId,
-    ) -> Self {
-        Self::new(kind, name, name_span, visibility, docs, span, file_id)
-    }
-
     /// Creates a fully-populated item node from already-lowered parts.
     pub fn new(
         kind: ItemKind,
         name: Option<Name>,
-        name_span: Option<Span>,
+        name_location: Option<SourceId>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        span: Span,
+        location: SourceId,
         file_id: FileId,
     ) -> Self {
         Self {
             kind,
             name,
-            name_span,
+            name_location,
             visibility,
             cfg: CfgExpr::default(),
             lang_item: None,
             docs,
             user_facing_attrs: UserFacingAttrs::default(),
             file_id,
-            span,
+            location,
         }
     }
 }

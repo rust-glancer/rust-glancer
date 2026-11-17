@@ -5,12 +5,16 @@
 //! indexed occurrences or a completion site.
 
 use anyhow::Context as _;
+use rg_body_ir::DeclarationSourceView;
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, ImplRef,
-    ItemOwner, SemanticItemRef, Span, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    ItemOwner, SemanticItemRef, SourceId, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
 };
-use rg_item_tree::{FieldList, GenericParams, TypeBound, TypeRef, WherePredicate};
+use rg_item_tree::{
+    FieldList, GenericParams, SourceLocations as _, TypeBound, TypeRef, WherePredicate,
+};
 use rg_semantic_ir::{
     ConstData, EnumData, FunctionData, ImplData, ItemStoreQuery, SemanticItemView, StaticData,
     StructData, TraitData, TypeAliasData, TypePathContext, UnionData,
@@ -54,51 +58,71 @@ where
 
     #[rg_std::cancelable("signature scan", token = self.db)]
     pub(super) fn scan(mut self) -> anyhow::Result<C> {
-        self.scan_items().context("scan signature items")?;
-        Ok(self.collector)
-    }
-
-    fn scan_items(&mut self) -> anyhow::Result<()> {
         for item in self.items {
             rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(item.source().file_id) {
+            if self
+                .collector
+                .selected_file()
+                .is_some_and(|file| file != item.source().file_id)
+            {
                 continue;
             }
-            match item.item() {
-                SemanticItemRef::TypeDef(ty) => {
-                    if let Some(data) = item.struct_data() {
-                        self.scan_struct(ty, data)?;
-                    } else if let Some(data) = item.union_data() {
-                        self.scan_union(ty, data)?;
-                    } else if let Some(data) = item.enum_data() {
-                        self.scan_enum(ty, data)?;
-                    }
-                }
-                SemanticItemRef::Trait(trait_ref) => self.scan_trait(
-                    trait_ref,
-                    item.trait_data().expect("item kind matches its data"),
-                )?,
-                SemanticItemRef::Impl(impl_ref) => self.scan_impl(
-                    impl_ref,
-                    item.impl_data().expect("item kind matches its data"),
-                )?,
-                SemanticItemRef::Function(function) => self.scan_function(
-                    function,
-                    item.function_data().expect("item kind matches its data"),
-                )?,
-                SemanticItemRef::TypeAlias(alias) => self.scan_type_alias(
-                    alias,
-                    item.type_alias_data().expect("item kind matches its data"),
-                )?,
-                SemanticItemRef::Const(konst) => self.scan_const(
-                    konst,
-                    item.const_data().expect("item kind matches its data"),
-                )?,
-                SemanticItemRef::Static(statik) => self.scan_static(
-                    statik,
-                    item.static_data().expect("item kind matches its data"),
-                )?,
+            let locations = self.db.declaration_source(self.origin, item.source())?;
+            SignatureItemScan {
+                db: self.db,
+                origin: self.origin,
+                collector: &mut self.collector,
+                locations,
             }
+            .scan_item(*item)?;
+        }
+        Ok(self.collector)
+    }
+}
+
+struct SignatureItemScan<'view, 'db, C> {
+    db: &'view IndexedViewDb<'db>,
+    origin: DefMapRef,
+    collector: &'view mut C,
+    locations: DeclarationSourceView<'view>,
+}
+
+impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
+    fn scan_item(&mut self, item: SemanticItemView<'_>) -> anyhow::Result<()> {
+        match item.item() {
+            SemanticItemRef::TypeDef(ty) => {
+                if let Some(data) = item.struct_data() {
+                    self.scan_struct(ty, data)?;
+                } else if let Some(data) = item.union_data() {
+                    self.scan_union(ty, data)?;
+                } else if let Some(data) = item.enum_data() {
+                    self.scan_enum(ty, data)?;
+                }
+            }
+            SemanticItemRef::Trait(trait_ref) => self.scan_trait(
+                trait_ref,
+                item.trait_data().expect("item kind matches its data"),
+            )?,
+            SemanticItemRef::Impl(impl_ref) => self.scan_impl(
+                impl_ref,
+                item.impl_data().expect("item kind matches its data"),
+            )?,
+            SemanticItemRef::Function(function) => self.scan_function(
+                function,
+                item.function_data().expect("item kind matches its data"),
+            )?,
+            SemanticItemRef::TypeAlias(alias) => self.scan_type_alias(
+                alias,
+                item.type_alias_data().expect("item kind matches its data"),
+            )?,
+            SemanticItemRef::Const(konst) => self.scan_const(
+                konst,
+                item.const_data().expect("item kind matches its data"),
+            )?,
+            SemanticItemRef::Static(statik) => self.scan_static(
+                statik,
+                item.static_data().expect("item kind matches its data"),
+            )?,
         }
         Ok(())
     }
@@ -126,7 +150,7 @@ where
                     owner: ty,
                     index: field_idx,
                 },
-                field.span,
+                field.location,
             );
             self.push_type_ref(
                 scope,
@@ -156,7 +180,7 @@ where
                     enum_id,
                     index: variant_idx,
                 },
-                variant.name_span,
+                variant.name_location,
             );
 
             // Variant fields have no type-owned `FieldRef`, but paths in their annotations
@@ -233,8 +257,8 @@ where
         data: &FunctionData,
     ) -> anyhow::Result<()> {
         if data.local_def.is_none() {
-            let span = data.name_span.unwrap_or(data.span);
-            self.push_function(function_ref, span);
+            let location = data.name_location.unwrap_or(data.location);
+            self.push_function(function_ref, location);
         }
         let Some(context) = self.owner_context(data.owner)? else {
             return Ok(());
@@ -316,7 +340,7 @@ where
         file_id: FileId,
     ) {
         for (idx, field) in fields.fields().iter().enumerate() {
-            self.push_field(FieldRef { owner, index: idx }, field.span);
+            self.push_field(FieldRef { owner, index: idx }, field.location);
             self.push_type_ref(scope, &field.ty, file_id, TypeNamePosition::Type);
         }
     }
@@ -376,21 +400,30 @@ where
     ) {
         let collector = &mut self.collector;
         walk_type_ref_paths(ty, position, &mut |path, position| {
-            collector.push_type_path(scope, path, file_id, position);
+            collector.push_type_path(scope, path, file_id, position, &self.locations);
         });
     }
 
-    fn push_field(&mut self, field: FieldRef, span: Span) {
+    fn push_field(&mut self, field: FieldRef, location: SourceId) {
+        let Some(span) = self.locations.editable_span(Some(location)) else {
+            return;
+        };
         self.collector
             .push_candidate(SignatureSourceCandidate::Field { field, span });
     }
 
-    fn push_function(&mut self, function: FunctionRef, span: Span) {
+    fn push_function(&mut self, function: FunctionRef, location: SourceId) {
+        let Some(span) = self.locations.editable_span(Some(location)) else {
+            return;
+        };
         self.collector
             .push_candidate(SignatureSourceCandidate::Function { function, span });
     }
 
-    fn push_enum_variant(&mut self, variant: EnumVariantRef, span: Span) {
+    fn push_enum_variant(&mut self, variant: EnumVariantRef, location: SourceId) {
+        let Some(span) = self.locations.editable_span(Some(location)) else {
+            return;
+        };
         self.collector
             .push_candidate(SignatureSourceCandidate::EnumVariant { variant, span });
     }
@@ -406,11 +439,5 @@ where
         self.db
             .current_signature_context(context)
             .context("resolve current signature context")
-    }
-
-    fn file_matches(&self, file_id: FileId) -> bool {
-        self.collector
-            .selected_file()
-            .is_none_or(|selected| selected == file_id)
     }
 }

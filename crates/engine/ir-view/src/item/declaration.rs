@@ -3,12 +3,13 @@
 use std::{borrow::Cow, fmt};
 
 use anyhow::Context as _;
-use rg_def_map::{DefMapSource, ItemSourceKind, ModuleOrigin};
+use rg_def_map::{DefMapSource, ItemSource, ModuleOrigin};
 use rg_ir_model::{
-    BodyBindingRef, CrateRef, EnumVariantRef, FieldKey, FieldRef, FileId, FunctionRef, ItemOwner,
-    LocalDefRef, ModuleRef, SemanticItemKind, SemanticItemRef, Span, identity::DeclarationRef,
+    BodyBindingRef, CrateRef, DefMapRef, EnumVariantRef, FieldKey, FieldRef, FileId, FunctionRef,
+    ItemOwner, LocalDefRef, ModuleRef, SemanticItemKind, SemanticItemRef, SourceId, SourceLocation,
+    Span, identity::DeclarationRef,
 };
-use rg_item_tree::TypeRef;
+use rg_item_tree::{SourceLocations as _, TypeRef};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_text::Name;
 
@@ -29,7 +30,12 @@ enum DeclarationLabel {
     Impl(SemanticItemRef),
 }
 
-/// Composite declaration facts shared by editor queries.
+/// Composite declaration facts shared by editor queries after source occurrences are resolved.
+///
+/// `span` covers the declaration's destination; `selection_span` is the part navigation should
+/// focus on, usually its name. Both can fall back to a macro invocation for generated syntax.
+/// `editable_span` is separate: it is present only for a real declaration occurrence, so callers
+/// cannot turn a navigation fallback into a declaration reference or rename edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declaration {
     crate_ref: CrateRef,
@@ -38,6 +44,7 @@ pub struct Declaration {
     file_id: FileId,
     span: Span,
     selection_span: Span,
+    editable_span: Option<Span>,
 }
 
 impl Declaration {
@@ -47,7 +54,7 @@ impl Declaration {
         name: Name,
         file_id: FileId,
         span: Span,
-        selection_span: Span,
+        name_location: Option<SourceLocation>,
     ) -> Self {
         Self {
             crate_ref,
@@ -55,7 +62,10 @@ impl Declaration {
             label: DeclarationLabel::Name(name),
             file_id,
             span,
-            selection_span,
+            selection_span: name_location.map_or(span, |location| location.span),
+            editable_span: name_location
+                .filter(|location| location.editable)
+                .map(|location| location.span),
         }
     }
 
@@ -65,7 +75,7 @@ impl Declaration {
         index: usize,
         file_id: FileId,
         span: Span,
-        selection_span: Span,
+        location: SourceLocation,
     ) -> Self {
         Self {
             crate_ref,
@@ -73,7 +83,8 @@ impl Declaration {
             label: DeclarationLabel::TupleField(index),
             file_id,
             span,
-            selection_span,
+            selection_span: location.span,
+            editable_span: location.editable.then_some(location.span),
         }
     }
 
@@ -117,6 +128,12 @@ impl Declaration {
 
     pub fn selection_span(&self) -> Span {
         self.selection_span
+    }
+
+    /// The source occurrence that can participate in edits and reference searches. A generated
+    /// declaration can navigate to its invocation without declaring its name at that location.
+    pub fn editable_span(&self) -> Option<Span> {
+        self.editable_span
     }
 }
 
@@ -280,27 +297,27 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         let Some(name) = module.name.clone() else {
             return Ok(None);
         };
-        let (file_id, span) = match module.origin {
+        let (source, span) = match module.origin {
             ModuleOrigin::Root { .. } | ModuleOrigin::Synthetic { .. } => return Ok(None),
             ModuleOrigin::Inline {
-                declaration_file,
-                declaration_span,
+                declaration_source,
+                declaration_location,
             }
             | ModuleOrigin::OutOfLine {
-                declaration_file,
-                declaration_span,
+                declaration_source,
+                declaration_location,
                 ..
-            } => (declaration_file, declaration_span),
+            } => (declaration_source, declaration_location),
         };
 
-        Ok(Some(Declaration::named(
+        Ok(Some(self.named_source(
             module_ref.origin.origin_crate(),
             SymbolKind::Module,
             name,
-            file_id,
+            source,
             span,
-            module.name_span.unwrap_or(span),
-        )))
+            module.name_location,
+        )?))
     }
 
     /// Return declaration facts for a DefMap local item.
@@ -309,14 +326,14 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration::named(
+        Ok(Some(self.named_source(
             local_def.origin.origin_crate(),
             SymbolKind::from_local_def_kind(data.kind),
             data.name.clone(),
-            data.file_id,
-            data.span,
-            data.name_span.unwrap_or(data.span),
-        )))
+            data.source,
+            data.location,
+            data.name_location,
+        )?))
     }
 
     /// Return declaration facts for a semantic item.
@@ -343,28 +360,29 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                     return Ok(None);
                 };
 
-                // Type paths keep their syntax ranges. Expansion ranges belong to generated
-                // text, so generated impls must keep their mapped invocation as the destination.
-                let is_written = match view.source().kind {
-                    ItemSourceKind::ItemTree(_) => true,
-                    ItemSourceKind::Body(source) => self
-                        .db
-                        .body_ir
-                        .body(source.body)?
-                        // Current declaration-only impls have no body and use written syntax.
-                        .is_none_or(|body| body.source_item_is_written(source.item)),
-                    ItemSourceKind::Generated(_) | ItemSourceKind::Synthetic(_) => false,
-                };
-                let mut selection_span = local_impl.span;
-                if is_written && let Some((mut self_ty, _)) = view.impl_header() {
+                let locations = self
+                    .db
+                    .declaration_source(item.origin(), local_impl.source)?;
+                let location = locations
+                    .location(local_impl.location)
+                    .context("impl declaration occurrence is absent")?;
+                let span = location.span;
+                let mut selection_span = span;
+                // An expansion's invocation is its declaration destination. A copied type
+                // argument inside that invocation does not make the impl itself written there.
+                if location.editable
+                    && let Some((mut self_ty, _)) = view.impl_header()
+                {
                     // In `&'a Wrapper<T>`, selecting `Wrapper<T>` is enough to focus the type.
                     // Types without a single inner path, such as tuples, keep the whole impl.
                     // Their punctuation ranges are not stored, so we cannot select them exactly.
                     loop {
                         match self_ty {
                             TypeRef::Path(path) => {
-                                if local_impl.span.contains_span(path.source_span) {
-                                    selection_span = path.source_span;
+                                if let Some(path_span) = locations.editable_span(path.location)
+                                    && span.contains_span(path_span)
+                                {
+                                    selection_span = path_span;
                                 }
                                 break;
                             }
@@ -381,8 +399,9 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                     kind: SymbolKind::Impl,
                     label: DeclarationLabel::Impl(item),
                     file_id: local_impl.file_id,
-                    span: local_impl.span,
+                    span,
                     selection_span,
+                    editable_span: None,
                 }))
             }
             SemanticItemKind::Function => match item {
@@ -398,18 +417,18 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(name) = view.name().cloned() else {
                     return Ok(None);
                 };
-                let Some(span) = view.span() else {
+                let Some(span) = view.location() else {
                     return Ok(None);
                 };
 
-                Ok(Some(Declaration::named(
+                Ok(Some(self.named_source(
                     item.origin().origin_crate(),
                     SymbolKind::from_semantic_item_kind(view.kind()),
                     name,
-                    view.source().file_id,
+                    view.source(),
                     span,
-                    view.name_span().unwrap_or(span),
-                )))
+                    view.name_location(),
+                )?))
             }
         }
     }
@@ -431,7 +450,10 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 name.clone(),
                 binding.source.file_id,
                 binding.source.span,
-                selection_span,
+                binding.name_span.map(|span| SourceLocation {
+                    span,
+                    editable: binding.source.is_written(),
+                }),
             ),
             None => Declaration {
                 crate_ref: binding_ref.body.crate_ref,
@@ -440,6 +462,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 file_id: binding.source.file_id,
                 span: binding.source.span,
                 selection_span,
+                editable_span: None,
             },
         }))
     }
@@ -453,14 +476,14 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration::named(
+        Ok(Some(self.named_source(
             variant_ref.origin.origin_crate(),
             SymbolKind::EnumVariant,
             data.variant.name.clone(),
-            data.file_id,
-            data.variant.span,
-            data.variant.name_span,
-        )))
+            data.source,
+            data.variant.location,
+            Some(data.variant.name_location),
+        )?))
     }
 
     /// Return declaration facts for a declared field.
@@ -473,24 +496,58 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         let crate_ref = field.owner.origin.origin_crate();
+        let location = self
+            .db
+            .declaration_source(field.owner.origin, data.source)?
+            .location(data.field.location)
+            .context("field declaration occurrence is absent")?;
         Ok(Some(match key {
             FieldKey::Named(name) => Declaration::named(
                 crate_ref,
                 SymbolKind::Field,
                 name.clone(),
-                data.file_id,
-                data.field.span,
-                data.field.span,
+                data.source.file_id,
+                location.span,
+                Some(location),
             ),
             FieldKey::Tuple(index) => Declaration::tuple_field(
                 crate_ref,
                 SymbolKind::Field,
                 *index,
-                data.file_id,
-                data.field.span,
-                data.field.span,
+                data.source.file_id,
+                location.span,
+                location,
             ),
         }))
+    }
+
+    fn named_source(
+        &self,
+        krate: CrateRef,
+        kind: SymbolKind,
+        name: Name,
+        source: ItemSource,
+        location: SourceId,
+        name_location: Option<SourceId>,
+    ) -> anyhow::Result<Declaration> {
+        let origin = DefMapRef::Crate(krate);
+        let locations = self.db.declaration_source(origin, source)?;
+        Ok(Declaration::named(
+            krate,
+            kind,
+            name,
+            source.file_id,
+            locations
+                .span(location)
+                .context("declaration occurrence is absent")?,
+            name_location
+                .map(|occurrence| {
+                    locations
+                        .location(occurrence)
+                        .context("declaration name occurrence is absent")
+                })
+                .transpose()?,
+        ))
     }
 
     /// Return declaration facts for a function or method.
@@ -499,16 +556,16 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration::named(
+        Ok(Some(self.named_source(
             function.origin.origin_crate(),
             match data.owner {
                 ItemOwner::Module(_) => SymbolKind::Function,
                 ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
             },
             data.name.clone(),
-            data.source.file_id,
-            data.span,
-            data.name_span.unwrap_or(data.span),
-        )))
+            data.source,
+            data.location,
+            data.name_location,
+        )?))
     }
 }

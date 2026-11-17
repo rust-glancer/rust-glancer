@@ -47,7 +47,7 @@ pub(crate) struct BodyLoweringTask {
 }
 
 impl BodyLoweringTask {
-    pub(crate) fn for_saved_owner(krate: CrateRef, root: BodyOwnerData) -> Self {
+    pub(crate) fn for_saved_owner(krate: CrateRef, root: BodyOwnerData, span: Span) -> Self {
         let origin = DefMapRef::Crate(krate);
         let owner = match root.owner {
             SavedBodyOwner::Function(id) => BodyOwner::Function(FunctionRef::new(origin, id)),
@@ -60,7 +60,7 @@ impl BodyLoweringTask {
             owner_module: root.module,
             fallback_module: root.module,
             file_id: root.file,
-            span: root.span,
+            span,
         }
     }
 }
@@ -204,12 +204,12 @@ impl<'a> BodyTaskLowering<'a> {
         macro_expansion: &mut dyn BodyMacroExpansionContext,
         syntax: &SourceFile,
     ) -> anyhow::Result<()> {
-        // Each query already selected its owner. Seeking its exact range avoids walking every
-        // expression in the file again for each neighboring owner. Generated or stale ranges
-        // without a matching written declaration keep the same absent-body result.
+        // Source readers resolve owner occurrences before scheduling. Every task now carries
+        // a byte range in exactly the syntax snapshot opened above.
         for task in tasks {
             rg_std::check_cancel!(self.cancellation, "body lowering task");
-            let range = TextRange::new(task.span.start.into(), task.span.end.into());
+            let span = task.span;
+            let range = TextRange::new(span.start.into(), span.end.into());
             if !syntax.syntax().text_range().contains_range(range) {
                 continue;
             }
@@ -222,7 +222,7 @@ impl<'a> BodyTaskLowering<'a> {
                 .syntax()
                 .covering_element(range)
                 .ancestors()
-                .find(|node| node.text_range() == range && node.kind() == kind)
+                .find(|node| node.kind() == kind && node.text_range() == range)
             else {
                 continue;
             };

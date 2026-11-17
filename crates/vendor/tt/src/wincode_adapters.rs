@@ -3,49 +3,10 @@
 use std::mem::MaybeUninit;
 
 use parser::Edition;
-use text_size::{TextRange, TextSize};
 use wincode::{
     ReadError, ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult, config::ConfigCore,
     io::Writer,
 };
-
-pub(crate) struct TextRangeCodec;
-
-unsafe impl<C: ConfigCore> SchemaWrite<C> for TextRangeCodec {
-    type Src = TextRange;
-
-    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
-
-    fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        let start = u32::from(src.start());
-        let end = u32::from(src.end());
-        Ok(<u32 as SchemaWrite<C>>::size_of(&start)? + <u32 as SchemaWrite<C>>::size_of(&end)?)
-    }
-
-    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-        <u32 as SchemaWrite<C>>::write(writer.by_ref(), &u32::from(src.start()))?;
-        <u32 as SchemaWrite<C>>::write(writer, &u32::from(src.end()))
-    }
-}
-
-unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for TextRangeCodec {
-    type Dst = TextRange;
-
-    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
-
-    fn read(
-        mut reader: impl wincode::io::Reader<'de>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> ReadResult<()> {
-        let start = <u32 as SchemaRead<'de, C>>::get(reader.by_ref())?;
-        let end = <u32 as SchemaRead<'de, C>>::get(reader)?;
-        if start > end {
-            return Err(ReadError::InvalidValue("invalid text range"));
-        }
-        dst.write(TextRange::new(TextSize::new(start), TextSize::new(end)));
-        Ok(())
-    }
-}
 
 pub(crate) struct EditionCodec;
 

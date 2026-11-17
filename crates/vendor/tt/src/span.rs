@@ -1,6 +1,6 @@
 //! Adapted from rust-analyzer's `span` crate.
 //!
-//! Coarse span and syntax-context types for macro expansion.
+//! Token provenance and syntax-context types for macro expansion.
 //!
 //! These types intentionally model only the subset of rust-analyzer's `span`
 //! module that `tt`, `mbe`, and the token-tree syntax bridge need.
@@ -15,10 +15,17 @@ use wincode::{
     io::{Reader, Writer},
 };
 
+/// Where a macro token came from, independent of where expanded syntax places it.
+///
+/// `origins` contains occurrence IDs in the table selected by `anchor`. These are not byte
+/// offsets. The parser can give an expanded token a new position without changing its origin,
+/// and a source reader can resolve that origin against the input's position table later.
+///
+/// This differs from the engine's physical `Span`, which is a range of file byte offsets.
+/// Template tokens and copied arguments keep their own anchors when expansion mixes them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct Span {
-    #[wincode(with = "crate::wincode_adapters::TextRangeCodec")]
-    pub range: TextRange,
+    pub origins: TokenOrigins,
     pub anchor: SpanAnchor,
     pub ctx: SyntaxContext,
 }
@@ -26,10 +33,90 @@ pub struct Span {
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Span")
-            .field("range", &self.range)
+            .field("origins", &self.origins)
             .field("anchor", &self.anchor)
             .field("ctx", &self.ctx)
             .finish()
+    }
+}
+
+/// Identifies the source table containing a macro token. Body inputs are scoped to one
+/// expansion request; declaration inputs are replayable through the file's owner table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+pub enum TokenOwner {
+    /// The number is a declaration source owner. Token origin IDs select entries within it.
+    Declaration(u32),
+    /// Token origin IDs select entries in the macro invocation's transient input map.
+    /// The caller must keep that map alongside any expansion that still refers to it.
+    Body,
+}
+
+/// Endpoints in a source-occurrence table, never text offsets. A merged parser token can
+/// originate in two input tokens. Keep both endpoints even when expansion reorders them.
+///
+/// For example, the parser may join two `:` punctuation tokens into `::`. The two IDs locate
+/// their original ranges; covering those ranges gives the physical span of the joined token.
+/// The endpoints need not be consecutive or numerically increasing, and they do not describe
+/// all the entries between them.
+///
+/// A normal single token uses the same ID for both endpoints. A synthetic token keeps a first
+/// ID for provenance but has no last endpoint, so readers cannot resolve it to editable input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+pub struct TokenOrigins {
+    first: u32,
+    last: Option<u32>,
+}
+
+impl TokenOrigins {
+    pub fn single(source: u32) -> Self {
+        Self {
+            first: source,
+            last: Some(source),
+        }
+    }
+
+    pub fn synthetic(source: u32) -> Self {
+        Self {
+            first: source,
+            last: None,
+        }
+    }
+
+    pub fn first(self) -> u32 {
+        self.first
+    }
+
+    pub fn last(self) -> Option<u32> {
+        self.last
+    }
+
+    /// Keep the endpoints of a combined token or syntax range. The caller must first check that
+    /// both origins belong to the same input table. A synthetic endpoint keeps the result
+    /// synthetic rather than turning generated punctuation into an editable range.
+    pub fn join(self, right: Self) -> Self {
+        Self {
+            first: self.first,
+            last: self.last.and(right.last),
+        }
+    }
+
+    // The compact token codec stores two integers as a starting ID and a wrapping delta.
+    // These operations are private to storage; the delta is not a source length.
+    pub(crate) fn encoded_width(self) -> u32 {
+        self.last
+            .map_or(0, |last| last.wrapping_add(1).wrapping_sub(self.first))
+    }
+    pub(crate) fn from_encoded(first: u32, width: u32) -> Self {
+        Self {
+            first,
+            last: Some(first.wrapping_add(width).wrapping_sub(1)),
+        }
+    }
+    pub(crate) fn shifted(self, offset: u32) -> Self {
+        Self {
+            first: self.first.wrapping_add(offset),
+            last: self.last.map(|last| last.wrapping_add(offset)),
+        }
     }
 }
 
@@ -37,8 +124,11 @@ impl fmt::Debug for Span {
 ///
 /// Expansion can mix tokens from several packages. Keep the package context even when two
 /// packages share the same canonical file.
+/// Together with `owner`, this selects the table in which [`TokenOrigins`] must be interpreted.
+/// Matching numeric occurrence IDs without matching their anchors does not establish shared origin.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct SpanAnchor {
+    pub owner: TokenOwner,
     pub package: u32,
     pub file_id: EditionedFileId,
 }
@@ -46,6 +136,7 @@ pub struct SpanAnchor {
 impl fmt::Debug for SpanAnchor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("SpanAnchor")
+            .field(&self.owner)
             .field(&self.package)
             .field(&self.file_id)
             .finish()

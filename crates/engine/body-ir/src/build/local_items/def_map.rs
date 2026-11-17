@@ -59,7 +59,6 @@ impl<'source> LocalDefMapCollector<'source> {
             // correspond to Rust module declarations and lookup must treat them differently.
             let origin = ModuleOrigin::Synthetic {
                 file_id: self.source.source.file_id,
-                span: self.source.source.span,
             };
 
             // Note: we're going through scopes in order, so we process all the parents first.
@@ -99,7 +98,9 @@ impl<'source> LocalDefMapCollector<'source> {
         };
 
         match &item.kind {
-            ItemKind::Module(module_item) => self.collect_module(module, item, module_item),
+            ItemKind::Module(module_item) => {
+                self.collect_module(module, item_id, item, module_item)
+            }
             ItemKind::Use(use_item) => self.collect_use(module, item_id, item, use_item),
             ItemKind::Impl(_) => self.collect_local_impl(module, item_id, item),
             ItemKind::Enum(enum_item) => self.collect_enum(module, item_id, item, enum_item),
@@ -157,8 +158,8 @@ impl<'source> LocalDefMapCollector<'source> {
             visibility: item.visibility.clone(),
             source: self.item_source(item_id, item),
             file_id: item.file_id,
-            name_span: item.name_span,
-            span: item.span,
+            name_location: item.name_location,
+            location: item.location,
             user_facing_attrs: item.user_facing_attrs,
         });
         self.builder
@@ -197,13 +198,8 @@ impl<'source> LocalDefMapCollector<'source> {
         };
         let visibility = self.builder.resolve_visibility(module, &item.visibility);
 
-        self.builder.alloc_local_enum_variants(
-            module,
-            local_def,
-            enum_item,
-            visibility,
-            item.file_id,
-        );
+        self.builder
+            .alloc_local_enum_variants(module, local_def, enum_item, visibility);
     }
 
     fn collect_local_impl(&mut self, module: ModuleId, item_id: ItemTreeId, item: &ItemNode) {
@@ -211,7 +207,7 @@ impl<'source> LocalDefMapCollector<'source> {
             module,
             source: self.item_source(item_id, item),
             file_id: item.file_id,
-            span: item.span,
+            location: item.location,
         });
         self.builder
             .module_mut(module)
@@ -220,19 +216,37 @@ impl<'source> LocalDefMapCollector<'source> {
             .push(local_impl);
     }
 
-    fn collect_module(&mut self, parent: ModuleId, item: &ItemNode, module_item: &ModuleItem) {
+    fn collect_module(
+        &mut self,
+        parent: ModuleId,
+        item_id: ItemTreeId,
+        item: &ItemNode,
+        module_item: &ModuleItem,
+    ) {
         let Some(module_name) = item.name.clone() else {
             return;
         };
 
         let origin = match &module_item.source {
             ModuleSource::Inline { .. } => ModuleOrigin::Inline {
-                declaration_file: item.file_id,
-                declaration_span: item.span,
+                declaration_source: ItemSource::body(
+                    item.file_id,
+                    BodyItemSourceRef {
+                        body: self.body_ref,
+                        item: item_id,
+                    },
+                ),
+                declaration_location: item.location,
             },
             ModuleSource::OutOfLine => ModuleOrigin::OutOfLine {
-                declaration_file: item.file_id,
-                declaration_span: item.span,
+                declaration_source: ItemSource::body(
+                    item.file_id,
+                    BodyItemSourceRef {
+                        body: self.body_ref,
+                        item: item_id,
+                    },
+                ),
+                declaration_location: item.location,
                 definition_file: None,
                 file_selection: ModuleFileSelection::from_path_override(
                     module_item.path_override.as_deref(),
@@ -249,7 +263,7 @@ impl<'source> LocalDefMapCollector<'source> {
 
         let mut module = ModuleBuilder::new(origin, visibility, Some(parent));
         module.name = Some(module_name.clone());
-        module.name_span = item.name_span;
+        module.name_location = item.name_location;
         module.docs = docs;
         module.user_facing_attrs = item.user_facing_attrs;
         let child = self.builder.alloc_module(module);
@@ -304,8 +318,8 @@ impl<'source> LocalDefMapCollector<'source> {
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
                 binding: ImportBinding::from_alias(&import.alias),
-                alias_span: match &import.alias {
-                    ImportAlias::Explicit { span, .. } => Some(*span),
+                alias_location: match &import.alias {
+                    ImportAlias::Explicit { location, .. } => Some(*location),
                     ImportAlias::Inferred | ImportAlias::Hidden => None,
                 },
                 source: self.item_source(item_id, item),

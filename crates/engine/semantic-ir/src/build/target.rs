@@ -8,7 +8,7 @@ use std::{
 
 use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
-    GeneratedItemStore, MacroExpansionLimitReport,
+    GeneratedItemStore, GeneratedSourceStore, MacroExpansionLimitReport,
 };
 use rg_ir_model::{CrateRef, DefMapRef, FileId, LocalDefRef, SemanticItemRef};
 use rg_item_tree::ItemTrees;
@@ -38,6 +38,7 @@ pub struct TargetDeclarations {
     metadata: TargetDeclarationMetadata,
     definitions: CrateData,
     items: ItemStore,
+    generated_sources: GeneratedSourceStore,
     lang_items: LangItemIndex,
     lookup_env: ItemLookupEnv,
     lookup_shards: Vec<ajika::Output<ItemLookupShard>>,
@@ -56,7 +57,7 @@ pub fn target_declarations(
     let (built, trees, sources) =
         CrateData::build_target(db, krate, &DefMapQuery::new(definitions))?;
     let mut data = built.data;
-    let (items, lookup_env, lookup) =
+    let (items, lookup_env, lookup, generated_sources) =
         ItemStore::build_target(db, &data, trees, built.generated_items, &dependencies)?;
     let mut body_owners = Vec::new();
     for owner in BodyOwnerData::for_crate(&items, data.def_map()) {
@@ -90,6 +91,7 @@ pub fn target_declarations(
         metadata,
         data,
         items,
+        generated_sources,
         lang_items,
         lookup_env,
         lookup_shards,
@@ -107,11 +109,11 @@ impl ItemStore {
         trees: ItemTrees,
         generated_items: GeneratedItemStore,
         dependencies: &(impl CrateDataSource + CrateItemSource),
-    ) -> ajika::Result<(Self, ItemLookupEnv, ItemLookupIndex)> {
+    ) -> ajika::Result<(Self, ItemLookupEnv, ItemLookupIndex, GeneratedSourceStore)> {
         let mut items = Self::lower_crate(data.def_map(), &trees, &generated_items)
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
         drop(trees);
-        drop(generated_items);
+        let generated_sources = generated_items.into_sources();
 
         // Read the active target locally so header resolution never asks for its unpublished
         // outputs. Only completed dependencies go through the supplied readers.
@@ -143,7 +145,7 @@ impl ItemStore {
         let mut lookup = ItemLookupIndex::build_from_store(&items, &self_heads);
         items.shrink_to_fit();
         lookup.shrink_to_fit();
-        Ok((items, env, lookup))
+        Ok((items, env, lookup, generated_sources))
     }
 }
 

@@ -9,11 +9,12 @@ use rg_def_map::{DefMap, DefinitionReader};
 use rg_ir_model::{
     BodyId, BodyRef, BodySource, ConstRef, DefMapRef, FileId, ItemOwner, ModuleRef, Span, StaticRef,
 };
+use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{ItemReader, ItemStore};
 
 use super::CrateBodyBuildState;
 use crate::{
-    BodyLocalItems, BodyOwner,
+    BodyData, BodyLocalItems, BodyOwner,
     build::{
         local_items::LocalItemSource,
         lower::{
@@ -63,7 +64,7 @@ impl CrateBodyBuildState<'_> {
             let body_data = self.crate_bodies.bodies()[body].body();
             let nested_tasks = Self::nested_body_tasks(
                 body_ref,
-                body_data.source(),
+                body_data,
                 body_data.owner(),
                 body_data.fallback_module(),
                 items.def_map(),
@@ -114,7 +115,7 @@ impl CrateBodyBuildState<'_> {
     /// current header.
     fn request_root_owner_context(
         body_ref: BodyRef,
-        body: &crate::BodyData,
+        body: &BodyData,
         items: &BodyLocalItems,
     ) -> anyhow::Result<Option<(BodyOwner, ModuleRef)>> {
         if body.owner().declaration().origin() != DefMapRef::Body(body_ref) {
@@ -122,6 +123,13 @@ impl CrateBodyBuildState<'_> {
         }
 
         let source = body.source();
+        let matches_root_source = |file_id, location| {
+            file_id == source.file_id
+                && body
+                    .source_items()
+                    .location(location)
+                    .is_some_and(|location| location.span == source.span)
+        };
         let (owner, owner_module) = match body.owner() {
             BodyOwner::Function(_) => {
                 let mut matches =
@@ -129,7 +137,7 @@ impl CrateBodyBuildState<'_> {
                         .item_store()
                         .functions_with_refs()
                         .filter_map(|(function, data)| {
-                            (data.source.file_id == source.file_id && data.span == source.span)
+                            matches_root_source(data.source.file_id, data.location)
                                 .then_some((BodyOwner::Function(function), data.owner))
                         });
                 let Some((owner, item_owner)) = matches.next() else {
@@ -154,7 +162,7 @@ impl CrateBodyBuildState<'_> {
                         .consts()
                         .iter_with_ids()
                         .filter_map(|(id, data)| {
-                            (data.source.file_id == source.file_id && data.span == source.span)
+                            matches_root_source(data.source.file_id, data.location)
                                 .then_some((BodyOwner::Const(ConstRef { origin, id }), data.owner))
                         });
                 let Some((owner, item_owner)) = matches.next() else {
@@ -179,11 +187,10 @@ impl CrateBodyBuildState<'_> {
                         .statics()
                         .iter_with_ids()
                         .filter_map(|(id, data)| {
-                            (data.source.file_id == source.file_id && data.span == source.span)
-                                .then_some((
-                                    BodyOwner::Static(StaticRef { origin, id }),
-                                    data.owner,
-                                ))
+                            matches_root_source(data.source.file_id, data.location).then_some((
+                                BodyOwner::Static(StaticRef { origin, id }),
+                                data.owner,
+                            ))
                         });
                 let Some((owner, owner_module)) = matches.next() else {
                     anyhow::bail!(
@@ -227,13 +234,14 @@ impl CrateBodyBuildState<'_> {
 
     fn nested_body_tasks(
         body_ref: BodyRef,
-        body_source: BodySource,
+        body: &BodyData,
         body_owner: BodyOwner,
         fallback_module: ModuleRef,
         def_map: &DefMap,
         item_store: &ItemStore,
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Vec<BodyLoweringTask>> {
+        let body_source = body.source();
         let origin = DefMapRef::Body(body_ref);
         let mut tasks = Vec::new();
 
@@ -247,11 +255,12 @@ impl CrateBodyBuildState<'_> {
             if body_owner == BodyOwner::Function(function_ref) {
                 continue;
             }
-            if !Self::source_is_nested_in_body(
-                body_source,
-                function_data.source.file_id,
-                function_data.span,
-            ) {
+            let span = body
+                .source_items()
+                .location(function_data.location)
+                .context("body declaration occurrence is absent")?
+                .span;
+            if !Self::source_is_nested_in_body(body_source, function_data.source.file_id, span) {
                 continue;
             }
             // Required trait methods and foreign functions live in the item store but do not own
@@ -270,7 +279,7 @@ impl CrateBodyBuildState<'_> {
                 owner_module,
                 fallback_module,
                 file_id: function_data.source.file_id,
-                span: function_data.span,
+                span,
             });
         }
 
@@ -283,11 +292,12 @@ impl CrateBodyBuildState<'_> {
             if body_owner == BodyOwner::Const(const_ref) {
                 continue;
             }
-            if !Self::source_is_nested_in_body(
-                body_source,
-                const_data.source.file_id,
-                const_data.span,
-            ) {
+            let span = body
+                .source_items()
+                .location(const_data.location)
+                .context("body declaration occurrence is absent")?
+                .span;
+            if !Self::source_is_nested_in_body(body_source, const_data.source.file_id, span) {
                 continue;
             }
             let Some(owner_module) =
@@ -301,7 +311,7 @@ impl CrateBodyBuildState<'_> {
                 owner_module,
                 fallback_module,
                 file_id: const_data.source.file_id,
-                span: const_data.span,
+                span,
             });
         }
 
@@ -316,11 +326,12 @@ impl CrateBodyBuildState<'_> {
             if body_owner == BodyOwner::Static(static_ref) {
                 continue;
             }
-            if !Self::source_is_nested_in_body(
-                body_source,
-                static_data.source.file_id,
-                static_data.span,
-            ) {
+            let span = body
+                .source_items()
+                .location(static_data.location)
+                .context("body declaration occurrence is absent")?
+                .span;
+            if !Self::source_is_nested_in_body(body_source, static_data.source.file_id, span) {
                 continue;
             }
             if def_map
@@ -335,11 +346,14 @@ impl CrateBodyBuildState<'_> {
                 owner_module: static_data.owner,
                 fallback_module,
                 file_id: static_data.source.file_id,
-                span: static_data.span,
+                span,
             });
         }
 
-        tasks.sort_by_key(|task| (task.file_id, task.span.start, task.span.end));
+        tasks.sort_by_key(|task| {
+            let span = task.span;
+            (task.file_id, span.start, span.end)
+        });
         Ok(tasks)
     }
 

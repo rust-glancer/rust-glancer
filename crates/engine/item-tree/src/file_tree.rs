@@ -43,6 +43,17 @@ pub struct FileTree {
     pub docs: Option<Documentation>,
     pub top_level: Vec<ItemTreeId>,
     pub items: Arena<ItemTreeId, ItemNode>,
+    /// Whether declaration building must also depend on the file's exact source text.
+    ///
+    /// An unchanged item tree normally lets DefMap reuse its result after whitespace or body edits.
+    /// This relies on lowering retaining all the declaration facts needed to decide whether reuse
+    /// is safe. Parser recovery outside a closed function body, or assembly syntax whose payload
+    /// is omitted here, makes that assumption too strong.
+    ///
+    /// When this is true, DefMap also reads `SourceInput`. Any text change then reruns its build,
+    /// even if the lowered items compare equal. This only controls reuse; it does not change how
+    /// source IDs or ranges are interpreted.
+    pub source_sensitive: bool,
 }
 
 impl FileTree {

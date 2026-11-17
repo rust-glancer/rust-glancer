@@ -67,7 +67,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedQualifiedPathSite>> {
         Ok(
-            ImportPathCompletionSiteScanner::new(&self.db.def_map, crate_ref, file_id, offset)
+            ImportPathCompletionSiteScanner::new(self.db, crate_ref, file_id, offset)
                 .qualified_site()
                 .context("scan qualified import completion site")?
                 .map(|site| IndexedQualifiedPathSite {
@@ -89,7 +89,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         Ok(
-            ImportPathCompletionSiteScanner::new(&self.db.def_map, crate_ref, file_id, offset)
+            ImportPathCompletionSiteScanner::new(self.db, crate_ref, file_id, offset)
                 .unqualified_site()
                 .context("scan unqualified import completion site")?
                 .map(|site| IndexedUnqualifiedNameSite {
@@ -110,7 +110,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         Ok(
-            ImportPathCompletionSiteScanner::new(&self.db.def_map, crate_ref, file_id, offset)
+            ImportPathCompletionSiteScanner::new(self.db, crate_ref, file_id, offset)
                 .empty_unqualified_site()
                 .context("scan empty import completion site")?
                 .map(|site| IndexedUnqualifiedNameSite {

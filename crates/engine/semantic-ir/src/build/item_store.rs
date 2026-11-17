@@ -348,8 +348,8 @@ where
         self.items.functions.alloc(FunctionData {
             local_def,
             source,
-            span: item.span,
-            name_span: item.name_span,
+            location: item.location,
+            name_location: item.name_location,
             owner,
             name: item.name.clone().unwrap_or_else(Name::missing),
             visibility: item.visibility.clone(),
@@ -369,8 +369,8 @@ where
         self.items.type_aliases.alloc(TypeAliasData {
             local_def,
             source,
-            span: item.span,
-            name_span: item.name_span,
+            location: item.location,
+            name_location: item.name_location,
             owner,
             name: item.name.clone().unwrap_or_else(Name::missing),
             visibility: item.visibility.clone(),
@@ -390,8 +390,8 @@ where
         self.items.consts.alloc(ConstData {
             local_def,
             source,
-            span: item.span,
-            name_span: item.name_span,
+            location: item.location,
+            name_location: item.name_location,
             owner,
             name: item.name.clone().unwrap_or_else(Name::missing),
             visibility: item.visibility.clone(),
@@ -413,8 +413,8 @@ where
         self.items.statics.alloc(StaticData {
             local_def,
             source,
-            span: item.span,
-            name_span: item.name_span,
+            location: item.location,
+            name_location: item.name_location,
             owner,
             name: item.name.clone().unwrap_or_else(Name::missing),
             visibility: item.visibility.clone(),

@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use anyhow::Context as _;
-use rg_ir_model::{FileId, LocalDefRef, PackageSlot, Span};
+use rg_ir_model::LocalDefRef;
 use rg_parse::syntax_edition;
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
@@ -20,7 +20,6 @@ use super::{
     executor::{
         MacroExpansionExecutor, MacroExpansionJob, MacroExpansionOutput, MacroExpansionWork,
     },
-    syntax::tt_span_for_parse_span,
 };
 
 /// Owns declarative macro compilation, expansion caching, and worker-pool execution.
@@ -55,18 +54,12 @@ impl MacroExpansionRuntime {
             };
         };
 
-        let call_site = tt_span_for_parse_span(
-            request.call_package,
-            request.call_file_id,
-            request.call_span,
-            syntax_edition(request.call_edition),
-        );
         let prepared_expansion = self.cache.prepare_expansion(
             request.def_ref,
             macro_,
             request.path_text,
             request.args,
-            call_site,
+            request.call_site,
             request.parse_kind,
         );
 
@@ -113,7 +106,7 @@ impl MacroExpansionRuntime {
             .into_iter()
             .map(|(id, pending)| MacroExpansionJob {
                 id,
-                work: pending.work,
+                work: *pending.work,
             })
             .collect::<Vec<_>>();
 
@@ -197,10 +190,7 @@ pub struct MacroExpansionRequest<'a> {
     pub definition: DeclarativeMacroDefinition<'a>,
     pub path_text: &'a str,
     pub args: &'a TopSubtree,
-    pub call_package: PackageSlot,
-    pub call_file_id: FileId,
-    pub call_span: Span,
-    pub call_edition: RustEdition,
+    pub call_site: rg_tt::Span,
     pub parse_kind: ExpansionParseKind,
 }
 
@@ -220,7 +210,9 @@ pub enum PreparedMacroExpansion {
 
 /// Runtime-owned expansion work that callers may queue and execute later.
 pub struct PendingMacroExpansion {
-    work: MacroExpansionWork,
+    // Pending work owns token trees and its replay key. Keep that payload out of the small
+    // cache-hit/failed variants that are passed through every expansion attempt.
+    work: Box<MacroExpansionWork>,
 }
 
 /// Completed expansion work after runtime cache insertion.

@@ -140,17 +140,27 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
         let (declaration, definition) = match data.origin {
             ModuleOrigin::Root { file_id } => (None, Some(file_id)),
             ModuleOrigin::OutOfLine {
-                declaration_file,
-                declaration_span,
+                declaration_source,
+                declaration_location,
                 definition_file,
                 ..
-            } => (Some((declaration_file, declaration_span)), definition_file),
+            } => (
+                Some((declaration_source, declaration_location)),
+                definition_file,
+            ),
             ModuleOrigin::Inline {
-                declaration_file,
-                declaration_span,
-            } => (Some((declaration_file, declaration_span)), None),
+                declaration_source,
+                declaration_location,
+            } => (Some((declaration_source, declaration_location)), None),
             ModuleOrigin::Synthetic { .. } => return Ok(None),
         };
+        let declaration = declaration
+            .map(|(source, location)| {
+                self.db
+                    .source_span(module.origin, source, location)
+                    .map(|span| (source.file_id, span))
+            })
+            .transpose()?;
         Ok(Some(ModuleDocumentationSource {
             declaration,
             definition,

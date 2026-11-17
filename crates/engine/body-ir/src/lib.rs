@@ -41,5 +41,5 @@ pub use self::{
         BodyFieldQuery, BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery,
         BodyValuePathQuery,
     },
-    store::{BodyLocalItems, BodyReader, BodyStore, CurrentSourceStore},
+    store::{BodyLocalItems, BodyReader, BodyStore, CurrentSourceStore, DeclarationSourceView},
 };

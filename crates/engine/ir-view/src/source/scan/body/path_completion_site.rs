@@ -15,7 +15,7 @@
 
 use rg_body_ir::{BodyPath, BodyReader, BodyView, ExprKind, PatData, PatKind};
 use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span};
-use rg_item_tree::TypePath;
+use rg_item_tree::{SourceLocations, TypePath};
 use rg_source::ReadError;
 
 use super::{
@@ -96,7 +96,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
 
     fn associated_type_binding_site_at_with(
         &self,
-        site_at: impl Fn(&TypePath, u32) -> Option<AssociatedTypeBindingSyntax>,
+        site_at: impl Fn(&TypePath, u32, &dyn SourceLocations) -> Option<AssociatedTypeBindingSyntax>,
     ) -> Result<Option<BodyAssociatedTypeBindingSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
@@ -109,7 +109,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             }
 
             BodyScanSites::new(body).walk_type_paths(Some(self.file_id), false, |site| {
-                let Some(binding) = site_at(site.path, self.offset) else {
+                let Some(binding) = site_at(site.path, self.offset, body.source_items()) else {
                     return;
                 };
                 best.consider(
@@ -120,7 +120,9 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                         member_prefix_span: binding.member_prefix_span,
                         existing_bindings: binding.existing_bindings,
                     },
-                    site.path.source_span.len(),
+                    body.source_items()
+                        .editable_span(site.path.location)
+                        .map_or(u32::MAX, |span| span.len()),
                 );
             });
         }
@@ -137,10 +139,19 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     ) {
         let sites = BodyScanSites::new(body);
         sites.walk_type_paths(Some(self.file_id), false, |site| {
-            if let Some(completion_site) =
-                self.site_for_type_path(body_ref, site.scope, site.path, site.position)
-            {
-                best.consider(completion_site, site.path.source_span.len());
+            if let Some(completion_site) = self.site_for_type_path(
+                body_ref,
+                site.scope,
+                site.path,
+                site.position,
+                body.source_items(),
+            ) {
+                best.consider(
+                    completion_site,
+                    body.source_items()
+                        .editable_span(site.path.location)
+                        .map_or(u32::MAX, |span| span.len()),
+                );
             }
         });
     }
@@ -239,12 +250,13 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         scope: ScopeId,
         path: &TypePath,
         position: TypeNamePosition,
+        locations: &dyn SourceLocations,
     ) -> Option<PathCompletionSite> {
         let TypePathCompletionSite::Qualified {
             module_qualifier,
             associated_qualifier,
             member_prefix_span,
-        } = TypePathCompletionSite::at(path, self.offset, position)?
+        } = TypePathCompletionSite::at(path, self.offset, position, locations)?
         else {
             return None;
         };

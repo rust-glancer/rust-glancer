@@ -36,7 +36,7 @@ where
         // `Self` parameter supplies both the associated-item identity and the full trait args.
         if path.segments.len() > 1 {
             let prefix = TypePath {
-                source_span: path.source_span,
+                location: path.location,
                 absolute: path.absolute,
                 anchor: None,
                 segments: path.segments[..path.segments.len() - 1].to_vec(),

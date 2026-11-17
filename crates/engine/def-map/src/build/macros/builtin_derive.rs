@@ -8,7 +8,7 @@
 use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Path, Span};
+use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Path, SourceId};
 use rg_item_tree::{
     BuiltinDeriveKind, BuiltinMacroKind, ConstExpr, DeriveAttrs, FieldItem, GenericArg,
     GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeRef, ItemTrees,
@@ -19,8 +19,9 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{
-    CrateResolutionEnv, GeneratedItemRef, ItemSource, ItemSourceKind, LocalDefKind, LocalImplData,
-    MacroDefinitionEnv, NameResolver, build::crates::CrateBuilder, source::GeneratedSourceData,
+    CrateResolutionEnv, GeneratedItemRef, GeneratedLocations, ItemSource, ItemSourceKind,
+    LocalDefKind, LocalImplData, MacroDefinitionEnv, NameResolver, build::crates::CrateBuilder,
+    source::GeneratedSourceData,
 };
 
 /// One derived impl waiting to be attached to the module that owns its struct or enum.
@@ -78,20 +79,21 @@ impl BuiltinDeriveExpansion {
                 let Some(root) = Self::trait_root(state, defining_crate) else {
                     continue;
                 };
-                // Derive paths in generated syntax still use offsets into that syntax.
-                // The item span already points to the source macro call, so use it instead.
-                let span = match declaration.source.kind {
-                    ItemSourceKind::Generated(_) => item.span,
-                    _ => call.span,
+                // An impl derived from a generated item navigates to its generating invocation.
+                // A written derive navigates to its attribute path.
+                let location = match declaration.source.kind {
+                    ItemSourceKind::Generated(_) => item.location,
+                    _ => call.location,
                 };
-                let Some(impl_item) = Self::lower_impl(kind, root, item, span, cfg) else {
+                let Some(impl_item) = Self::lower_impl(kind, root, item, cfg) else {
                     continue;
                 };
                 expansions.push(Self::from_impl(
                     module,
                     item.file_id,
                     origin_source,
-                    span,
+                    declaration.source,
+                    location,
                     impl_item,
                 ));
             }
@@ -102,14 +104,14 @@ impl BuiltinDeriveExpansion {
     /// Add the impl to generated-item storage and the owning module's impl list.
     pub(crate) fn apply(self, state: &mut CrateBuilder) {
         let file_id = self.source.origin_file_id;
-        let span = self.source.origin_span;
         let item = self.source.top_level[0];
+        let location = self.source.items[item].location;
         let source = state.def_map_builder.alloc_generated_source(self.source);
         let local_impl = state.def_map_builder.alloc_local_impl(LocalImplData {
             module: self.module,
             source: ItemSource::synthetic(file_id, GeneratedItemRef { source, item }),
             file_id,
-            span,
+            location,
         });
         state
             .def_map_builder
@@ -200,24 +202,25 @@ impl BuiltinDeriveExpansion {
         module: ModuleRef,
         file_id: FileId,
         origin_source: ItemTreeRef,
-        span: Span,
+        source: ItemSource,
+        location: SourceId,
         impl_item: ImplItem,
     ) -> Self {
         let mut items = Arena::new();
-        let impl_id = items.alloc(ItemNode::source(
+        let impl_id = items.alloc(ItemNode::new(
             ItemKind::Impl(impl_item),
             None,
             None,
             VisibilityLevel::Private,
             None,
-            span,
+            location,
             file_id,
         ));
         Self {
             module: module.module,
             source: GeneratedSourceData {
                 origin_file_id: file_id,
-                origin_span: span,
+                locations: GeneratedLocations::Inherited(source),
                 origin_source,
                 top_level: vec![impl_id],
                 items,
@@ -233,7 +236,6 @@ impl BuiltinDeriveExpansion {
         kind: BuiltinDeriveKind,
         root: &str,
         item: &ItemNode,
-        span: Span,
         cfg: CfgEvaluator<'_>,
     ) -> Option<ImplItem> {
         let name = item.name.as_ref()?;
@@ -272,17 +274,17 @@ impl BuiltinDeriveExpansion {
             }
             _ => return None,
         };
-        let trait_ty = Self::trait_type(kind, root, span);
+        let trait_ty = Self::trait_type(kind, root);
         let bound = TypeBound::Trait {
             ty: trait_ty.clone(),
             modifier: TraitBoundModifier::None,
         };
         let (mut impl_generics, args) =
-            Self::lower_generics(generics, span, add_bounds.then_some(&bound));
+            Self::lower_generics(generics, add_bounds.then_some(&bound));
         if add_bounds {
             Self::add_projection_bounds(&mut impl_generics, attrs, &fields, cfg, &bound);
         }
-        let mut self_path = Self::type_path([name.clone()], span);
+        let mut self_path = Self::type_path([name.clone()]);
         self_path.segments[0].args = args;
         Some(ImplItem {
             generics: impl_generics,
@@ -296,7 +298,7 @@ impl BuiltinDeriveExpansion {
         })
     }
 
-    fn trait_type(kind: BuiltinDeriveKind, root: &str, span: Span) -> TypeRef {
+    fn trait_type(kind: BuiltinDeriveKind, root: &str) -> TypeRef {
         // TODO: Use lang/diagnostic-item identities for this trait and its generated bounds.
         // Generated TypeRefs need to carry those identities into semantic/type lowering so the
         // impl does not depend on core's module layout or the caller's extern-prelude spelling.
@@ -311,7 +313,7 @@ impl BuiltinDeriveExpansion {
             BuiltinDeriveKind::PartialOrd => ("cmp", "PartialOrd"),
             BuiltinDeriveKind::Ord => ("cmp", "Ord"),
         };
-        let mut trait_path = Self::type_path([root, module, trait_name].map(Name::new), span);
+        let mut trait_path = Self::type_path([root, module, trait_name].map(Name::new));
         trait_path.absolute = root != "crate";
         TypeRef::Path(trait_path)
     }
@@ -323,7 +325,6 @@ impl BuiltinDeriveExpansion {
     /// original order of type/const arguments. Defaults belong on the declaration, not on its impl.
     fn lower_generics(
         generics: &GenericParams,
-        span: Span,
         bound: Option<&TypeBound>,
     ) -> (GenericParams, Vec<GenericArg>) {
         let mut impl_generics = generics.clone();
@@ -336,10 +337,9 @@ impl BuiltinDeriveExpansion {
         for param in &mut impl_generics.type_or_consts {
             match param {
                 TypeOrConstParamData::Type(param) => {
-                    args.push(GenericArg::Type(TypeRef::Path(Self::type_path(
-                        [param.name.clone()],
-                        span,
-                    ))));
+                    args.push(GenericArg::Type(TypeRef::Path(Self::type_path([param
+                        .name
+                        .clone()]))));
                     param.default = None;
                     if let Some(bound) = bound {
                         param.bounds.push(bound.clone());
@@ -348,7 +348,7 @@ impl BuiltinDeriveExpansion {
                 TypeOrConstParamData::Const(param) => {
                     args.push(GenericArg::Const(ConstExpr::new(
                         param.name.to_string(),
-                        span,
+                        None,
                     )));
                     param.default = None;
                 }
@@ -389,9 +389,9 @@ impl BuiltinDeriveExpansion {
         }
     }
 
-    fn type_path(names: impl IntoIterator<Item = Name>, span: Span) -> TypePath {
+    fn type_path(names: impl IntoIterator<Item = Name>) -> TypePath {
         TypePath {
-            source_span: span,
+            location: None,
             absolute: false,
             anchor: None,
             segments: names
@@ -399,7 +399,7 @@ impl BuiltinDeriveExpansion {
                 .map(|name| TypePathSegment {
                     name,
                     args: Vec::new(),
-                    span,
+                    location: None,
                 })
                 .collect(),
         }

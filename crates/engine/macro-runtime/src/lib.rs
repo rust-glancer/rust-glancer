@@ -8,7 +8,6 @@
 mod cache;
 mod executor;
 mod runtime;
-mod syntax;
 
 pub use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
 

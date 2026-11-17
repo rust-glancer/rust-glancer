@@ -4,13 +4,14 @@
 //! includes every supported current member. Both use the same lowering and cfg policy here.
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{FileId, Span};
+use rg_ir_model::{FileId, SourceLocation, Span};
 use rg_item_tree::{
     Documentation, FromAst as _, ImplItem, ItemKind, ItemNode, ItemTreeId, MaybeFromAst, OuterDocs,
-    TraitItem, VisibilityLevel,
+    RecordSource, SourceRole, TraitItem, VisibilityLevel,
 };
+use rg_std::CancellationToken;
 use rg_syntax::{
-    AstNode as _,
+    AstNode as _, SyntaxNode,
     ast::{self, HasName as _, HasVisibility as _},
 };
 use rg_text::Name;
@@ -38,14 +39,12 @@ pub(crate) struct CurrentDeclarationBuilder<'a> {
     pub(crate) file: FileId,
     pub(crate) cfg: CfgEvaluator<'a>,
     pub(crate) items: &'a mut BodySourceItems,
-    pub(crate) cancellation: &'a rg_std::CancellationToken,
+    pub(crate) cancellation: &'a CancellationToken,
 }
 
 impl CurrentDeclarationBuilder<'_> {
     /// An associated item sits directly inside the impl or trait's member list.
-    pub(crate) fn associated_owner(
-        syntax: &rg_syntax::SyntaxNode,
-    ) -> Option<rg_syntax::SyntaxNode> {
+    pub(crate) fn associated_owner(syntax: &SyntaxNode) -> Option<SyntaxNode> {
         let list = syntax.parent()?;
         ast::AssocItemList::cast(list.clone())?;
         list.parent()
@@ -77,22 +76,26 @@ impl CurrentDeclarationBuilder<'_> {
             return Ok(None);
         };
         if let Some(trait_) = owner.and_then(ast::Trait::cast) {
-            let kind = ItemKind::Trait(TraitItem::from_ast(&trait_, vec![member]));
-            let name = trait_.name();
-            let name_span = name
-                .as_ref()
-                .map(|name| Span::from_text_range(name.syntax().text_range()));
-            let name = name.map(|name| Name::new(name.text()));
             let source = self.source(trait_.syntax());
-            let node = ItemNode::source(
-                kind,
-                name,
-                name_span,
-                VisibilityLevel::from_ast(&trait_.visibility(), ()),
-                <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&trait_, OuterDocs),
-                source.span,
-                source.file_id,
-            );
+            let node = self.with_sources(|locations| {
+                let kind = ItemKind::Trait(TraitItem::from_ast(
+                    &trait_,
+                    (vec![member], &mut *locations),
+                ));
+                let name = trait_.name();
+                let name_location = name
+                    .as_ref()
+                    .map(|name| locations.record(name.syntax().text_range()));
+                ItemNode::new(
+                    kind,
+                    name.map(|name| Name::new(name.text())),
+                    name_location,
+                    VisibilityLevel::from_ast(&trait_.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&trait_, OuterDocs),
+                    locations.record_as(trait_.syntax().text_range(), SourceRole::Declaration),
+                    source.file_id,
+                )
+            });
             return Ok(Some(self.items.alloc(node, source)));
         }
         Ok(Some(member))
@@ -138,29 +141,41 @@ impl CurrentDeclarationBuilder<'_> {
         }
         // TODO: Relate this temporary impl to the saved impl it shadows. Removed or renamed
         // members can still arrive from saved lookup; current same-name members take precedence.
-        let kind = ItemKind::Impl(ImplItem::from_ast(impl_, members));
         let source = self.source(impl_.syntax());
-        let node = ItemNode::source(
-            kind,
-            None,
-            None,
-            VisibilityLevel::from_ast(&impl_.visibility(), ()),
-            <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(impl_, OuterDocs),
-            source.span,
-            source.file_id,
-        );
+        let node = self.with_sources(|locations| {
+            let kind = ItemKind::Impl(ImplItem::from_ast(impl_, (members, &mut *locations)));
+            ItemNode::new(
+                kind,
+                None,
+                None,
+                VisibilityLevel::from_ast(&impl_.visibility(), ()),
+                <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(impl_, OuterDocs),
+                locations.record_as(impl_.syntax().text_range(), SourceRole::Declaration),
+                source.file_id,
+            )
+        });
         Ok(self.items.alloc(node, source))
     }
 
     fn declaration(&mut self, item: &ast::Item) -> Option<ItemTreeId> {
         let source = self.source(item.syntax());
-        let name_span =
-            LocalItemLowering::name_syntax(item).map(|name| self.source(name.syntax()).span);
-        let node = LocalItemLowering::declaration(item, source, name_span)?;
+        let node =
+            self.with_sources(|locations| LocalItemLowering::declaration(item, source, locations))?;
         Some(self.items.alloc(node, source))
     }
 
-    fn source(&self, syntax: &rg_syntax::SyntaxNode) -> BodySource {
+    fn with_sources<T>(&mut self, lower: impl FnOnce(&mut dyn RecordSource) -> T) -> T {
+        let mut map = |range, _| SourceLocation {
+            span: Span::from_text_range(range),
+            editable: true,
+        };
+        let mut sources = self.items.locations.start_owner(&mut map);
+        let result = lower(&mut sources);
+        self.items.locations.finish_owner(sources);
+        result
+    }
+
+    fn source(&self, syntax: &SyntaxNode) -> BodySource {
         BodySource::written(self.file, Span::from_text_range(syntax.text_range()))
     }
 }

@@ -4,21 +4,28 @@ mod saved;
 
 use std::sync::Arc;
 
-use rg_def_map::DefMap;
+use rg_def_map::{DefMap, ItemSource, ItemSourceKind};
 use rg_ir_model::{
-    BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, LocalDefRef,
-    SemanticItemRef, Span,
+    BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, ImplRef,
+    LocalDefRef, ModuleRef, SemanticItemRef, SourceId, SourceLocation, Span,
 };
+use rg_item_tree::SourceLocations;
 use rg_semantic_ir::{
-    BodyOwnerData, SemanticItemSource, SemanticItemView, TargetDeclarationReader,
+    BodyOwnerData, SavedDeclarationSourceView, SemanticItemSource, SemanticItemView,
+    TargetDeclarationReader,
 };
 use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
 use self::saved::SavedBodyReader;
-use crate::{BodyLocalItems, BodyView, CurrentSourceStore};
+use crate::{BodyLocalItems, BodySourceItems, BodyView, CurrentSourceStore};
 
 pub(crate) trait BodySource: Send + Sync + std::fmt::Debug {
+    fn declaration_source(
+        &self,
+        krate: CrateRef,
+        source: ItemSource,
+    ) -> Result<DeclarationSourceView<'_>, ReadError>;
     fn files(&self, krate: CrateRef) -> Result<UniqueVec<FileId>, ReadError>;
     fn bodies(
         &self,
@@ -42,6 +49,39 @@ pub struct BodyReader<'db> {
 }
 
 impl<'db> BodyReader<'db> {
+    /// Open the table that owns a declaration's occurrence IDs. A rebuilt body or current impl
+    /// header supplies its own table; other declarations use their saved source. The source
+    /// identity decides this, rather than whether the same file happens to be open in the editor.
+    pub fn declaration_source(
+        &self,
+        krate: CrateRef,
+        source: ItemSource,
+    ) -> Result<DeclarationSourceView<'_>, ReadError> {
+        if let ItemSourceKind::Body(source) = source.kind
+            && let Some(items) = self.current.source_items(source.body)
+        {
+            return Ok(DeclarationSourceView::Body(items));
+        }
+        self.saved.declaration_source(krate, source)
+    }
+
+    /// Resolve one required occurrence. When walking several occurrences from the same source,
+    /// open [`Self::declaration_source`] once and use its [`SourceLocations`] interface instead.
+    pub fn declaration_location(
+        &self,
+        krate: CrateRef,
+        source: ItemSource,
+        occurrence: SourceId,
+    ) -> Result<SourceLocation, ReadError> {
+        self.declaration_source(krate, source)?
+            .location(occurrence)
+            .ok_or_else(|| {
+                ReadError::Query(ajika::Error::application(
+                    "declaration occurrence is absent",
+                ))
+            })
+    }
+
     pub fn new(db: &'db QueryContext<'db>, declarations: &TargetDeclarationReader<'db>) -> Self {
         Self::from_source(Arc::new(SavedBodyReader::new(db, declarations.targets())))
     }
@@ -64,7 +104,7 @@ impl<'db> BodyReader<'db> {
         self.current.contains_body(body_ref)
     }
 
-    pub fn is_current_origin(&self, origin: rg_ir_model::DefMapRef) -> bool {
+    pub fn is_current_origin(&self, origin: DefMapRef) -> bool {
         self.current.contains_origin(origin)
     }
 
@@ -72,15 +112,12 @@ impl<'db> BodyReader<'db> {
         &self,
         crate_ref: CrateRef,
         file: FileId,
-    ) -> impl Iterator<Item = rg_ir_model::DefMapRef> + '_ {
+    ) -> impl Iterator<Item = DefMapRef> + '_ {
         self.current.signature_origins(crate_ref, file)
     }
 
     /// Header-only modules borrow saved names; body-owned modules retain lexical parent lookup.
-    pub fn signature_lookup_module(
-        &self,
-        module: rg_ir_model::ModuleRef,
-    ) -> Result<rg_ir_model::ModuleRef, ReadError> {
+    pub fn signature_lookup_module(&self, module: ModuleRef) -> Result<ModuleRef, ReadError> {
         if let Some(fallback) = self.current.declaration_fallback(module) {
             return Ok(fallback);
         }
@@ -98,7 +135,7 @@ impl<'db> BodyReader<'db> {
         crate_ref: CrateRef,
         file: FileId,
         span: Span,
-    ) -> Option<rg_ir_model::ImplRef> {
+    ) -> Option<ImplRef> {
         self.current.selected_impl(crate_ref, file, span)
     }
 
@@ -151,8 +188,17 @@ impl<'db> BodyReader<'db> {
         offset: u32,
         owner_start: Option<u32>,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
+        let mut selected = Vec::new();
+        for owner in self.owners(crate_ref)?.filter(|owner| owner.file == file) {
+            let span = self
+                .declaration_location(crate_ref, owner.source, owner.location)?
+                .span;
+            if span.touches(offset) || owner_start == Some(span.start) {
+                selected.push(owner.owner);
+            }
+        }
         self.bodies_matching(crate_ref, Some(file), &|owner| {
-            owner.span.touches(offset) || owner_start == Some(owner.span.start)
+            selected.contains(&owner.owner)
         })
     }
 
@@ -265,5 +311,27 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
             .map(BodyLocalItems::item_store)
             .map(|items| items.semantic_items().collect())
             .unwrap_or_default())
+    }
+}
+
+/// A declaration's meaning carries an [`ItemSource`]; this view joins it to the selected snapshot.
+///
+/// Saved file and expansion sources need the tables opened by [`SavedDeclarationSourceView`].
+/// Body sources already contain resolved locations, so this view borrows their [`BodySourceItems`]
+/// instead. The body can be saved or rebuilt for this request; [`BodyReader`] chooses it first.
+///
+/// Both forms expose [`SourceLocations`], keeping the navigation/editability distinction the same
+/// for source scanners regardless of where the declaration was lowered.
+pub enum DeclarationSourceView<'a> {
+    Saved(SavedDeclarationSourceView<'a>),
+    Body(&'a BodySourceItems),
+}
+
+impl SourceLocations for DeclarationSourceView<'_> {
+    fn location(&self, occurrence: SourceId) -> Option<SourceLocation> {
+        match self {
+            Self::Saved(source) => source.location(occurrence),
+            Self::Body(source) => source.location(occurrence),
+        }
     }
 }

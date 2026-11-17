@@ -4,10 +4,12 @@
 //! rename a builtin or bring a different derive with that name into scope.
 
 use rg_cfg_eval::{CfgExpr, CfgGate, CfgPredicate};
-use rg_ir_model::{CrateRef, Path, Span};
+use rg_ir_model::{CrateRef, Path, SourceId};
 use rg_std::{MemorySize, Shrink};
-use rg_syntax::{AstNode as _, T, ast};
+use rg_syntax::{AstNode as _, T, TextRange, ast};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::RecordSource;
 
 /// Construction-only attributes for derives on one struct or enum.
 ///
@@ -26,9 +28,13 @@ pub struct DeriveAttrs {
 }
 
 impl DeriveAttrs {
-    pub(crate) fn from_struct(item: &ast::Struct, dollar_crate: Option<CrateRef>) -> Self {
+    pub(crate) fn from_struct(
+        item: &ast::Struct,
+        dollar_crate: Option<CrateRef>,
+        source: &mut dyn RecordSource,
+    ) -> Self {
         let mut attrs = Self {
-            calls: DeriveMacroCall::from_attrs(item, dollar_crate),
+            calls: DeriveMacroCall::from_attrs(item, dollar_crate, source),
             ..Self::default()
         };
         if !attrs.calls.is_empty() {
@@ -37,9 +43,13 @@ impl DeriveAttrs {
         attrs
     }
 
-    pub(crate) fn from_enum(item: &ast::Enum, dollar_crate: Option<CrateRef>) -> Self {
+    pub(crate) fn from_enum(
+        item: &ast::Enum,
+        dollar_crate: Option<CrateRef>,
+        source: &mut dyn RecordSource,
+    ) -> Self {
         let mut attrs = Self {
-            calls: DeriveMacroCall::from_attrs(item, dollar_crate),
+            calls: DeriveMacroCall::from_attrs(item, dollar_crate, source),
             ..Self::default()
         };
         if !attrs.calls.is_empty()
@@ -95,7 +105,7 @@ impl DeriveAttrs {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct DeriveMacroCall {
     pub path: Path,
-    pub span: Span,
+    pub location: SourceId,
     pub predicate: Option<CfgPredicate>,
 }
 
@@ -103,6 +113,7 @@ impl DeriveMacroCall {
     pub(crate) fn from_attrs(
         item: &impl ast::HasAttrs,
         dollar_crate: Option<CrateRef>,
+        source: &mut dyn RecordSource,
     ) -> Vec<Self> {
         let mut calls = Vec::new();
         Self::visit_attrs(item, |meta, predicate| {
@@ -113,9 +124,9 @@ impl DeriveMacroCall {
                 return;
             }
             calls.extend(
-                Self::parse_paths(tokens, dollar_crate).map(|(path, span)| Self {
+                Self::parse_paths(tokens, dollar_crate).map(|(path, range)| Self {
                     path,
-                    span,
+                    location: source.record(range),
                     predicate: predicate.clone(),
                 }),
             );
@@ -203,9 +214,9 @@ impl DeriveMacroCall {
     fn parse_paths(
         tokens: ast::TokenTree,
         dollar_crate: Option<CrateRef>,
-    ) -> impl Iterator<Item = (Path, Span)> {
+    ) -> impl Iterator<Item = (Path, TextRange)> {
         let mut path_text = String::new();
-        let mut range = None::<rg_syntax::TextRange>;
+        let mut range = None::<TextRange>;
         tokens
             .syntax()
             .children_with_tokens()
@@ -217,7 +228,7 @@ impl DeriveMacroCall {
                 if matches!(token.kind(), T![,] | T![')']) {
                     let path = range.take().and_then(|range| {
                         Path::from_macro_path_text(&path_text, dollar_crate)
-                            .map(|path| (path, Span::from_text_range(range)))
+                            .map(|path| (path, range))
                     });
                     path_text.clear();
                     path

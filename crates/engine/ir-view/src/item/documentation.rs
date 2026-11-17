@@ -7,7 +7,7 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
-use rg_item_tree::{DocumentationPlacement, FromAst, TypePath, TypeRef};
+use rg_item_tree::{DocumentationPlacement, FromAst, NoSource, TypePath, TypeRef};
 use rg_parse::parse_source_file;
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -143,7 +143,8 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
         if ty.syntax().text() != destination {
             return None;
         }
-        let TypeRef::Path(type_path) = TypeRef::from_ast(&ast::Type::PathType(ty), ()) else {
+        let TypeRef::Path(type_path) = TypeRef::from_ast(&ast::Type::PathType(ty), &mut NoSource)
+        else {
             return None;
         };
         Some((type_path, disambiguator))

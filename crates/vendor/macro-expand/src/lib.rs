@@ -11,15 +11,17 @@ mod builtins;
 mod mbe;
 
 use anyhow::Context as _;
-use rg_syntax::{AstNode as _, Parse, SyntaxNode, TextRange, ast};
-pub use rg_tt::{span::Edition, tt::TopSubtree};
+use rg_syntax::{AstNode as _, Parse, SyntaxNode, ast};
 use rg_tt::{
+    TokenOrigins, TokenOwner,
     span::SyntaxContext,
     syntax_bridge::{
-        ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree, token_tree_to_syntax_node,
+        ExpansionSpanMap, SpanFactory, TokenSourceMap, syntax_node_to_token_tree,
+        token_tree_to_syntax_node,
     },
     tt::{Delimiter, DelimiterKind, Ident, Leaf, Punct, Spacing, TopSubtreeBuilder},
 };
+pub use rg_tt::{span::Edition, tt::TopSubtree};
 
 pub use self::builtins::{CfgSelect, CfgSelectArm};
 
@@ -71,12 +73,13 @@ impl DeclarativeMacro {
         edition: Edition,
         package: u32,
         file_id: u32,
+        sources: &mut TokenSourceMap,
     ) -> anyhow::Result<Self> {
         let body = item
             .token_tree()
             .context("while attempting to fetch macro_rules body")?;
-        let span_factory = SpanFactory::new(package, file_id, edition);
-        let body = syntax_node_to_token_tree(&body, span_factory);
+        let span_factory = SpanFactory::new(package, file_id, TokenOwner::Declaration(0), edition);
+        let body = syntax_node_to_token_tree(&body, span_factory, sources);
         let inner = mbe::DeclarativeMacro::parse_macro_rules(&body, move |ctx| ctx.edition());
         Ok(Self { inner, edition })
     }
@@ -93,15 +96,16 @@ impl DeclarativeMacro {
         edition: Edition,
         package: u32,
         file_id: u32,
+        sources: &mut TokenSourceMap,
     ) -> anyhow::Result<Self> {
-        let span_factory = SpanFactory::new(package, file_id, edition);
+        let span_factory = SpanFactory::new(package, file_id, TokenOwner::Declaration(0), edition);
         let args = item
             .args()
-            .map(|args| syntax_node_to_token_tree(&args, span_factory));
+            .map(|args| syntax_node_to_token_tree(&args, span_factory, sources));
         let body = item
             .body()
             .context("while attempting to fetch macro body")?;
-        let body = syntax_node_to_token_tree(&body, span_factory);
+        let body = syntax_node_to_token_tree(&body, span_factory, sources);
         let inner =
             mbe::DeclarativeMacro::parse_macro2(args.as_ref(), &body, move |ctx| ctx.edition());
         Ok(Self { inner, edition })
@@ -124,13 +128,14 @@ impl DeclarativeMacro {
         package: u32,
         file_id: u32,
         parse_kind: ExpansionParseKind,
+        sources: &mut TokenSourceMap,
     ) -> anyhow::Result<ExpansionSyntax> {
         let args = call
             .token_tree()
             .context("while attempting to fetch macro call arguments")?;
-        let span_factory = SpanFactory::new(package, file_id, self.edition);
-        let call_site = span_factory.span_for(call.syntax().text_range());
-        let args = syntax_node_to_token_tree(&args, span_factory);
+        let span_factory = SpanFactory::new(package, file_id, TokenOwner::Body, self.edition);
+        let call_site = sources.record(span_factory, call.syntax().text_range());
+        let args = syntax_node_to_token_tree(&args, span_factory, sources);
         let expanded = self.inner.expand(
             &args,
             |_| {},
@@ -193,9 +198,9 @@ impl ExpansionSyntax {
     pub fn from_builtin_arguments(args: &TopSubtree) -> Self {
         let delimiter = args.top_subtree().delimiter;
         let mut generated = delimiter.open;
-        // Wrapper names are parser scaffolding. Empty ranges prevent them from looking like
-        // copied input tokens when the body source map checks their origin and length.
-        generated.range = TextRange::empty(generated.range.start());
+        // Wrapper names are parser scaffolding. Mark their origins as synthetic so the body
+        // source map cannot mistake them for copied input tokens.
+        generated.origins = TokenOrigins::synthetic(generated.origins.first());
         let mut builder = TopSubtreeBuilder::new(Delimiter::invisible_spanned(generated));
         builder.push(Leaf::Ident(Ident::new("builtin", generated)));
         builder.push(Leaf::Punct(Punct {
@@ -226,6 +231,7 @@ impl ExpansionSyntax {
 mod tests {
     use expect_test::{Expect, expect};
     use rg_syntax::ast;
+    use rg_tt::{TokenOwner, syntax_bridge::TokenSourceMap};
 
     use super::*;
 
@@ -237,16 +243,25 @@ mod tests {
         let outer_source = "macro_rules! outer { ($value:expr) => { inner!($value, Template) }; }";
         let inner_source =
             "macro_rules! inner { ($value:expr, $name:ident) => { ($value, $name, Helper) }; }";
-        let [outer, inner] = [(1, outer_source), (2, inner_source)].map(|(package, source)| {
-            let file = ast::SourceFile::parse(source, Edition::CURRENT).tree();
-            let definition = file
-                .syntax()
-                .descendants()
-                .find_map(ast::MacroRules::cast)
-                .expect("fixture contains a macro definition");
-            DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, package, 7)
-                .expect("fixture macro should compile")
-        });
+        let [(outer, outer_sources), (inner, inner_sources)] =
+            [(1, outer_source), (2, inner_source)].map(|(package, source)| {
+                let file = ast::SourceFile::parse(source, Edition::CURRENT).tree();
+                let definition = file
+                    .syntax()
+                    .descendants()
+                    .find_map(ast::MacroRules::cast)
+                    .expect("fixture contains a macro definition");
+                let mut sources = TokenSourceMap::default();
+                let mac = DeclarativeMacro::from_macro_rules(
+                    &definition,
+                    Edition::CURRENT,
+                    package,
+                    7,
+                    &mut sources,
+                )
+                .expect("fixture macro should compile");
+                (mac, sources)
+            });
         let caller_source = "outer!(input);";
         let file = ast::SourceFile::parse(caller_source, Edition::CURRENT).tree();
         let call = file
@@ -254,8 +269,9 @@ mod tests {
             .descendants()
             .find_map(ast::MacroCall::cast)
             .expect("fixture contains a macro call");
+        let mut caller_sources = TokenSourceMap::default();
         let expanded = outer
-            .expand_call(&call, 0, 7, ExpansionParseKind::Expr)
+            .expand_call(&call, 0, 7, ExpansionParseKind::Expr, &mut caller_sources)
             .expect("outer macro should expand");
         let nested = expanded
             .parse
@@ -270,8 +286,10 @@ mod tests {
                 .span_for_range(range)
                 .expect("expanded tokens have source spans")
         });
-        let call_site =
-            SpanFactory::new(0, 7, Edition::CURRENT).span_for(call.syntax().text_range());
+        let call_site = caller_sources.record(
+            SpanFactory::new(0, 7, TokenOwner::Body, Edition::CURRENT),
+            call.syntax().text_range(),
+        );
         let expanded = inner
             .expand_call_tokens(&args, call_site, ExpansionParseKind::Expr)
             .expect("inner macro should expand");
@@ -291,14 +309,23 @@ mod tests {
                 .expect("expanded tuple contains the expected token");
             let start = u32::try_from(source.find(name).expect("source contains the token"))
                 .expect("fixture offset fits u32");
-            let expected = SpanFactory::new(package, 7, Edition::CURRENT).span_for(TextRange::at(
-                TextSize::new(start),
-                TextSize::new(u32::try_from(name.len()).expect("fixture token length fits u32")),
-            ));
+            let expected = TextRange::at(TextSize::new(start), TextSize::new(name.len() as u32));
+            let origin = expanded
+                .span_map
+                .span_for_range(token.text_range())
+                .expect("expanded token has an origin");
+            assert_eq!(origin.anchor.package, package, "origin of {name}");
+            assert_eq!(origin.anchor.file_id.raw_file_id(), 7);
+            let sources = match package {
+                0 => &caller_sources,
+                1 => &outer_sources,
+                2 => &inner_sources,
+                _ => unreachable!(),
+            };
             assert_eq!(
-                expanded.span_map.span_for_range(token.text_range()),
+                sources.resolve(origin.origins),
                 Some(expected),
-                "nested expansion should preserve the full origin of {name}",
+                "source of {name}"
             );
         }
     }
@@ -329,10 +356,12 @@ forward! {
             .descendants()
             .find_map(ast::MacroCall::cast)
             .expect("fixture contains macro call");
-        let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0, 0)
-            .expect("macro should compile");
+        let mut sources = TokenSourceMap::default();
+        let mac =
+            DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0, 0, &mut sources)
+                .expect("macro should compile");
         let expansion = mac
-            .expand_call(&call, 0, 0, ExpansionParseKind::Items)
+            .expand_call(&call, 0, 0, ExpansionParseKind::Items, &mut sources)
             .expect("documented item should expand");
         assert!(expansion.parse.errors().is_empty());
         let module = expansion
@@ -365,7 +394,12 @@ forward! {
             .span_map
             .span_for_range_in_file(strings[0].syntax().text_range(), 0, 0)
             .expect("generated doc attribute should map to its comment");
-        assert_eq!(&source[span.range], "/// Outer \"quoted\" café.");
+        assert_eq!(
+            &source[sources
+                .resolve(span.origins)
+                .expect("retained token source")],
+            "/// Outer \"quoted\" café."
+        );
     }
 
     #[test]
@@ -406,10 +440,17 @@ documented! {
                 .descendants()
                 .find_map(ast::MacroCall::cast)
                 .expect("fixture contains macro call");
-            let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0, 0)
-                .expect("identity macro should compile");
+            let mut sources = TokenSourceMap::default();
+            let mac = DeclarativeMacro::from_macro_rules(
+                &definition,
+                Edition::CURRENT,
+                0,
+                0,
+                &mut sources,
+            )
+            .expect("identity macro should compile");
             let expanded = mac
-                .expand_call(&call, 0, 0, ExpansionParseKind::Expr)
+                .expand_call(&call, 0, 0, ExpansionParseKind::Expr, &mut sources)
                 .expect("identity macro should retain malformed expression tokens");
 
             assert!(
@@ -432,7 +473,13 @@ documented! {
                 .span_map
                 .span_for_range_in_file(literal.text_range(), 0, 0)
                 .expect("recovered token should map to macro input");
-            assert_eq!(&source[span.range], "1e3", "{expression}");
+            assert_eq!(
+                &source[sources
+                    .resolve(span.origins)
+                    .expect("retained token source")],
+                "1e3",
+                "{expression}"
+            );
         }
     }
 
@@ -790,15 +837,23 @@ make!(Generated);
         let body = macro_rules
             .token_tree()
             .expect("macro_rules fixture should have a body");
-        syntax_node_to_token_tree(&body, SpanFactory::new(0, 0, Edition::CURRENT))
+        syntax_node_to_token_tree(
+            &body,
+            SpanFactory::new(0, 0, TokenOwner::Declaration(0), Edition::CURRENT),
+            &mut TokenSourceMap::default(),
+        )
     }
 
     fn stored_call_args(call: &ast::MacroCall) -> (TopSubtree, rg_tt::Span) {
-        let span_factory = SpanFactory::new(0, 0, Edition::CURRENT);
-        let call_site = span_factory.span_for(call.syntax().text_range());
+        let span_factory = SpanFactory::new(0, 0, TokenOwner::Body, Edition::CURRENT);
+        let mut sources = TokenSourceMap::default();
+        let call_site = sources.record(span_factory, call.syntax().text_range());
         let args = call
             .token_tree()
             .expect("macro call fixture should have arguments");
-        (syntax_node_to_token_tree(&args, span_factory), call_site)
+        (
+            syntax_node_to_token_tree(&args, span_factory, &mut sources),
+            call_site,
+        )
     }
 }

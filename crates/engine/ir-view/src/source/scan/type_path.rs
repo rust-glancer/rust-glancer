@@ -18,7 +18,7 @@
 //! ```
 
 use rg_ir_model::{Path, Span};
-use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypeRef};
+use rg_item_tree::{GenericArg, SourceLocations, TypePath, TypePathAnchor, TypeRef};
 
 use super::{AssociatedPathQualifier, TypeNamePosition};
 
@@ -45,9 +45,18 @@ impl TypePathCompletionSite {
     /// In `outer::Inn$0`, `outer` is the qualifier and `Inn` is the replacement span. Recovered
     /// syntax such as `outer::$0` has no final segment, so it receives an empty replacement span
     /// after the separator instead.
-    pub(super) fn at(path: &TypePath, offset: u32, position: TypeNamePosition) -> Option<Self> {
+    pub(super) fn at(
+        path: &TypePath,
+        offset: u32,
+        position: TypeNamePosition,
+        locations: &dyn SourceLocations,
+    ) -> Option<Self> {
         for (idx, segment) in path.segments.iter().enumerate() {
-            if !segment.span.touches(offset) {
+            // A macro may supply the qualifier while copying the edited segment from its input.
+            let Some(span) = locations.editable_span(segment.location) else {
+                continue;
+            };
+            if !span.touches(offset) {
                 continue;
             }
 
@@ -56,19 +65,15 @@ impl TypePathCompletionSite {
                     return Some(Self::Qualified {
                         module_qualifier: None,
                         associated_qualifier: Self::associated_qualifier(path, 0)?,
-                        member_prefix_span: segment.span,
+                        member_prefix_span: span,
                     });
                 }
                 if path.absolute {
                     return None;
                 }
                 return Some(Self::Unqualified {
-                    member_prefix_span: segment.span,
-                    member_prefix: identifier_prefix_at(
-                        segment.name.as_str(),
-                        segment.span,
-                        offset,
-                    ),
+                    member_prefix_span: span,
+                    member_prefix: identifier_prefix_at(segment.name.as_str(), span, offset),
                     position,
                 });
             }
@@ -76,16 +81,18 @@ impl TypePathCompletionSite {
             return Some(Self::Qualified {
                 module_qualifier: path.as_def_map_path_prefix(idx - 1),
                 associated_qualifier: Self::associated_qualifier(path, idx)?,
-                member_prefix_span: segment.span,
+                member_prefix_span: span,
             });
         }
 
         let last_segment = path.segments.last()?;
+        let last_span = locations.editable_span(last_segment.location)?;
+        let source_span = locations.editable_span(path.location)?;
         // Generic argument text also extends past the segment name. That suffix must not be
         // mistaken for the synthetic empty segment recovered after a trailing `::`.
         if !last_segment.args.is_empty()
-            || path.source_span.end != last_segment.span.end + 2
-            || !(last_segment.span.end..=path.source_span.end).contains(&offset)
+            || source_span.end != last_span.end + 2
+            || !(last_span.end..=source_span.end).contains(&offset)
         {
             return None;
         }
@@ -123,7 +130,7 @@ impl TypePathCompletionSite {
         }
 
         Some(AssociatedPathQualifier::Type(TypeRef::Path(TypePath {
-            source_span: path.source_span,
+            location: path.location,
             absolute: path.absolute,
             anchor: path.anchor.clone(),
             segments: path.segments[..prefix_segment_count].to_vec(),
@@ -159,22 +166,22 @@ impl AssociatedTypeBindingSyntax {
     ///
     /// All bindings are removed from the returned trait path. They constrain the trait use, but
     /// they do not participate in resolving which trait declaration owns the candidate names.
-    pub(super) fn explicit_at(path: &TypePath, offset: u32) -> Option<Self> {
+    pub(super) fn explicit_at(
+        path: &TypePath,
+        offset: u32,
+        locations: &dyn SourceLocations,
+    ) -> Option<Self> {
         for (segment_idx, segment) in path.segments.iter().enumerate() {
-            let Some(touched_arg_idx) = segment.args.iter().position(|arg| {
-                matches!(
-                    arg,
-                    GenericArg::AssocType { name_span, .. } if name_span.touches(offset)
-                )
-            }) else {
-                continue;
-            };
-            let GenericArg::AssocType {
-                name_span: member_prefix_span,
-                ..
-            } = &segment.args[touched_arg_idx]
+            let Some((touched_arg_idx, member_prefix_span)) =
+                segment.args.iter().enumerate().find_map(|(idx, arg)| {
+                    let GenericArg::AssocType { name_location, .. } = arg else {
+                        return None;
+                    };
+                    let span = locations.editable_span(*name_location)?;
+                    span.touches(offset).then_some((idx, span))
+                })
             else {
-                unreachable!("the selected generic argument is an associated type binding")
+                continue;
             };
 
             let existing_bindings = segment
@@ -203,12 +210,12 @@ impl AssociatedTypeBindingSyntax {
                 .retain(|arg| !matches!(arg, GenericArg::AssocType { .. }));
             return Some(Self {
                 trait_ref: TypeRef::Path(TypePath {
-                    source_span: path.source_span,
+                    location: path.location,
                     absolute: path.absolute,
                     anchor: path.anchor.clone(),
                     segments,
                 }),
-                member_prefix_span: *member_prefix_span,
+                member_prefix_span,
                 existing_bindings,
             });
         }
@@ -220,7 +227,11 @@ impl AssociatedTypeBindingSyntax {
     /// `Iterator<It$0>` is syntactically indistinguishable from an ordinary type argument. The
     /// candidate argument is removed from the trait path before resolution, and the caller uses
     /// this site only as an overlay while keeping normal type completions.
-    pub(super) fn implicit_at(path: &TypePath, offset: u32) -> Option<Self> {
+    pub(super) fn implicit_at(
+        path: &TypePath,
+        offset: u32,
+        locations: &dyn SourceLocations,
+    ) -> Option<Self> {
         for (segment_idx, segment) in path.segments.iter().enumerate() {
             for (arg_idx, arg) in segment.args.iter().enumerate() {
                 let GenericArg::Type(TypeRef::Path(binding_path)) = arg else {
@@ -233,7 +244,11 @@ impl AssociatedTypeBindingSyntax {
                     continue;
                 }
                 let binding_segment = &binding_path.segments[0];
-                if !binding_segment.args.is_empty() || !binding_segment.span.touches(offset) {
+                let Some(member_prefix_span) = locations.editable_span(binding_segment.location)
+                else {
+                    continue;
+                };
+                if !binding_segment.args.is_empty() || !member_prefix_span.touches(offset) {
                     continue;
                 }
 
@@ -265,12 +280,12 @@ impl AssociatedTypeBindingSyntax {
                     .collect();
                 return Some(Self {
                     trait_ref: TypeRef::Path(TypePath {
-                        source_span: path.source_span,
+                        location: path.location,
                         absolute: path.absolute,
                         anchor: path.anchor.clone(),
                         segments,
                     }),
-                    member_prefix_span: binding_segment.span,
+                    member_prefix_span,
                     existing_bindings,
                 });
             }

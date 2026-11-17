@@ -6,7 +6,7 @@ use std::{
 
 use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
-    GeneratedItemStore,
+    GeneratedItemStore, GeneratedSourceStore,
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
@@ -110,7 +110,7 @@ impl BenchWorkspace {
             .collect();
         let files: Vec<_> = files.into_iter().collect();
         db.parallel_map(&files, |db, &(package, file)| {
-            file_declarations(db, package, file)
+            file_declarations(db, package, file)?.items.value(db)
         })
     }
 
@@ -178,7 +178,15 @@ impl PreparedScopes {
 #[derive(Default)]
 pub(crate) struct Declarations {
     definitions: HashMap<CrateRef, CrateData>,
-    items: HashMap<CrateRef, (ItemStore, ItemLookupEnv, ItemLookupIndex)>,
+    items: HashMap<
+        CrateRef,
+        (
+            ItemStore,
+            ItemLookupEnv,
+            ItemLookupIndex,
+            GeneratedSourceStore,
+        ),
+    >,
 }
 
 impl CrateDataSource for Declarations {
@@ -192,7 +200,7 @@ impl CrateItemSource for Declarations {
         Ok(item
             .origin()
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
             .and_then(|items| items.semantic_item_view(item)))
     }
 
@@ -203,7 +211,7 @@ impl CrateItemSource for Declarations {
         Ok(definition
             .origin
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
             .and_then(|items| {
                 items
                     .item_for_local_def(definition.local_def)
@@ -214,7 +222,7 @@ impl CrateItemSource for Declarations {
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
         Ok(origin
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
             .map(|items| items.semantic_items().collect())
             .unwrap_or_default())
     }
@@ -223,11 +231,11 @@ impl CrateItemSource for Declarations {
         Ok(self
             .items
             .get(&krate)
-            .map(|(items, _, _)| items.lang_items()))
+            .map(|(items, _, _, _)| items.lang_items()))
     }
 
     fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
-        Ok(self.items.get(&krate).map(|(_, env, _)| env))
+        Ok(self.items.get(&krate).map(|(_, env, _, _)| env))
     }
 
     fn lookup_candidates(
@@ -239,7 +247,7 @@ impl CrateItemSource for Declarations {
             .1
             .visible_crates()
             .iter()
-            .filter_map(|krate| self.items.get(krate).map(|(_, _, index)| index));
+            .filter_map(|krate| self.items.get(krate).map(|(_, _, index, _)| index));
         Ok(question.answer(indexes.flat_map(|index| index.shards_for(question))))
     }
 

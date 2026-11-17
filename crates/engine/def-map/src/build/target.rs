@@ -129,7 +129,14 @@ impl TargetCrateSources<'_> {
             .filter(|&file| self.trees.file(file).is_none())
             .collect();
         let trees = self.db.parallel_map(&files, |db, &file| {
-            file_declarations(db, self.package, file)
+            let declarations = file_declarations(db, self.package, file)?;
+            let tree = declarations.items.value(db)?;
+            if tree.source_sensitive {
+                // Recovery and unsupported payloads can omit facts from the lowered header.
+                // Keep observing exact text even if the supported declaration facts compare equal.
+                SourceInput::entry(db, file)?;
+            }
+            Ok(tree)
         })?;
         self.trees.extend_files(trees);
         self.module_paths.extend(

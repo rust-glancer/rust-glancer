@@ -19,15 +19,17 @@ use rg_item_tree::{
     ItemTreeId, ItemTreeRef, ItemTrees, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
     ModuleItem, ModuleSource, UseImport, UseItem, VisibilityLevel,
 };
-use rg_parse::ModuleFileContext;
+use rg_parse::{ModuleFileContext, syntax_edition};
 use rg_text::Name;
+use rg_tt::{TokenOwner, syntax_bridge::SpanFactory};
 use rg_workspace::TargetKind;
 
 use crate::{
-    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
-    ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
-    MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
-    NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
+    GeneratedItemRef, GeneratedLocations, GeneratedSourceId, ImportBinding, ImportData, ImportKind,
+    ImportPath, ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData,
+    MacroDefinitionData, MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation,
+    ModuleFileSelection, ModuleOrigin, NameBinding, NameBindingProvenance, Namespace, NamespaceSet,
+    Visibility,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
         crates::CrateBuilder,
@@ -385,6 +387,30 @@ impl<'a> DeclarationCollector<'a> {
         placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) {
+        let call_site = match source.kind {
+            ItemSourceKind::ItemTree(_) => SpanFactory::new(
+                u32::try_from(self.state.crate_ref.package.0).expect("package fits token origin"),
+                item.file_id.as_raw(),
+                TokenOwner::Declaration(item.location.owner),
+                syntax_edition(self.state.edition),
+            )
+            .span_for(item.location.local),
+            ItemSourceKind::Generated(generated) => {
+                let data = self
+                    .state
+                    .def_map_builder
+                    .generated_source(generated.source)
+                    .expect("generated call source exists");
+                let GeneratedLocations::Expansion(locations) = &data.locations else {
+                    unreachable!("synthetic derives contain no macro calls");
+                };
+                locations
+                    .get(item.location)
+                    .expect("generated call occurrence exists")
+                    .origin
+            }
+            _ => unreachable!("crate macro calls have declaration sources"),
+        };
         let (source, dollar_crate) = match source.kind {
             ItemSourceKind::Generated(generated) => (
                 self.state
@@ -407,7 +433,7 @@ impl<'a> DeclarationCollector<'a> {
                 builtin: call.builtin.clone(),
                 dollar_crate,
                 file_id: item.file_id,
-                span: item.span,
+                call_site,
                 order,
                 placement,
                 module_file_context: context,
@@ -485,15 +511,15 @@ impl<'a> DeclarationCollector<'a> {
         let (origin, inner_docs) = match &module_item.source {
             ModuleSource::Inline { .. } => (
                 ModuleOrigin::Inline {
-                    declaration_file: item.file_id,
-                    declaration_span: item.span,
+                    declaration_source: source,
+                    declaration_location: item.location,
                 },
                 module_item.inner_docs.clone(),
             ),
             ModuleSource::OutOfLine => (
                 ModuleOrigin::OutOfLine {
-                    declaration_file: item.file_id,
-                    declaration_span: item.span,
+                    declaration_source: source,
+                    declaration_location: item.location,
                     definition_file: resolved_file.as_ref().map(|(file, _)| *file),
                     file_selection: ModuleFileSelection::from_path_override(
                         module_item.path_override.as_deref(),
@@ -518,7 +544,7 @@ impl<'a> DeclarationCollector<'a> {
         // module tree and type namespace before collecting its contents.
         let mut module = ModuleBuilder::new(origin, visibility, Some(parent_module));
         module.name = Some(name.clone());
-        module.name_span = item.name_span;
+        module.name_location = item.name_location;
         module.docs = ModuleDocumentation::new(item.docs.clone(), inner_docs);
         module.user_facing_attrs = item.user_facing_attrs;
         let child = self.state.def_map_builder.alloc_module(module);
@@ -646,8 +672,8 @@ impl<'a> DeclarationCollector<'a> {
             visibility: item.visibility.clone(),
             source,
             file_id: item.file_id,
-            name_span: item.name_span,
-            span: item.span,
+            name_location: item.name_location,
+            location: item.location,
             user_facing_attrs: item.user_facing_attrs,
         });
         self.state
@@ -694,7 +720,6 @@ impl<'a> DeclarationCollector<'a> {
             local_def_id,
             enum_item,
             visibility,
-            item.file_id,
         );
     }
 
@@ -828,7 +853,7 @@ impl<'a> DeclarationCollector<'a> {
             module: module_id,
             source,
             file_id: item.file_id,
-            span: item.span,
+            location: item.location,
         });
         self.state
             .def_map_builder
@@ -846,36 +871,20 @@ impl<'a> DeclarationCollector<'a> {
         source: ItemSource,
         use_item: &UseItem,
     ) {
-        // Written imports retain their own locations. Generated paths and aliases point at the
-        // real invocation, while their semantic paths still carry the expansion's `$crate`.
-        let (source, call_span, dollar_crate) = match source.kind {
-            ItemSourceKind::Generated(generated) => {
-                let data = self
-                    .state
-                    .def_map_builder
-                    .generated_source(generated.source)
-                    .expect("generated import source should exist");
-                (
-                    data.origin_source.into(),
-                    Some(data.origin_span),
-                    self.dollar_crate,
-                )
-            }
-            _ => (source, None, None),
+        let dollar_crate = match source.kind {
+            ItemSourceKind::Generated(_) => self.dollar_crate,
+            _ => None,
         };
         let imports: &[UseImport] = &use_item.imports;
 
         for (import_index, import) in imports.iter().enumerate() {
-            let Some(mut path) = ImportPath::from_use_path(&import.path, dollar_crate) else {
+            let Some(path) = ImportPath::from_use_path(&import.path, dollar_crate) else {
                 continue;
             };
             if path.semantic().is_empty() {
                 continue;
             }
 
-            if let Some(span) = call_span {
-                path.rebase(span);
-            }
             let visibility = self
                 .state
                 .def_map_builder
@@ -887,8 +896,8 @@ impl<'a> DeclarationCollector<'a> {
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
                 binding: ImportBinding::from_alias(&import.alias),
-                alias_span: match &import.alias {
-                    ImportAlias::Explicit { span, .. } => Some(call_span.unwrap_or(*span)),
+                alias_location: match &import.alias {
+                    ImportAlias::Explicit { location, .. } => Some(*location),
                     ImportAlias::Inferred | ImportAlias::Hidden => None,
                 },
                 source,
@@ -1010,8 +1019,8 @@ impl<'a> DeclarationCollector<'a> {
             visibility: VisibilityLevel::Public,
             source,
             file_id: item.file_id,
-            name_span: item.name_span,
-            span: item.span,
+            name_location: item.name_location,
+            location: item.location,
             user_facing_attrs: item.user_facing_attrs,
         });
         self.state

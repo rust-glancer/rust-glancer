@@ -1,5 +1,6 @@
 mod cargo_build_outputs;
 mod current_source;
+mod declaration_locations;
 mod demand_driven;
 mod file_queries;
 mod generated_modules;

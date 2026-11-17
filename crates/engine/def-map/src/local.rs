@@ -14,7 +14,7 @@
 //! those identities separate prevents macro lookup from exposing a function call signature.
 
 use rg_ir_model::{
-    DefMapRef, FileId, LocalDefId, LocalEnumVariantId, LocalEnumVariantRef, ModuleId, Span,
+    DefMapRef, FileId, LocalDefId, LocalEnumVariantId, LocalEnumVariantRef, ModuleId, SourceId,
 };
 use rg_item_tree::{ItemKind, ItemTag, UserFacingAttrs, VisibilityLevel};
 use rg_std::{MemorySize, Shrink};
@@ -40,8 +40,8 @@ pub struct LocalDefData {
     pub visibility: VisibilityLevel,
     pub source: ItemSource,
     pub file_id: FileId,
-    pub name_span: Option<Span>,
-    pub span: Span,
+    pub name_location: Option<SourceId>,
+    pub location: SourceId,
     pub user_facing_attrs: UserFacingAttrs,
 }
 
@@ -62,9 +62,6 @@ pub struct LocalEnumVariantData {
     /// additionally behave as values, so imports must retain both slots for them.
     pub namespaces: NamespaceSet,
     pub visibility: Visibility,
-    pub file_id: FileId,
-    pub name_span: Span,
-    pub span: Span,
     pub user_facing_attrs: UserFacingAttrs,
 }
 
@@ -97,7 +94,7 @@ pub struct LocalImplData {
     pub module: ModuleId,
     pub source: ItemSource,
     pub file_id: FileId,
-    pub span: Span,
+    pub location: SourceId,
 }
 
 /// Module-scope definition kind that participates in def-map namespaces.

@@ -17,7 +17,7 @@
 use rg_body_ir::{BodyPath, BodyReader, BodyView, ExprKind, PatKind, StmtKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{BindingId, BodyRef, CrateRef, DefMapRef, FileId, GenericDefRef, ScopeId, Span};
-use rg_item_tree::TypePath;
+use rg_item_tree::{SourceLocations, TypePath};
 use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
 
@@ -202,8 +202,11 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             let Some(source_item) = body.source_item(source.item) else {
                 continue;
             };
-            if source_item.file_id == self.file_id && source_item.span.touches(self.offset) {
-                best.consider(GenericDefRef::from(item.item()), source_item.span.len());
+            let Some(span) = body.source_items().span(source_item.location) else {
+                continue;
+            };
+            if source_item.file_id == self.file_id && span.touches(self.offset) {
+                best.consider(GenericDefRef::from(item.item()), span.len());
             }
         }
         Ok(best.finish())
@@ -226,8 +229,14 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 Self::generic_owner(items, body_ref, site.owner_item),
                 site.path,
                 site.position,
+                body.source_items(),
             ) {
-                best.consider(completion_site, site.path.source_span.len());
+                best.consider(
+                    completion_site,
+                    body.source_items()
+                        .editable_span(site.path.location)
+                        .map_or(u32::MAX, |span| span.len()),
+                );
             }
         });
     }
@@ -347,6 +356,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn site_for_type_path(
         &self,
         body: BodyRef,
@@ -355,6 +365,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         generic_owner: Option<GenericDefRef>,
         path: &TypePath,
         position: TypeNamePosition,
+        locations: &dyn SourceLocations,
     ) -> Option<UnqualifiedCompletionSite> {
         // This scanner owns only complete unqualified paths. The first segment of a longer path
         // needs qualified-path recovery policy before it can safely use lexical candidates.
@@ -365,7 +376,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             member_prefix_span,
             member_prefix,
             position,
-        } = TypePathCompletionSite::at(path, self.offset, position)?
+        } = TypePathCompletionSite::at(path, self.offset, position, locations)?
         else {
             return None;
         };
