@@ -1,4 +1,4 @@
-//! Evaluate the subset of Rust initializer syntax that contributes saved display values.
+//! Evaluate the supported initializer expressions when producing body facts.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ConstOrStaticRef, EvaluatedConstValue, ExprId};
@@ -9,17 +9,16 @@ use rg_ty::{
     trait_selection::TraitSelectionQuery,
 };
 
-use super::lower::LoweredBodyData;
 use crate::{
-    BodyOwner, ExprBlockKind, ExprKind, ExprWrapperKind, LiteralKind,
+    BodyData, BodyOwner, ExprBlockKind, ExprKind, ExprWrapperKind, LiteralKind, profile::metric,
     resolution::BodyResolutionContext,
 };
 
-impl ConstExprSource for LoweredBodyData {
+impl ConstExprSource for BodyData {
     type Expr = ExprId;
 
     fn expr(&self, expr: ExprId) -> Option<ConstExprView<ExprId>> {
-        Some(match &self.body().expr(expr)?.kind {
+        Some(match &BodyData::expr(self, expr)?.kind {
             ExprKind::Literal {
                 kind: LiteralKind::Int { primitive_ty },
             } => ConstExprView::Integer {
@@ -62,20 +61,18 @@ where
     /// The declaration's annotation is interpreted by the same lowerer as body type inference,
     /// including aliases, generic arguments and `Self`. Evaluation only consumes its result.
     /// For `type Size = usize; const N: Size = 2 + 2;`, the evaluator receives `usize`.
-    pub(crate) fn evaluate_initializer(
-        &self,
-        lowered: &LoweredBodyData,
-    ) -> anyhow::Result<Option<(ConstOrStaticRef, EvaluatedConstValue)>> {
-        let (item, ty) = match lowered.body().owner() {
-            BodyOwner::Const(item) => (
-                ConstOrStaticRef::Const(item),
-                self.signatures().const_ty(item)?,
-            ),
-            BodyOwner::Static(item) => (
-                ConstOrStaticRef::Static(item),
-                self.signatures().static_ty(item)?,
-            ),
+    pub(crate) fn evaluate_initializer(&self) -> anyhow::Result<Option<EvaluatedConstValue>> {
+        let item = match self.body().owner() {
+            BodyOwner::Const(item) => ConstOrStaticRef::Const(item),
+            BodyOwner::Static(item) => ConstOrStaticRef::Static(item),
             BodyOwner::Function(_) => return Ok(None),
+        };
+        rg_std::check_cancel!(self, "initializer evaluation");
+        metric::CONST_INITIALIZERS.inc();
+        let _timer = metric::CONST_EVALUATION.start_timer();
+        let ty = match item {
+            ConstOrStaticRef::Const(item) => self.signatures().const_ty(item)?,
+            ConstOrStaticRef::Static(item) => self.signatures().static_ty(item)?,
         };
         let Some(ty) = ty else {
             return Ok(None);
@@ -90,8 +87,11 @@ where
         let pointer_width = self
             .def_map_source()
             .target_pointer_width(item.origin().origin_crate())?;
-        Ok(ConstEvaluationQuery::new(lowered, pointer_width)
-            .evaluate_expr(lowered.body().root_expr(), ty)
-            .map(|value| (item, value)))
+        let value = ConstEvaluationQuery::new(self.body(), pointer_width)
+            .evaluate_expr(self.body().root_expr(), ty);
+        if value.is_some() {
+            metric::CONST_KNOWN_VALUES.inc();
+        }
+        Ok(value)
     }
 }

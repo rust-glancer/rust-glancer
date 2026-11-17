@@ -37,6 +37,9 @@ pub struct BodyData {
     pats: Arena<PatId, PatData>,
     statements: Arena<StmtId, StmtData>,
     exprs: Arena<ExprId, ExprData>,
+    /// Only initializer bodies need numeric values for evaluation. Entries follow expression
+    /// allocation order; ordinary function literals retain just their inference categories.
+    integer_literals: Vec<(ExprId, u128)>,
     /// Recovery and unsupported syntax may carry meaning absent from the lowered nodes. Retain
     /// those fragments verbatim so equal preparation cannot hide a change to unmodeled input.
     unmodeled_syntax: Vec<String>,
@@ -61,6 +64,7 @@ impl BodyData {
         pats: Arena<PatId, PatData>,
         statements: Arena<StmtId, StmtData>,
         exprs: Arena<ExprId, ExprData>,
+        integer_literals: Vec<(ExprId, u128)>,
         unmodeled_syntax: Vec<String>,
     ) -> Self {
         let params = function_params
@@ -84,6 +88,7 @@ impl BodyData {
             pats,
             statements,
             exprs,
+            integer_literals,
             unmodeled_syntax,
         }
     }
@@ -221,6 +226,13 @@ impl BodyData {
 
     pub fn expr_unchecked(&self, expr: ExprId) -> &ExprData {
         &self.exprs[expr]
+    }
+
+    pub(crate) fn integer_literal(&self, expr: ExprId) -> Option<u128> {
+        self.integer_literals
+            .binary_search_by_key(&expr.0, |(id, _)| id.0)
+            .ok()
+            .map(|index| self.integer_literals[index].1)
     }
 
     /// Resolves pending binding slots into final bindings and rewrites every dependent reference.
@@ -398,6 +410,7 @@ mod tests {
             Arena::new(),
             Arena::new(),
             exprs,
+            Vec::new(),
             Vec::new(),
         );
 

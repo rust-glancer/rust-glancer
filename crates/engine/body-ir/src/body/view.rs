@@ -1,6 +1,6 @@
 use rg_ir_model::{
-    BindingId, BodyRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, SourceId, Span, StmtId,
-    identity::DeclarationRef,
+    BindingId, BodyRef, EvaluatedConstValue, ExprId, FunctionRef, ModuleRef, PatId, ScopeId,
+    SourceId, Span, StmtId, identity::DeclarationRef,
 };
 use rg_item_tree::{ItemNode, ItemTreeId};
 
@@ -106,6 +106,15 @@ impl<'a> BodyView<'a> {
 
     pub fn root_expr(self) -> ExprId {
         self.body.root_expr()
+    }
+
+    pub fn initializer_value(self) -> Option<EvaluatedConstValue> {
+        self.facts.initializer_value()
+    }
+
+    pub fn initializer_preview(self) -> Option<&'a str> {
+        self.sources
+            .initializer_preview(self.body.expr_unchecked(self.body.root_expr()).source)
     }
 
     pub fn function_params(self) -> &'a [FunctionParamData] {

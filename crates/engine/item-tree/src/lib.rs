@@ -38,6 +38,6 @@ pub use self::{
     query::{FileDeclarations, file_declaration_sources, file_declarations},
     source::{
         DeclarationSourceBuilder, DeclarationSourceStore, NoSource, RecordSource, SourceLocations,
-        SourceRole, TypeSource,
+        SourceRole, TypeSource, initializer_preview,
     },
 };

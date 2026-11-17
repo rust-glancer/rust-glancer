@@ -11,12 +11,12 @@ declare_metrics! {
             counter INFERRED_OWNERS = "inference_owners";
         }
         scope "body_ir.const_eval" {
-            /// Body-local and current-root const and static initializers submitted for evaluation.
-            counter LOCAL_CONST_INITIALIZERS = "local.initializers";
-            /// Submitted initializers that produced a concrete value for their local ItemStore.
-            counter LOCAL_CONST_KNOWN_VALUES = "local.known_values";
-            /// Evaluation and publication in local stores; excludes ordinary body lowering.
-            duration LOCAL_CONST_EVALUATION = "local.timings.evaluation";
+            /// Saved or current const and static bodies submitted for evaluation.
+            counter CONST_INITIALIZERS = "initializers";
+            /// Submitted initializers that produced a concrete value in their body facts.
+            counter CONST_KNOWN_VALUES = "known_values";
+            /// Initializer evaluation, including declared-type lookup; excludes body lowering.
+            duration CONST_EVALUATION = "timings.evaluation";
         }
         scope "body_ir.resolution" {
             /// Expressions whose syntax-directed inference rule was evaluated.

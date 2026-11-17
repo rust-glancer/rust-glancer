@@ -8,7 +8,7 @@ use crate::UnsignedIntTy;
 /// A concrete value that can outlive the expression used to compute it.
 ///
 /// For `const N: usize = 2 + 2`, this keeps `4` and its `usize` type. It retains no expression ids
-/// or inference state, so a declaration can keep the result after its initializer body is dropped.
+/// or inference state, so body facts can retain the result without retaining the evaluator.
 /// Missing results and symbolic generic parameters belong to the consuming model instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]

@@ -1,7 +1,7 @@
 use rg_def_map::ItemSource;
 use rg_ir_model::{
-    AssocItemId, EvaluatedConstValue, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
-    Mutability, SourceId, TraitDefRef, TypeDefRef,
+    AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability,
+    SourceId, TraitDefRef, TypeDefRef,
 };
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ImplPolarity, ParamKind,
@@ -174,7 +174,7 @@ pub struct TypeAliasData {
     pub signature: TypeAliasSignature,
 }
 
-/// Const declaration and its optional evaluated initializer.
+/// Const identity and signature. Evaluating its initializer is a separate body query.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
@@ -186,15 +186,11 @@ pub struct ConstData {
     pub visibility: VisibilityLevel,
     pub docs: Option<Documentation>,
     pub signature: ConstSignature,
-    /// Short initializer source for display alongside any evaluated value.
-    pub initializer_preview: Option<String>,
-    /// Filled after declaration collection. `None` also covers unsupported or unevaluated
-    /// initializers; the declaration still provides its name and type. Boxing avoids reserving
-    /// value storage on declarations with no known result.
-    pub value: Option<Box<EvaluatedConstValue>>,
+    /// The source table retains a bounded preview at this occurrence, independently of meaning.
+    pub initializer_location: Option<SourceId>,
 }
 
-/// Static declaration and its optional evaluated initializer.
+/// Static identity and declared type. Its initial value belongs to body facts.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StaticData {
     pub local_def: LocalDefRef,
@@ -207,8 +203,6 @@ pub struct StaticData {
     pub docs: Option<Documentation>,
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
-    /// Short initializer source for display alongside any evaluated value.
-    pub initializer_preview: Option<String>,
-    /// Compile-time initial value, even for mutable statics; runtime contents may differ.
-    pub value: Option<Box<EvaluatedConstValue>>,
+    /// The source table retains a bounded preview at this occurrence, independently of meaning.
+    pub initializer_location: Option<SourceId>,
 }

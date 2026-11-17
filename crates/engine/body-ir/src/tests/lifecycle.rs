@@ -4,12 +4,15 @@ use rg_def_map::CrateDependencies;
 use rg_ir_model::{
     BodyId, BodyKey, BodyRef, DefMapRef, ExprId, FileId, ModuleRef, SavedBodyOwner, SemanticItemRef,
 };
+use rg_profile::test_support::ProfileTest;
 use rg_semantic_ir::{CrateItemSource as _, SemanticItemSource as _, TargetDeclarationReader};
 use rg_source::{CapturedSource, QueryContext, SourceInput};
 use rg_ty::{ConstValue, GenericArg};
 use rg_workspace::{TargetKind, testonly::WorkspaceFixture};
 
-use crate::{BodyReader, CurrentSourceStore, ExprKind, testonly::BodyIrFixture};
+use crate::{
+    BodyReader, CurrentSourceStore, ExprKind, profile_descriptors, testonly::BodyIrFixture,
+};
 
 static SEMANTIC_BODY_READS: AtomicUsize = AtomicUsize::new(0);
 
@@ -47,7 +50,7 @@ fn semantic_body_reads_reuse_meaning_after_source_movement() {
         r#"
 //- /src/lib.rs crate:body_meaning
 mod other;
-pub fn outer() { struct Local; fn nested() {} }
+pub fn outer() { struct Local; const VALUE: usize = 2 + 2; fn nested() {} }
 //- /src/other.rs
 pub fn other() {}
 "#,
@@ -100,19 +103,20 @@ pub fn other() {}
         .join("src/lib.rs");
     let interner = database.interner();
     SEMANTIC_BODY_READS.store(0, Ordering::Relaxed);
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.const_eval");
     for (source, expected_name, expected_reads) in [
         (
-            "mod other; pub fn outer() { struct Local; fn nested() {} }",
+            "mod other; pub fn outer() { struct Local; const VALUE: usize = 2 + 2; fn nested() {} }",
             "Local",
             3,
         ),
         (
-            "// moved owner\nmod other; pub fn outer() { /* moved item */ struct Local; fn nested() {} }",
+            "// moved owner\nmod other; pub fn outer() { /* moved item */ struct Local; const VALUE: usize = 2  + 2; fn nested() {} }",
             "Local",
             3,
         ),
         (
-            "mod other; pub fn outer() { struct Changed; fn nested() {} }",
+            "mod other; pub fn outer() { struct Changed; const VALUE: usize = 2 + 2; fn nested() {} }",
             "Changed",
             5,
         ),
@@ -127,7 +131,7 @@ pub fn other() {}
                 for masked_file in [None, Some(other_file)] {
                     let meaning = body_local_meaning(db, body, masked_file)?;
                     let (names, module) = meaning.as_ref().as_ref().expect("visible body");
-                    assert_eq!(names, &[expected_name, "nested"]);
+                    assert_eq!(names, &[expected_name, "VALUE", "nested"]);
                     assert_eq!(module.origin, DefMapRef::Body(body));
                 }
                 assert!(body_local_meaning(db, body, Some(owner_file))?.is_none());
@@ -140,6 +144,14 @@ pub fn other() {}
             "{source:?}"
         );
     }
+    assert_eq!(
+        profile
+            .finish()
+            .inner()
+            .counter("body_ir.const_eval.initializers")
+            .unwrap_or_default(),
+        0
+    );
 }
 
 #[test]

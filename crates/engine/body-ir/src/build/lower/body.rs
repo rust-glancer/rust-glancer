@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceId, Span};
-use rg_item_tree::{RecordSource, SourceRole};
+use rg_item_tree::{RecordSource, SourceRole, initializer_preview};
 use rg_std::CancellationToken;
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
 
@@ -137,7 +137,13 @@ impl<'a> BodyLowering<'a> {
         // Item initializers are expression bodies without parameters. They still need a root scope
         // so ordinary body path resolution, type paths, and source scans can use the same pipeline
         // as function bodies.
+        let preview = initializer_preview(&expr);
         let root_expr = self.lower_expr(expr, root_scope);
+        // A current initializer can reuse a saved declaration. Its display text must still come
+        // from this body snapshot, even when the current expression is too long for a preview.
+        self.builder
+            .sources
+            .record_initializer_preview(self.builder.exprs[root_expr].source, preview);
 
         self.builder.finish(
             self.owner,

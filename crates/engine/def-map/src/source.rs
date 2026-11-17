@@ -298,6 +298,10 @@ impl GeneratedExpansionLocations {
     pub fn input_files(&self) -> &[(PackageSlot, FileId)] {
         &self.input_files
     }
+
+    pub fn initializer_preview(&self, occurrence: SourceId) -> Option<&str> {
+        self.locations.initializer_preview(occurrence)
+    }
 }
 
 /// Choose whether generated declarations own occurrence mappings or reuse another item's IDs.

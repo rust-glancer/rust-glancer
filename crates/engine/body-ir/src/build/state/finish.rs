@@ -25,7 +25,6 @@ impl BodyStoreBuilder<'_> {
                 bodies: Arena::from_vec(bodies),
                 body_refs: self.body_refs,
                 local_items: self.body_local_items,
-                initializer: None,
             },
             Arena::from_vec(sources),
         )

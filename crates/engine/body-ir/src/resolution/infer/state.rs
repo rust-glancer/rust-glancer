@@ -4,7 +4,7 @@
 //! same variable; finalization is the only point where those handles become owned semantic types.
 
 use rg_arena::Arena;
-use rg_ir_model::{BindingId, BodyRef, ExprBinaryOp, ExprId, ExprUnaryOp};
+use rg_ir_model::{BindingId, BodyRef, EvaluatedConstValue, ExprBinaryOp, ExprId, ExprUnaryOp};
 use rg_ty::{
     ClosureTyId, PrimitiveTy,
     solver::{InferVarKind, InferenceTable, Ty, TyShape},
@@ -196,7 +196,7 @@ impl<'s> InferenceState<'s> {
 
     /// Resolve every live handle while its table still exists. Only owned types, declaration ids,
     /// and the selected calls' final generic arguments are retained in the published body.
-    pub(crate) fn finish(self) -> BodyFacts {
+    pub(crate) fn finish(self, initializer: Option<EvaluatedConstValue>) -> BodyFacts {
         let Self {
             table,
             selected_calls,
@@ -225,7 +225,7 @@ impl<'s> InferenceState<'s> {
             .enumerate()
             .filter_map(|(index, selected)| selected.map(|s| (ExprId(index), s.finalize(&table))))
             .collect();
-        BodyFacts::new(binding_tys, exprs, calls)
+        BodyFacts::new(binding_tys, exprs, calls, initializer)
     }
 
     #[cfg(test)]

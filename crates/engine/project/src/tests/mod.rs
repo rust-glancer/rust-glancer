@@ -6,6 +6,7 @@ mod demand_driven;
 mod file_queries;
 mod format_captures;
 mod generated_modules;
+mod initializers;
 mod utils;
 
 use std::{

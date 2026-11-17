@@ -74,7 +74,7 @@ impl ItemTreeFixture {
                         for &file in &sources.files {
                             let declarations = file_declarations(db, krate.package, file)?;
                             item_trees.extend_files([declarations.items.value(db)?]);
-                            file_locations.insert(file, declarations.locations.value(db)?);
+                            file_locations.insert(file, declarations.sources.value(db)?);
                         }
                         manifests.push((
                             krate,

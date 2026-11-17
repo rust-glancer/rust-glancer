@@ -36,7 +36,6 @@ pub(super) enum BodySemanticStage {
 #[derive(Default)]
 pub(super) struct BodySemanticTimings {
     pub(super) impl_headers: Duration,
-    pub(super) initializer_values: Duration,
     pub(super) pattern_bindings: Duration,
 }
 
@@ -141,7 +140,6 @@ impl<'source> BodyStoreBuilder<'source> {
         let semantic_timings =
             self.prepare_semantics(def_map, semantic_ir, &item_lookup_query, |_| Ok(()))?;
         let body_local_impl_headers_ms = semantic_timings.impl_headers.as_millis();
-        let initializer_values_ms = semantic_timings.initializer_values.as_millis();
         let pattern_bindings_ms = semantic_timings.pattern_bindings.as_millis();
 
         // Freeze the settled body arenas and their local declarations before inference reads them.
@@ -155,7 +153,6 @@ impl<'source> BodyStoreBuilder<'source> {
             body_local_items_ms,
             item_lookup_query_ms,
             body_local_impl_headers_ms,
-            initializer_values_ms,
             pattern_bindings_ms,
             finish_ms,
             total_ms = preparation_started.elapsed().as_millis(),
