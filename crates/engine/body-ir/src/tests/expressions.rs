@@ -1286,6 +1286,14 @@ pub fn use_it(bytes: [u8; 4]) {
                       expr e2 path bytes -> local v0 => [u8; 4] @ 11:36-11:41
 
 
+            const impl u32::MAX @ 2:5-2:28
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal int `0` => i32 @ 2:26-2:27
+
+
             fn impl u32::from_be_bytes @ 4:5-6:6
             scopes
             - s0 parent <none>: v0
@@ -1296,14 +1304,6 @@ pub fn use_it(bytes: [u8; 4]) {
             expr e1 block s1 => u32 @ 4:51-6:6
               tail
                 expr e0 literal int `0` => u32 @ 5:9-5:10
-
-
-            const impl u32::MAX @ 2:5-2:28
-            scopes
-            - s0 parent <none>: <none>
-            bindings
-            body
-            expr e0 literal int `0` => i32 @ 2:26-2:27
         "#]],
     );
 }

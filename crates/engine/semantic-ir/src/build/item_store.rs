@@ -8,8 +8,8 @@ use std::{collections::HashSet, marker::PhantomData};
 use anyhow::Context as _;
 use rg_def_map::{DefMap, ItemSource, LocalDefKind};
 use rg_ir_model::{
-    AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
-    StaticId, TraitId, TypeAliasId,
+    AssocItemId, ItemId, ItemOwner, ItemStoreId, LocalDefRef, LocalImplRef, ModuleRef, StaticId,
+    TraitId,
 };
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId, StaticItem, TraitItem,
@@ -19,9 +19,9 @@ use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use crate::item::{
-    ConstData, ConstSignature, EnumData, FunctionData, FunctionSignature, ImplData, ItemStore,
-    ItemStoreBuilder, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
-    UnionData,
+    AssociatedItemStore, AssociatedItemStoreBuilder, ConstData, ConstSignature, EnumData,
+    FunctionData, FunctionSignature, ImplData, ItemStore, ItemStoreBuilder, StaticData, StructData,
+    TraitData, TypeAliasData, TypeAliasSignature, UnionData,
 };
 
 /// Reads item-tree-shaped payloads from the storage layer named by an `ItemSource`.
@@ -128,13 +128,16 @@ where
         // Imports, modules, and unsupported syntax already did their def-map work. Item stores keep
         // declarations that carry signature facts or item identities for queries.
         let item_id = match &item.kind {
-            ItemKind::Const(const_item) => ItemId::Const(self.lower_const(
-                Some(local_def),
-                source,
-                ItemOwner::Module(owner),
-                item,
-                const_item,
-            )),
+            ItemKind::Const(const_item) => {
+                let data = Self::lower_const(
+                    Some(local_def),
+                    source,
+                    ItemOwner::Module(owner),
+                    item,
+                    const_item,
+                );
+                ItemId::Const(self.items.consts.alloc(data))
+            }
             ItemKind::Enum(enum_item) => {
                 let id = self.items.enums.alloc(EnumData {
                     local_def,
@@ -148,13 +151,16 @@ where
                 });
                 ItemId::Enum(id)
             }
-            ItemKind::Function(fn_def) => ItemId::Function(self.lower_function(
-                Some(local_def),
-                source,
-                ItemOwner::Module(owner),
-                item,
-                fn_def,
-            )),
+            ItemKind::Function(fn_def) => {
+                let data = Self::lower_function(
+                    Some(local_def),
+                    source,
+                    ItemOwner::Module(owner),
+                    item,
+                    fn_def,
+                );
+                ItemId::Function(self.items.functions.alloc(data))
+            }
             ItemKind::Static(static_item) => {
                 ItemId::Static(self.lower_static(local_def, source, owner, item, static_item))
             }
@@ -174,13 +180,16 @@ where
             ItemKind::Trait(trait_item) => {
                 ItemId::Trait(self.lower_trait(local_def, source, owner, item, trait_item))
             }
-            ItemKind::TypeAlias(type_alias) => ItemId::TypeAlias(self.lower_type_alias(
-                Some(local_def),
-                source,
-                ItemOwner::Module(owner),
-                item,
-                type_alias,
-            )),
+            ItemKind::TypeAlias(type_alias) => {
+                let data = Self::lower_type_alias(
+                    Some(local_def),
+                    source,
+                    ItemOwner::Module(owner),
+                    item,
+                    type_alias,
+                );
+                ItemId::TypeAlias(self.items.type_aliases.alloc(data))
+            }
             ItemKind::Union(union_item) => {
                 let id = self.items.unions.alloc(UnionData {
                     local_def,
@@ -196,7 +205,8 @@ where
             }
             _ => return None,
         };
-        self.items.register_lang_item(item.lang_item, item_id);
+        self.items
+            .register_lang_item(item.lang_item, item_id.semantic_ref(self.def_map.own_ref()));
         Some(item_id)
     }
 
@@ -208,7 +218,8 @@ where
         item: &ItemNode,
         trait_item: &TraitItem,
     ) -> TraitId {
-        // Allocate first so associated items can point back at this trait as their owner.
+        // Allocate the header in the enclosing scope first. Its ID also names the member store,
+        // so members can point back to this header for their inherited generics.
         let trait_id = self.items.traits.alloc(TraitData {
             local_def,
             source,
@@ -218,13 +229,13 @@ where
             docs: item.docs.clone(),
             generics: trait_item.generics.clone(),
             super_traits: trait_item.super_traits.clone(),
-            items: Vec::new(),
             is_unsafe: trait_item.is_unsafe,
             is_auto: trait_item.is_auto,
         });
         let assoc_items =
             self.lower_assoc_items(source, &trait_item.items, ItemOwner::Trait(trait_id));
-        self.items.traits[trait_id].items = assoc_items;
+        self.items
+            .set_members(ItemStoreId::Trait(trait_id), assoc_items);
         trait_id
     }
 
@@ -246,13 +257,14 @@ where
             self_ty: impl_item.self_ty.clone(),
             resolved_self_ty: ExpectedUnique::new(),
             resolved_trait_ref: ExpectedUnique::new(),
-            items: Vec::new(),
             is_unsafe: impl_item.is_unsafe,
             polarity: impl_item.polarity,
         });
+        // This block's ImplId names its member store. Each member's own ID is local to that store.
         let assoc_items =
             self.lower_assoc_items(source, &impl_item.items, ItemOwner::Impl(impl_id));
-        self.items.impls[impl_id].items = assoc_items;
+        self.items
+            .set_members(ItemStoreId::Impl(impl_id), assoc_items);
     }
 
     fn lower_assoc_items(
@@ -260,18 +272,18 @@ where
         parent_source: ItemSource,
         item_ids: &[ItemTreeId],
         owner: ItemOwner,
-    ) -> Vec<AssocItemId> {
-        let mut assoc_items = Vec::new();
+    ) -> AssociatedItemStore {
+        let mut assoc_items = AssociatedItemStoreBuilder::default();
         let mut active_expansions = HashSet::new();
 
-        // Associated items share the same stores as module items, but they do not have def-map
-        // local definitions because they are reached through their trait/impl owner.
+        // Each owner starts a fresh arena. A member expansion can add items here without
+        // allocating IDs in another trait, impl, or the enclosing lexical scope.
         for item_id in item_ids {
             let source = parent_source.with_item(*item_id);
             self.lower_assoc_source(source, owner, &mut assoc_items, &mut active_expansions);
         }
 
-        assoc_items
+        assoc_items.build()
     }
 
     /// Lowers one associated source, recursively replacing retained macro calls with their output.
@@ -283,7 +295,7 @@ where
         &mut self,
         source: ItemSource,
         owner: ItemOwner,
-        assoc_items: &mut Vec<AssocItemId>,
+        assoc_items: &mut AssociatedItemStoreBuilder,
         active_expansions: &mut HashSet<ItemSource>,
     ) {
         let Ok(item) = self.reader.item(source) else {
@@ -312,40 +324,35 @@ where
             return;
         }
 
-        let semantic_item = match &item.kind {
-            ItemKind::Const(const_item) => {
-                ItemId::Const(self.lower_const(None, source, owner, item, const_item))
+        let member = match &item.kind {
+            ItemKind::Const(declaration) => {
+                let data = Self::lower_const(None, source, owner, item, declaration);
+                AssocItemId::Const(assoc_items.alloc_const(data))
             }
-            ItemKind::Function(fn_def) => {
-                ItemId::Function(self.lower_function(None, source, owner, item, fn_def))
+            ItemKind::Function(declaration) => {
+                let data = Self::lower_function(None, source, owner, item, declaration);
+                AssocItemId::Function(assoc_items.alloc_function(data))
             }
-            ItemKind::TypeAlias(type_alias) => {
-                ItemId::TypeAlias(self.lower_type_alias(None, source, owner, item, type_alias))
+            ItemKind::TypeAlias(declaration) => {
+                let data = Self::lower_type_alias(None, source, owner, item, declaration);
+                AssocItemId::TypeAlias(assoc_items.alloc_type_alias(data))
             }
             _ => return,
         };
-        self.items.register_lang_item(item.lang_item, semantic_item);
-        assoc_items.push(match semantic_item {
-            ItemId::Const(id) => AssocItemId::Const(id),
-            ItemId::Function(id) => AssocItemId::Function(id),
-            ItemId::TypeAlias(id) => AssocItemId::TypeAlias(id),
-            ItemId::Struct(_)
-            | ItemId::Union(_)
-            | ItemId::Enum(_)
-            | ItemId::Trait(_)
-            | ItemId::Static(_) => unreachable!("associated item lowering chose module item"),
-        });
+        self.items.register_lang_item(
+            item.lang_item,
+            member.semantic_ref(owner.item_store(self.def_map.own_ref())),
+        );
     }
 
     fn lower_function(
-        &mut self,
         local_def: Option<LocalDefRef>,
         source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &FunctionItem,
-    ) -> FunctionId {
-        self.items.functions.alloc(FunctionData {
+    ) -> FunctionData {
+        FunctionData {
             local_def,
             source,
             location: item.location,
@@ -355,18 +362,17 @@ where
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             signature: FunctionSignature::from_item(declaration),
-        })
+        }
     }
 
     fn lower_type_alias(
-        &mut self,
         local_def: Option<LocalDefRef>,
         source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &TypeAliasItem,
-    ) -> TypeAliasId {
-        self.items.type_aliases.alloc(TypeAliasData {
+    ) -> TypeAliasData {
+        TypeAliasData {
             local_def,
             source,
             location: item.location,
@@ -376,18 +382,17 @@ where
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             signature: TypeAliasSignature::from_item(declaration),
-        })
+        }
     }
 
     fn lower_const(
-        &mut self,
         local_def: Option<LocalDefRef>,
         source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &ConstItem,
-    ) -> ConstId {
-        self.items.consts.alloc(ConstData {
+    ) -> ConstData {
+        ConstData {
             local_def,
             source,
             location: item.location,
@@ -398,7 +403,7 @@ where
             docs: item.docs.clone(),
             signature: ConstSignature::from_item(declaration),
             initializer_location: declaration.initializer_location,
-        })
+        }
     }
 
     fn lower_static(

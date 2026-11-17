@@ -1,5 +1,6 @@
 use rg_ir_model::{
-    ConstOrStaticRef, ConstRef, FunctionRef, GenericDefRef, StaticRef, identity::DeclarationRef,
+    ConstOrStaticRef, ConstRef, FunctionRef, GenericDefRef, SavedBodyOwner, StaticRef,
+    identity::DeclarationRef,
 };
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -48,6 +49,16 @@ impl BodyOwner {
             Self::Function(function) => GenericDefRef::Function(function),
             Self::Const(const_ref) => GenericDefRef::Const(const_ref),
             Self::Static(static_ref) => GenericDefRef::Static(static_ref),
+        }
+    }
+}
+
+impl From<BodyOwner> for SavedBodyOwner {
+    fn from(owner: BodyOwner) -> Self {
+        match owner {
+            BodyOwner::Function(item) => item.into(),
+            BodyOwner::Const(item) => item.into(),
+            BodyOwner::Static(item) => item.into(),
         }
     }
 }

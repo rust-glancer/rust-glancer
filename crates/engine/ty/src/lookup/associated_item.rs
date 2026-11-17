@@ -34,8 +34,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, TraitApplicability, TraitDefRef,
-    TypeAliasRef, TypeDefId,
+    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ItemStoreRef, TraitApplicability,
+    TraitDefRef, TypeAliasRef, TypeDefId,
 };
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
@@ -147,20 +147,11 @@ where
             if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
-            let Some(data) = self
-                .context
-                .item_paths()
-                .items()
-                .impl_data(impl_match.impl_ref())?
-            else {
-                continue;
-            };
             self.push_assoc_items(
                 &mut candidates,
-                impl_match.impl_ref().origin,
-                &data.items,
+                impl_match.impl_ref().member_store(),
                 impl_match.applicability(),
-            );
+            )?;
         }
 
         for selection in matches.traits() {
@@ -266,11 +257,7 @@ where
         }
         lineage.push(trait_ref);
 
-        let Some(data) = self.context.item_paths().items().trait_data(trait_ref)? else {
-            lineage.pop();
-            return Ok(());
-        };
-        self.push_assoc_items(candidates, trait_ref.origin, &data.items, applicability);
+        self.push_assoc_items(candidates, trait_ref.member_store(), applicability)?;
 
         // The canonical trait header has already lowered `Self: Super` predicates. Filtering on
         // the trait's own `Self` excludes unrelated bounds on its other generic parameters.
@@ -298,25 +285,25 @@ where
     fn push_assoc_items(
         &self,
         candidates: &mut Vec<AssociatedItemCandidateRef>,
-        origin: rg_ir_model::DefMapRef,
-        items: &[AssocItemId],
+        store: ItemStoreRef,
         applicability: TraitApplicability,
-    ) {
-        for item in items {
+    ) -> Result<(), ReadError> {
+        for item in self.context.item_paths().items().associated_items(store)? {
             if self.context.cancellation().is_cancelled() {
-                return;
+                return Ok(());
             }
             let item = match item {
                 AssocItemId::Function(id) => {
-                    AssociatedItemRef::Function(FunctionRef { origin, id: *id })
+                    AssociatedItemRef::Function(FunctionRef { store, id: *id })
                 }
                 AssocItemId::TypeAlias(id) => {
-                    AssociatedItemRef::TypeAlias(TypeAliasRef { origin, id: *id })
+                    AssociatedItemRef::TypeAlias(TypeAliasRef { store, id: *id })
                 }
-                AssocItemId::Const(id) => AssociatedItemRef::Const(ConstRef { origin, id: *id }),
+                AssocItemId::Const(id) => AssociatedItemRef::Const(ConstRef { store, id: *id }),
             };
             Self::push_candidate(candidates, item, applicability);
         }
+        Ok(())
     }
 
     /// Collapse overlapping impls by declaration while retaining the strongest evidence.

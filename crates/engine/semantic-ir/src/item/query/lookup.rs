@@ -8,8 +8,8 @@
 use std::{fmt, sync::Arc};
 
 use rg_ir_model::{
-    AssocItemId, CrateRef, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef,
-    TypeAliasRef, TypeDefRef,
+    CrateRef, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef, TypeAliasRef,
+    TypeDefRef,
 };
 use rg_item_tree::LangItem;
 use rg_source::ReadError;
@@ -128,17 +128,7 @@ impl<'item> ItemLookupQuery<'item> {
     {
         let mut functions = UniqueVec::new();
         for impl_ref in self.inherent_impls_for_type(ty)? {
-            let Some(data) = item_query.impl_data(impl_ref)? else {
-                continue;
-            };
-            for item in &data.items {
-                if let AssocItemId::Function(id) = item {
-                    functions.push(FunctionRef {
-                        origin: impl_ref.origin,
-                        id: *id,
-                    });
-                }
-            }
+            functions.extend(item_query.associated_functions(impl_ref.member_store())?);
         }
         Ok(functions)
     }

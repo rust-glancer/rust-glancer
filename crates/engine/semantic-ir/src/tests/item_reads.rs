@@ -1,5 +1,6 @@
 use rg_def_map::{CrateDataSource as _, CrateDependencies};
-use rg_ir_model::{DefMapRef, FunctionRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, ItemStoreId, LocalDefRef, SemanticItemRef};
+use rg_item_tree::testonly::fixture_database;
 use rg_source::{CapturedSource, QueryContext, SourceInput};
 use rg_workspace::testonly::WorkspaceFixture;
 
@@ -7,7 +8,8 @@ use crate::{CrateItemSource as _, ItemReader, ItemStoreQuery, TargetDeclarationR
 
 #[ajika::query]
 fn function_name(db: &QueryContext<'_>, function: FunctionRef) -> ajika::Result<String> {
-    let declarations = TargetDeclarationReader::for_target(db, function.origin.origin_crate())?;
+    let declarations =
+        TargetDeclarationReader::for_target(db, function.store.origin.origin_crate())?;
     let reader = ItemReader(&declarations);
     let data = ItemStoreQuery::new(&reader)
         .function_data(function)?
@@ -17,7 +19,8 @@ fn function_name(db: &QueryContext<'_>, function: FunctionRef) -> ajika::Result<
 
 #[ajika::query]
 fn function_parameter_count(db: &QueryContext<'_>, function: FunctionRef) -> ajika::Result<usize> {
-    let declarations = TargetDeclarationReader::for_target(db, function.origin.origin_crate())?;
+    let declarations =
+        TargetDeclarationReader::for_target(db, function.store.origin.origin_crate())?;
     let reader = ItemReader(&declarations);
     let data = ItemStoreQuery::new(&reader)
         .function_data(function)?
@@ -50,7 +53,7 @@ pub fn before() {}
 macro_rules! Added { () => {} }
 "#,
     );
-    let mut database = rg_item_tree::testonly::fixture_database(workspace.metadata());
+    let mut database = fixture_database(workspace.metadata());
     let targets = database
         .update_inputs(|update| CrateDependencies::write_inputs(workspace.metadata(), update))
         .expect("fixture targets should install");
@@ -125,4 +128,72 @@ macro_rules! Added { () => {} }
             )
         );
     }
+}
+
+#[test]
+fn changing_one_member_arena_preserves_other_item_identities() {
+    let workspace = WorkspaceFixture::build(
+        r#"
+//- /src/lib.rs crate:independent_members
+struct A;
+struct B;
+impl A { fn first() {} }
+impl B { fn first() {} }
+fn free() {}
+"#,
+    );
+    let mut database = fixture_database(workspace.metadata());
+    let targets = database
+        .update_inputs(|update| CrateDependencies::write_inputs(workspace.metadata(), update))
+        .expect("fixture targets");
+    let target = targets[0];
+    let read = |db: &QueryContext<'_>| -> ajika::Result<_> {
+        let declarations = TargetDeclarationReader::for_target(db, target)?;
+        let reader = ItemReader(&declarations);
+        let items = ItemStoreQuery::new(&reader);
+        let mut retained = Vec::new();
+        for item in reader.all_items(DefMapRef::Crate(target))? {
+            let SemanticItemRef::Function(function) = item.item() else {
+                continue;
+            };
+            let keep = match function.store.id {
+                ItemStoreId::Scope => true,
+                ItemStoreId::Impl(id) => items
+                    .impl_data(ImplRef {
+                        origin: function.store.origin,
+                        id,
+                    })?
+                    .is_some_and(|header| header.self_ty.to_string() == "B"),
+                ItemStoreId::Trait(_) => false,
+            };
+            if keep {
+                retained.push(function);
+            }
+        }
+        Ok(retained)
+    };
+    let before = database.run(read).expect("initial identities");
+    assert_eq!(before.len(), 2);
+
+    // A may grow independently. Neither B's first method nor the free function uses A's
+    // allocation sequence, even though all three originally had local FunctionId(0).
+    let path = workspace.metadata().packages()[0]
+        .root_dir()
+        .join("src/lib.rs");
+    let source = CapturedSource::new(
+        &path,
+        r#"
+struct A;
+struct B;
+impl A { fn added() {} fn first() {} }
+impl B { fn first() {} }
+fn free() {}
+"#,
+    )
+    .expect("changed source");
+    let interner = database.interner();
+    database
+        .update_inputs(|update| SourceInput::set_saved(update, &interner, &source))
+        .expect("publish changed members");
+    assert_eq!(database.run(read).expect("updated identities"), before);
 }

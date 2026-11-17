@@ -34,6 +34,7 @@ pub use self::{
             ModuleRef,
         },
         identity,
+        item_store::{ItemStoreId, ItemStoreRef},
         package::{FileId, PackageSlot},
         semantic::{
             AssocItemId, ConstId, ConstOrStaticRef, ConstParamRef, ConstRef, EnumId,

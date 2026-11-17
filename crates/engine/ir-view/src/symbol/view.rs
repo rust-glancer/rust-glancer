@@ -5,9 +5,8 @@ use std::fmt::Write as _;
 use anyhow::{Context as _, Result};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey,
-    FileId, FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, Span,
-    TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey, FileId, ModuleId,
+    ModuleRef, SemanticItemRef, Span, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 use rg_source::ReadError;
@@ -209,32 +208,29 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     /// Convert one semantic item into an indexed item tree.
     fn semantic_item(&self, item: SemanticItemView<'_>) -> Result<Option<IndexedItem>> {
         let declaration = DeclarationRef::from(item.item());
-        match item.kind() {
-            SemanticItemKind::Struct | SemanticItemKind::Union => {
-                let Some(ty) = item.type_def() else {
-                    return Ok(None);
+        let members = match item.item() {
+            SemanticItemRef::TypeDef(ty) => {
+                return match ty.id {
+                    TypeDefId::Struct(_) | TypeDefId::Union(_) => {
+                        self.type_def_item(declaration, ty)
+                    }
+                    TypeDefId::Enum(_) => self.enum_item(declaration, ty),
                 };
-                self.type_def_item(declaration, ty)
             }
-            SemanticItemKind::Enum => {
-                let Some(ty) = item.type_def() else {
-                    return Ok(None);
-                };
-                self.enum_item(declaration, ty)
-            }
-            SemanticItemKind::Trait | SemanticItemKind::Impl => {
-                let children = item
-                    .assoc_items()
-                    .map(|items| self.assoc_item_children(item.item().origin(), items))
-                    .transpose()?
-                    .unwrap_or_default();
-                Ok(Some(IndexedItem::with_children(declaration, children)))
-            }
-            SemanticItemKind::Function
-            | SemanticItemKind::TypeAlias
-            | SemanticItemKind::Const
-            | SemanticItemKind::Static => Ok(Some(IndexedItem::leaf(declaration))),
-        }
+            SemanticItemRef::Trait(owner) => owner.member_store(),
+            SemanticItemRef::Impl(owner) => owner.member_store(),
+            _ => return Ok(Some(IndexedItem::leaf(declaration))),
+        };
+        let children = ItemStoreQuery::new(self.db)
+            .associated_items(members)?
+            .iter()
+            .map(|item| {
+                IndexedItemChild::Declaration(IndexedItem::leaf(DeclarationRef::from(
+                    item.semantic_ref(members),
+                )))
+            })
+            .collect();
+        Ok(Some(IndexedItem::with_children(declaration, children)))
     }
 
     /// Convert a declaration ref into an indexed item tree.
@@ -304,31 +300,6 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
             )));
         }
         Ok(Some(IndexedItem::with_children(declaration, children)))
-    }
-
-    /// Return associated item children for a trait or impl.
-    fn assoc_item_children(
-        &self,
-        origin: DefMapRef,
-        items: &[AssocItemId],
-    ) -> Result<Vec<IndexedItemChild>> {
-        Ok(items
-            .iter()
-            .map(|item| {
-                IndexedItemChild::Declaration(IndexedItem::leaf(Self::assoc_item(origin, item)))
-            })
-            .collect())
-    }
-
-    /// Convert an associated item id into a declaration ref.
-    fn assoc_item(origin: DefMapRef, item: &AssocItemId) -> DeclarationRef {
-        match item {
-            AssocItemId::Function(id) => {
-                DeclarationRef::from(SemanticFunctionRef { origin, id: *id })
-            }
-            AssocItemId::TypeAlias(id) => DeclarationRef::from(TypeAliasRef { origin, id: *id }),
-            AssocItemId::Const(id) => DeclarationRef::from(ConstRef { origin, id: *id }),
-        }
     }
 
     /// Return semantic refs for variants of an enum type.

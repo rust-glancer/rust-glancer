@@ -214,21 +214,21 @@ pub fn body() {
             // signature associated binding
             type_alias Item
               detail: type Item
-              sort: Item|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: TypeAliasId(1) }) })
+              sort: Item|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(1)) }, id: TypeAliasId(0) }) })
               replace: 212..214
             type_alias ParentItem
               detail: type ParentItem
-              sort: ParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: TypeAliasId(0) }) })
+              sort: ParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: TypeAliasId(0) }) })
               replace: 212..214
 
             // body associated binding
             type_alias LocalItem
               detail: type LocalItem
-              sort: LocalItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Function(2), body: BodyId(0) }), id: TypeAliasId(1) }) })
+              sort: LocalItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Function(1), body: BodyId(0) }), id: Trait(TraitId(1)) }, id: TypeAliasId(0) }) })
               replace: 474..477
             type_alias LocalParentItem
               detail: type LocalParentItem
-              sort: LocalParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Function(2), body: BodyId(0) }), id: TypeAliasId(0) }) })
+              sort: LocalParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Function(1), body: BodyId(0) }), id: Trait(TraitId(0)) }, id: TypeAliasId(0) }) })
               replace: 474..477
         "#]],
     );

@@ -31,7 +31,10 @@ pub struct CrateRef {
     pub crate_id: CrateId,
 }
 
-/// Stable reference to one def map item.
+/// A lexical definition scope used for name resolution: a crate or a lowered body.
+///
+/// Associated declarations resolve names in their owner's scope, but their local semantic IDs
+/// belong to a separate member arena. [`crate::ItemStoreRef`] carries that storage distinction.
 // Note: we intentionally do not derive or provide `From` here, as it can be very
 // easy to just convert `CrateRef` (which is always present) where `BodyRef` must
 // be used.

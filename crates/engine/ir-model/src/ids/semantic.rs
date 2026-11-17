@@ -1,7 +1,7 @@
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ModuleRef, declare_id, ids::def_map::DefMapRef};
+use crate::{ItemStoreId, ItemStoreRef, ModuleRef, declare_id, ids::def_map::DefMapRef};
 
 declare_id! {
     pub struct StructId;
@@ -79,6 +79,8 @@ impl TypeDefRef {
 ///
 /// Type-level code uses this only as the definition identity. An instantiated use such as
 /// `Vec<User>: IntoIterator` is represented by a semantic `TraitApplication` instead.
+/// The trait header belongs to `origin`'s scope store; [`Self::member_store`] selects the
+/// separate store containing its associated declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct TraitDefRef {
@@ -90,8 +92,19 @@ impl TraitDefRef {
     pub fn new(origin: DefMapRef, id: TraitId) -> Self {
         Self { origin, id }
     }
+
+    pub fn member_store(self) -> ItemStoreRef {
+        ItemStoreRef {
+            origin: self.origin,
+            id: ItemStoreId::Trait(self.id),
+        }
+    }
 }
 
+/// Identifies an impl block's header in the enclosing scope.
+///
+/// [`Self::member_store`] selects the declarations inside that block. Two impl blocks for the
+/// same type have different header IDs and different member stores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct ImplRef {
@@ -103,33 +116,55 @@ impl ImplRef {
     pub fn new(origin: DefMapRef, id: ImplId) -> Self {
         Self { origin, id }
     }
+
+    pub fn member_store(self) -> ItemStoreRef {
+        ItemStoreRef {
+            origin: self.origin,
+            id: ItemStoreId::Impl(self.id),
+        }
+    }
 }
 
+/// An individual function declaration, either free or associated with a trait/impl.
+///
+/// Keep `store` with `id`: two methods can have the same local ID in different member stores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct FunctionRef {
-    pub origin: DefMapRef,
+    pub store: ItemStoreRef,
     pub id: FunctionId,
 }
 
 impl FunctionRef {
-    pub fn new(origin: DefMapRef, id: FunctionId) -> Self {
-        Self { origin, id }
+    pub fn new(store: ItemStoreRef, id: FunctionId) -> Self {
+        Self { store, id }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct TypeAliasRef {
-    pub origin: DefMapRef,
+    pub store: ItemStoreRef,
     pub id: TypeAliasId,
+}
+
+impl TypeAliasRef {
+    pub fn new(store: ItemStoreRef, id: TypeAliasId) -> Self {
+        Self { store, id }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct ConstRef {
-    pub origin: DefMapRef,
+    pub store: ItemStoreRef,
     pub id: ConstId,
+}
+
+impl ConstRef {
+    pub fn new(store: ItemStoreRef, id: ConstId) -> Self {
+        Self { store, id }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -137,6 +172,12 @@ pub struct ConstRef {
 pub struct StaticRef {
     pub origin: DefMapRef,
     pub id: StaticId,
+}
+
+impl StaticRef {
+    pub fn new(origin: DefMapRef, id: StaticId) -> Self {
+        Self { origin, id }
+    }
 }
 
 /// A const or static declaration whose initializer can supply a stored compile-time value.
@@ -149,7 +190,7 @@ pub enum ConstOrStaticRef {
 impl ConstOrStaticRef {
     pub fn origin(self) -> DefMapRef {
         match self {
-            Self::Const(item) => item.origin,
+            Self::Const(item) => item.store.origin,
             Self::Static(item) => item.origin,
         }
     }
@@ -190,9 +231,9 @@ impl GenericDefRef {
             Self::TypeDef(def) => def.origin,
             Self::Trait(def) => def.origin,
             Self::Impl(def) => def.origin,
-            Self::Function(def) => def.origin,
-            Self::TypeAlias(def) => def.origin,
-            Self::Const(def) => def.origin,
+            Self::Function(def) => def.store.origin,
+            Self::TypeAlias(def) => def.store.origin,
+            Self::Const(def) => def.store.origin,
             Self::Static(def) => def.origin,
         }
     }
@@ -326,14 +367,25 @@ pub enum SemanticItemRef {
 }
 
 impl SemanticItemRef {
+    /// Keep this selector when reading item data; an origin alone does not identify a member arena.
+    pub fn store(self) -> ItemStoreRef {
+        match self {
+            Self::Const(item) => item.store,
+            Self::Function(item) => item.store,
+            Self::TypeAlias(item) => item.store,
+            _ => ItemStoreRef::scope(self.origin()),
+        }
+    }
+
+    /// The lexical scope for resolution and source routing, shared with the enclosing trait/impl.
     pub fn origin(self) -> DefMapRef {
         match self {
             Self::TypeDef(item) => item.origin,
             Self::Trait(item) => item.origin,
             Self::Impl(item) => item.origin,
-            Self::Function(item) => item.origin,
-            Self::TypeAlias(item) => item.origin,
-            Self::Const(item) => item.origin,
+            Self::Function(item) => item.store.origin,
+            Self::TypeAlias(item) => item.store.origin,
+            Self::Const(item) => item.store.origin,
             Self::Static(item) => item.origin,
         }
     }
@@ -456,26 +508,14 @@ pub enum ItemId {
 impl ItemId {
     pub fn semantic_ref(self, origin: DefMapRef) -> SemanticItemRef {
         match self {
-            Self::Struct(id) => TypeDefRef {
-                origin,
-                id: TypeDefId::Struct(id),
-            }
-            .into(),
-            Self::Union(id) => TypeDefRef {
-                origin,
-                id: TypeDefId::Union(id),
-            }
-            .into(),
-            Self::Enum(id) => TypeDefRef {
-                origin,
-                id: TypeDefId::Enum(id),
-            }
-            .into(),
-            Self::Trait(id) => TraitDefRef { origin, id }.into(),
-            Self::Function(id) => FunctionRef { origin, id }.into(),
-            Self::TypeAlias(id) => TypeAliasRef { origin, id }.into(),
-            Self::Const(id) => ConstRef { origin, id }.into(),
-            Self::Static(id) => StaticRef { origin, id }.into(),
+            Self::Struct(id) => TypeDefRef::new_struct(origin, id).into(),
+            Self::Union(id) => TypeDefRef::new_union(origin, id).into(),
+            Self::Enum(id) => TypeDefRef::new_enum(origin, id).into(),
+            Self::Trait(id) => TraitDefRef::new(origin, id).into(),
+            Self::Function(id) => FunctionRef::new(ItemStoreRef::scope(origin), id).into(),
+            Self::TypeAlias(id) => TypeAliasRef::new(ItemStoreRef::scope(origin), id).into(),
+            Self::Const(id) => ConstRef::new(ItemStoreRef::scope(origin), id).into(),
+            Self::Static(id) => StaticRef::new(origin, id).into(),
         }
     }
 }
@@ -488,10 +528,32 @@ pub enum AssocItemId {
     Const(ConstId),
 }
 
+impl AssocItemId {
+    pub fn semantic_ref(self, store: ItemStoreRef) -> SemanticItemRef {
+        match self {
+            Self::Function(id) => FunctionRef::new(store, id).into(),
+            Self::TypeAlias(id) => TypeAliasRef::new(store, id).into(),
+            Self::Const(id) => ConstRef::new(store, id).into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub enum ItemOwner {
     Module(ModuleRef),
     Trait(TraitId),
     Impl(ImplId),
+}
+
+impl ItemOwner {
+    /// Trait and impl IDs name headers in the enclosing scope, rather than entries in the
+    /// member arena being selected here. Module-owned declarations use the scope arena itself.
+    pub fn item_store(self, origin: DefMapRef) -> ItemStoreRef {
+        match self {
+            Self::Module(module) => ItemStoreRef::scope(module.origin),
+            Self::Trait(id) => TraitDefRef { origin, id }.member_store(),
+            Self::Impl(id) => ImplRef { origin, id }.member_store(),
+        }
+    }
 }

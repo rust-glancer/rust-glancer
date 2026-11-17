@@ -7,8 +7,12 @@ use std::{
 
 use rg_arena::Arena;
 use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
-use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, LocalDefRef, ModuleRef, SemanticItemRef};
-use rg_semantic_ir::{ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView};
+use rg_ir_model::{
+    BodyId, BodyRef, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, ModuleRef, SemanticItemRef,
+};
+use rg_semantic_ir::{
+    AssociatedItemStore, ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView,
+};
 use rg_source::ReadError;
 use rg_std::{CancellationToken, Shrink as _, UniqueVec};
 
@@ -98,6 +102,19 @@ impl DefMapSource for BodyBuildQuerySource<'_, '_> {
 }
 
 impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource<'_, 'db> {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'source AssociatedItemStore>, ReadError> {
+        match store.origin {
+            DefMapRef::Crate(_) => self.semantic_ir.associated_items(store),
+            DefMapRef::Body(body) => Ok(self
+                .body_local_items(body)
+                .map(BodyLocalItems::item_store)
+                .and_then(|items| items.associated_items(store))),
+        }
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'source>>, ReadError> {
         match item.origin() {
             DefMapRef::Crate(_) => self.semantic_ir.item(item),

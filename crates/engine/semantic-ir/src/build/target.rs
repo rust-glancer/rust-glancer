@@ -10,7 +10,7 @@ use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
     GeneratedItemStore, GeneratedSourceStore, MacroExpansionLimitReport,
 };
-use rg_ir_model::{CrateRef, DefMapRef, FileId, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::ItemTrees;
 use rg_parse::TargetFileManifest;
 use rg_source::{QueryContext, ReadError};
@@ -19,9 +19,9 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::impl_headers::impl_header_resolutions;
 use crate::{
-    BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex, ItemLookupShard, ItemReader,
-    ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer, LookupKeys, LookupQuestion,
-    SemanticItemSource, SemanticItemView, SymbolNameData,
+    AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
+    ItemLookupShard, ItemReader, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
+    LookupKeys, LookupQuestion, SemanticItemSource, SemanticItemView, SymbolNameData,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
@@ -242,6 +242,19 @@ impl CrateDataSource for TargetDeclarationReader<'_> {
 }
 
 impl CrateItemSource for TargetDeclarationReader<'_> {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&AssociatedItemStore>, ReadError> {
+        let Some(krate) = store.origin.as_crate_ref() else {
+            return Ok(None);
+        };
+        Ok(self
+            .acquire(krate, |result| &result.items)
+            .map_err(ReadError::Query)?
+            .and_then(|items| items.associated_items(store)))
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
         let Some(krate) = item.origin().as_crate_ref() else {
             return Ok(None);
@@ -337,6 +350,16 @@ impl<D: CrateDataSource> CrateDataSource for LocalDeclarations<'_, D> {
 }
 
 impl<'a, D: CrateItemSource> SemanticItemSource<'a> for LocalDeclarations<'a, &'a D> {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
+        if store.origin == self.items.origin() {
+            return Ok(self.items.associated_items(store));
+        }
+        self.dependencies.associated_items(store)
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         if item.origin() == self.items.origin() {
             return Ok(self.items.semantic_item_view(item));

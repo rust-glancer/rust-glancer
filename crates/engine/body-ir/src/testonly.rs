@@ -1,11 +1,11 @@
 use rg_def_map::{CrateData, CrateDataSource, DefMap, DefMapSource};
 use rg_ir_model::{
-    BodyKey, BodyRef, CrateRef, DefMapRef, ItemId, LocalDefRef, ModuleRef, SavedBodyOwner,
-    SemanticItemRef,
+    BodyKey, BodyRef, ConstRef, CrateRef, DefMapRef, FunctionRef, ItemStoreRef, LocalDefRef,
+    ModuleRef, SavedBodyOwner, SemanticItemRef, StaticRef,
 };
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
-    ItemStoreQuery, SemanticItemSource, SemanticItemView,
+    AssociatedItemStore, ItemStoreQuery, SemanticItemSource, SemanticItemView,
     testonly::{SemanticIrFixture, SemanticIrView},
 };
 use rg_source::ReadError;
@@ -98,12 +98,12 @@ impl<'db> BodyIrView<'db> {
             .value_ref(self.semantic.db())
             .expect("fixture body owners should load");
         let mut matching = owners.iter().filter(|owner| {
+            let store = owner.store_ref();
             let item_ref = match owner.owner {
-                SavedBodyOwner::Function(id) => ItemId::Function(id),
-                SavedBodyOwner::Const(id) => ItemId::Const(id),
-                SavedBodyOwner::Static(id) => ItemId::Static(id),
-            }
-            .semantic_ref(DefMapRef::Crate(target));
+                SavedBodyOwner::Function { id, .. } => FunctionRef::new(store, id).into(),
+                SavedBodyOwner::Const { id, .. } => ConstRef::new(store, id).into(),
+                SavedBodyOwner::Static(id) => StaticRef::new(store.origin, id).into(),
+            };
             items.iter().any(|item| {
                 item.item() == item_ref
                     && item
@@ -111,17 +111,14 @@ impl<'db> BodyIrView<'db> {
                         .is_some_and(|candidate| candidate.as_str() == name)
             })
         });
-        let owner = matching
-            .next()
-            .expect("fixture body owner should exist")
-            .owner;
+        let owner = matching.next().expect("fixture body owner should exist");
         assert!(
             matching.next().is_none(),
             "fixture body owner name should be unique"
         );
         BodyKey {
             krate: target,
-            owner,
+            owner: owner.owner,
         }
     }
 }
@@ -161,6 +158,16 @@ impl DefMapSource for BodyIrView<'_> {
 }
 
 impl<'a> SemanticItemSource<'a> for &'a BodyIrView<'_> {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
+        match store.origin {
+            DefMapRef::Crate(_) => self.semantic.items().associated_items(store),
+            DefMapRef::Body(_) => (&self.bodies).associated_items(store),
+        }
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         match item.origin() {
             DefMapRef::Crate(_) => self.semantic.items().item(item),

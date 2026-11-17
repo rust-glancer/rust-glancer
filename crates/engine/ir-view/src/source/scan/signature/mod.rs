@@ -99,7 +99,8 @@ pub(crate) enum SignatureSourceCandidate {
     TypePath {
         scope: SignatureTypePathScope,
         path: Path,
-        type_ref: Option<TypeRef>,
+        // Only cursor queries retain full type syntax. Keep broad reference scans compact.
+        type_ref: Option<Box<TypeRef>>,
         file_id: FileId,
         span: Span,
     },

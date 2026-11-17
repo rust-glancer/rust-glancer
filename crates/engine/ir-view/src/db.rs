@@ -6,13 +6,13 @@ use anyhow::Context as _;
 use rg_body_ir::{BodyReader, CurrentSourceBuilder, CurrentSourceStore, DeclarationSourceView};
 use rg_def_map::{DefMap, DefMapSource, DefinitionReader, ItemSource};
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, FileId, ImplRef, LocalDefRef, ModuleRef, PackageSlot, Path,
-    SemanticItemRef, SourceId, Span,
+    BodyRef, CrateRef, DefMapRef, FileId, ImplRef, ItemStoreRef, LocalDefRef, ModuleRef,
+    PackageSlot, Path, SemanticItemRef, SourceId, Span,
 };
 use rg_parse::{CurrentSource, Package, ParseDb, ParsedFile, saved_syntax};
 use rg_semantic_ir::{
-    ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView, TypePathContext,
-    TypePathResolution,
+    AssociatedItemStore, ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView,
+    TypePathContext, TypePathResolution,
 };
 use rg_source::{QueryContext, ReadError};
 use rg_std::{Cancelable, CancellationToken, Cancelled, UniqueVec};
@@ -222,6 +222,16 @@ impl TypePathResolver for IndexedViewDb<'_> {
 }
 
 impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
+        match store.origin {
+            DefMapRef::Crate(_) => self.semantic_ir.associated_items(store),
+            DefMapRef::Body(_) => (&self.body_ir).associated_items(store),
+        }
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         match item.origin() {
             DefMapRef::Crate(_) => self.semantic_ir.item(item),

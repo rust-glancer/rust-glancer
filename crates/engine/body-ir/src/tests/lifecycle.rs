@@ -72,7 +72,10 @@ pub fn other() {}
                     SemanticItemRef::Function(function)
                         if item.name().is_some_and(|name| name.as_str() == "outer") =>
                     {
-                        Some(SavedBodyOwner::Function(function.id))
+                        Some(SavedBodyOwner::Function {
+                            store: function.store.id,
+                            id: function.id,
+                        })
                     }
                     _ => None,
                 })

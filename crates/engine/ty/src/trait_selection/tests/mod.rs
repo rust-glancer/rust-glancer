@@ -804,7 +804,7 @@ fn trait_proofs_ignore_unresolved_receiver_constructors() {
 
 #[test]
 fn unavailable_candidate_does_not_change_independent_selection_or_normalization() {
-    use rg_ir_model::{FunctionId, FunctionRef, ImplId, ImplRef};
+    use rg_ir_model::{FunctionId, FunctionRef, ImplId, ImplRef, ItemStoreRef};
     use rg_std::ExpectedUnique;
 
     use crate::solver::{self, Outcome};
@@ -885,7 +885,7 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
             // An unavailable environment remains an unavailable input to its own table; it
             // must neither become valid on the second proof nor poison a different table.
             let missing_function = FunctionRef {
-                origin: origin(),
+                store: ItemStoreRef::scope(origin()),
                 id: FunctionId(99),
             };
             let incomplete = solver::InferenceTable::new(
@@ -1094,7 +1094,7 @@ fn signature_parameter_lists_preserve_order_and_repetition() {
 
 #[test]
 fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
-    use rg_ir_model::{FunctionId, FunctionRef, Path, TraitApplicability};
+    use rg_ir_model::{FunctionId, FunctionRef, ItemStoreRef, Path, TraitApplicability};
     use rg_semantic_ir::TypePathResolution;
 
     use crate::{
@@ -1149,7 +1149,7 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
     );
     let signatures = SemanticSignatureQuery::new(&fixture, &fixture);
     let function = FunctionRef {
-        origin: origin(),
+        store: ItemStoreRef::scope(origin()),
         id: FunctionId(0),
     };
     let signature = signatures

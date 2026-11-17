@@ -42,7 +42,7 @@ where
                     return Ok(TypePathContext::module(fallback_module));
                 };
                 item_query
-                    .type_path_context_for_owner(const_ref.origin, data.owner)?
+                    .type_path_context_for_owner(const_ref.store.origin, data.owner)?
                     .map_or_else(|| Ok(TypePathContext::module(fallback_module)), Ok)
             }
             BodyOwner::Static(_) => Ok(TypePathContext::module(fallback_module)),

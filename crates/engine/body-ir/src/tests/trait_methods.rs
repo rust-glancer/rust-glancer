@@ -248,6 +248,14 @@ pub fn use_it() {
                       expr e1 path u32::make -> fn trait body_unkeyed_trait_associated_path_fixture[lib]::crate::PrimitiveFactory::make => <unknown> @ 16:16-16:25
 
 
+            const impl PrimitiveFactory<u16> for u32::DEFAULT @ 7:5-7:28
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal int `0` => i32 @ 7:26-7:27
+
+
             fn impl PrimitiveFactory<u16> for u32::make @ 9:5-11:6
             scopes
             - s0 parent <none>: <none>
@@ -257,14 +265,6 @@ pub fn use_it() {
             expr e1 block s1 => u16 @ 9:22-11:6
               tail
                 expr e0 literal int `0` => u16 @ 10:9-10:10
-
-
-            const impl PrimitiveFactory<u16> for u32::DEFAULT @ 7:5-7:28
-            scopes
-            - s0 parent <none>: <none>
-            bindings
-            body
-            expr e0 literal int `0` => i32 @ 7:26-7:27
         "#]],
     );
 }

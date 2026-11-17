@@ -6,7 +6,7 @@ mod item_store;
 mod lookup;
 mod resolution;
 
-use rg_ir_model::{DefMapRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_source::ReadError;
 
 pub use self::{
@@ -16,13 +16,18 @@ pub use self::{
     lookup::ItemLookupQuery,
     resolution::ItemResolutionQuery,
 };
-use crate::SemanticItemView;
+use crate::{AssociatedItemStore, SemanticItemView};
 
 /// Supplies borrowed declarations without requiring a complete store for their origin.
 ///
 /// Providers acquire the data containing an item before selecting it. Missing items and local
 /// definitions must observe that data too, so a later update can invalidate an absent result.
 pub trait SemanticItemSource<'a>: Clone {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError>;
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError>;
 
     fn item_for_local_def(

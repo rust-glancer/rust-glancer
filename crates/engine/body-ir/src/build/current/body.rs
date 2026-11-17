@@ -24,7 +24,7 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
 use rg_ir_model::{
     BodyId, BodyKey, BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FileId, FunctionId,
-    FunctionRef, ImplRef, ItemOwner, ModuleRef, SavedBodyOwner, Span, StaticId, StaticRef,
+    FunctionRef, ImplRef, ItemOwner, ItemStoreRef, ModuleRef, Span, StaticId, StaticRef,
     TraitDefRef,
 };
 use rg_item_tree::SourceLocations as _;
@@ -173,14 +173,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             let root = match saved_root {
                 ExpectedUnique::One((current_owner, saved_owner)) => {
                     let current_span = Span::from_text_range(current_owner.syntax().text_range());
-                    let owner = match saved_owner {
-                        BodyOwner::Function(item) => SavedBodyOwner::Function(item.id),
-                        BodyOwner::Const(item) => SavedBodyOwner::Const(item.id),
-                        BodyOwner::Static(item) => SavedBodyOwner::Static(item.id),
-                    };
                     let body_ref = BodyKey {
                         krate: self.crate_ref,
-                        owner,
+                        owner: saved_owner.into(),
                     }
                     .body(BodyId(0));
                     let owner_module = self
@@ -213,17 +208,16 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                         synthetic_body_ref().context("allocate request-only body identity")?;
                     let origin = DefMapRef::Body(body_ref);
                     let owner = match &current_owner {
-                        SyntaxBodyOwner::Function(_) => {
-                            BodyOwner::Function(FunctionRef::new(origin, FunctionId(0)))
+                        SyntaxBodyOwner::Function(_) => BodyOwner::Function(FunctionRef::new(
+                            ItemStoreRef::scope(origin),
+                            FunctionId(0),
+                        )),
+                        SyntaxBodyOwner::Const(_) => {
+                            BodyOwner::Const(ConstRef::new(ItemStoreRef::scope(origin), ConstId(0)))
                         }
-                        SyntaxBodyOwner::Const(_) => BodyOwner::Const(ConstRef {
-                            origin,
-                            id: ConstId(0),
-                        }),
-                        SyntaxBodyOwner::Static(_) => BodyOwner::Static(StaticRef {
-                            origin,
-                            id: StaticId(0),
-                        }),
+                        SyntaxBodyOwner::Static(_) => {
+                            BodyOwner::Static(StaticRef::new(origin, StaticId(0)))
+                        }
                     };
                     PreparedCurrentRoot {
                         current_span: Span::from_text_range(current_owner.syntax().text_range()),
@@ -358,10 +352,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
 
             // Compare the complete prepared owner, including its local declarations and nested
             // contexts. Matching only the selected expression tree could attach facts to other IDs.
-            let saved_key = root.body_ref.root.owner().map(|owner| BodyKey {
-                krate: self.crate_ref,
-                owner,
-            });
+            let saved_key = root.body_ref.saved_key();
             let saved = saved_key
                 .map(|key| self.saved_body_ir.saved_prepared_owner(key))
                 .transpose()?
@@ -507,13 +498,13 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                 let Some(data) = items.function_data(function)? else {
                     return Ok(None);
                 };
-                (function.origin, data.owner)
+                (function.store.origin, data.owner)
             }
             BodyOwner::Const(konst) => {
                 let Some(data) = items.const_data(konst)? else {
                     return Ok(None);
                 };
-                (konst.origin, data.owner)
+                (konst.store.origin, data.owner)
             }
             BodyOwner::Static(static_) => {
                 return Ok(items.static_data(static_)?.map(|data| data.owner));

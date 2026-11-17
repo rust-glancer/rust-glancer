@@ -74,12 +74,12 @@ pub fn use_it(c_a_outer: u8) {
               replace: 107..108
             fn c_module_item
               detail: pub fn c_module_item()
-              sort: 01-module|c_module_item|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: 01-module|c_module_item|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 107..108
               snippet: c_module_item()$0
             fn use_it
               detail: pub fn use_it(c_a_outer: u8)
-              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
+              sort: 01-module|use_it|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(1) })
               replace: 107..108
               snippet: use_it(${1:c_a_outer})$0
             keyword crate

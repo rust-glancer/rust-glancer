@@ -212,7 +212,7 @@ pub fn run(target: Target) {
             // function edit
             fn plain_function
               detail: pub fn plain_function()
-              sort: 01-module|plain_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: 01-module|plain_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 330..337
 
             // body macro edit
@@ -230,13 +230,13 @@ pub fn run(target: Target) {
             // associated function edit
             fn new
               detail: pub fn new() -> Self
-              sort: new|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(2) })
+              sort: new|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(0) })
               replace: 419..421
 
             // method edit
             inherent_method method_name
               detail: pub fn method_name(&self)
-              sort: method_name|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(3) })
+              sort: method_name|01|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(1) })
               replace: 436..444
         "#]],
     );

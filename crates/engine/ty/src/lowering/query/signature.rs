@@ -55,13 +55,7 @@ where
         let owner = GenericDefRef::Function(function);
         let implicit_self_ty = match data.owner {
             ItemOwner::Impl(id) => self
-                .impl_header(
-                    cx,
-                    ImplRef {
-                        origin: function.origin,
-                        id,
-                    },
-                )?
+                .impl_header(cx, ImplRef::new(function.store.origin, id))?
                 .map(|header| header.self_ty)
                 .unwrap_or_else(|| cx.unknown()),
             ItemOwner::Trait(_) => {
@@ -274,7 +268,7 @@ where
         let Some(context) = self
             .item_paths
             .items()
-            .type_path_context_for_owner(konst.origin, data.owner)?
+            .type_path_context_for_owner(konst.store.origin, data.owner)?
         else {
             return Ok(None);
         };
@@ -363,7 +357,7 @@ where
         let Some(context) = self
             .item_paths
             .items()
-            .type_path_context_for_owner(alias.origin, data.owner)?
+            .type_path_context_for_owner(alias.store.origin, data.owner)?
         else {
             return Ok(None);
         };

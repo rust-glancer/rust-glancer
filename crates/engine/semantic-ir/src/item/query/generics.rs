@@ -141,20 +141,8 @@ where
 
         Ok(match parent {
             ItemOwner::Module(_) => None,
-            ItemOwner::Trait(id) => Some(
-                TraitDefRef {
-                    origin: owner.origin(),
-                    id,
-                }
-                .into(),
-            ),
-            ItemOwner::Impl(id) => Some(
-                ImplRef {
-                    origin: owner.origin(),
-                    id,
-                }
-                .into(),
-            ),
+            ItemOwner::Trait(id) => Some(TraitDefRef::new(owner.origin(), id).into()),
+            ItemOwner::Impl(id) => Some(ImplRef::new(owner.origin(), id).into()),
         })
     }
 

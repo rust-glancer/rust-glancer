@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMap, DefinitionReader};
 use rg_ir_model::{
-    BodyId, BodyRef, BodySource, ConstRef, DefMapRef, FileId, ItemOwner, ModuleRef, Span, StaticRef,
+    BodyId, BodyRef, BodySource, DefMapRef, FileId, ItemOwner, ModuleRef, Span, StaticRef,
 };
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{ItemReader, ItemStore};
@@ -160,15 +160,13 @@ impl BodyStoreBuilder<'_> {
                 (owner, owner_module)
             }
             BodyOwner::Const(_) => {
-                let origin = DefMapRef::Body(body_ref);
                 let mut matches =
                     items
                         .item_store()
-                        .consts()
-                        .iter_with_ids()
-                        .filter_map(|(id, data)| {
+                        .consts_with_refs()
+                        .filter_map(|(reference, data)| {
                             matches_root_source(data.source.file_id, data.location)
-                                .then_some((BodyOwner::Const(ConstRef { origin, id }), data.owner))
+                                .then_some((BodyOwner::Const(reference), data.owner))
                         });
                 let Some((owner, item_owner)) = matches.next() else {
                     anyhow::bail!(
@@ -185,7 +183,6 @@ impl BodyStoreBuilder<'_> {
                 (owner, owner_module)
             }
             BodyOwner::Static(_) => {
-                let origin = DefMapRef::Body(body_ref);
                 let mut matches =
                     items
                         .item_store()
@@ -193,7 +190,7 @@ impl BodyStoreBuilder<'_> {
                         .iter_with_ids()
                         .filter_map(|(id, data)| {
                             matches_root_source(data.source.file_id, data.location).then_some((
-                                BodyOwner::Static(StaticRef { origin, id }),
+                                BodyOwner::Static(StaticRef::new(DefMapRef::Body(body_ref), id)),
                                 data.owner,
                             ))
                         });
@@ -252,11 +249,11 @@ impl BodyStoreBuilder<'_> {
         let origin = DefMapRef::Body(body_ref);
         let mut tasks = Vec::new();
 
-        // Associated items share the function/const arenas with module items. Their body still
-        // belongs to the associated item, but type lookup starts from the owning impl/trait module.
+        // Visit scope declarations and each owner arena. Member identity includes the trait or
+        // impl, while type lookup still starts from its lexical module.
         for (function_ref, function_data) in item_store.functions_with_refs() {
             rg_std::check_cancel!(cancellation, "nested body task");
-            if function_ref.origin != origin {
+            if function_ref.store.origin != origin {
                 continue;
             }
             if body_owner == BodyOwner::Function(function_ref) {
@@ -289,12 +286,8 @@ impl BodyStoreBuilder<'_> {
             });
         }
 
-        for (const_id, const_data) in item_store.consts().iter_with_ids() {
+        for (const_ref, const_data) in item_store.consts_with_refs() {
             rg_std::check_cancel!(cancellation, "nested body task");
-            let const_ref = ConstRef {
-                origin,
-                id: const_id,
-            };
             if body_owner == BodyOwner::Const(const_ref) {
                 continue;
             }
@@ -324,10 +317,7 @@ impl BodyStoreBuilder<'_> {
         // has no `has_body` bit, so the retained extern-block owner carries that distinction.
         for (static_id, static_data) in item_store.statics().iter_with_ids() {
             rg_std::check_cancel!(cancellation, "nested body task");
-            let static_ref = StaticRef {
-                origin,
-                id: static_id,
-            };
+            let static_ref = StaticRef::new(origin, static_id);
             if body_owner == BodyOwner::Static(static_ref) {
                 continue;
             }

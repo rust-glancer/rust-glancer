@@ -5,7 +5,7 @@
 //! each crate. Consumers therefore ask for the real declaration identity without relying on a
 //! crate name, module path, or re-export spelling.
 
-use rg_ir_model::{ItemId, SemanticItemRef};
+use rg_ir_model::{SemanticItemRef, TypeDefId, TypeDefRef};
 use rg_item_tree::LangItem;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -18,12 +18,12 @@ use wincode::{SchemaRead, SchemaWrite};
 /// ambiguous identity instead of whichever declaration happened to be lowered first.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct LangItemIndex {
-    entries: Vec<(LangItem, ItemId)>,
+    entries: Vec<(LangItem, SemanticItemRef)>,
 }
 
 impl LangItemIndex {
     /// Record a declaration only when its semantic item family matches the compiler identity.
-    pub(super) fn insert(&mut self, lang_item: LangItem, target: ItemId) {
+    pub(super) fn insert(&mut self, lang_item: LangItem, target: SemanticItemRef) {
         // A language item has a compiler-defined target family. Malformed source may put the
         // attribute elsewhere; retaining that declaration as the requested identity would make
         // every typed consumer reinterpret an invalid target differently.
@@ -42,11 +42,11 @@ impl LangItemIndex {
                     | LangItem::MetaSized
                     | LangItem::Tuple
                     | LangItem::Destruct,
-                ItemId::Trait(_)
-            ) | (LangItem::IntoIter, ItemId::Function(_))
+                SemanticItemRef::Trait(_)
+            ) | (LangItem::IntoIter, SemanticItemRef::Function(_))
                 | (
                     LangItem::DerefTarget | LangItem::FnOnceOutput,
-                    ItemId::TypeAlias(_)
+                    SemanticItemRef::TypeAlias(_)
                 )
                 | (
                     LangItem::FormatArguments
@@ -59,27 +59,32 @@ impl LangItemIndex {
                         | LangItem::RangeInclusive
                         | LangItem::RangeToInclusive
                         | LangItem::RangeFull,
-                    ItemId::Struct(_)
+                    SemanticItemRef::TypeDef(TypeDefRef {
+                        id: TypeDefId::Struct(_),
+                        ..
+                    })
                 )
-                | (LangItem::Option, ItemId::Enum(_))
+                | (
+                    LangItem::Option,
+                    SemanticItemRef::TypeDef(TypeDefRef {
+                        id: TypeDefId::Enum(_),
+                        ..
+                    })
+                )
         );
         if target_matches {
             self.entries.push((lang_item, target));
         }
     }
 
-    pub(super) fn target(
-        &self,
-        lang_item: LangItem,
-        origin: rg_ir_model::DefMapRef,
-    ) -> ExpectedUnique<SemanticItemRef> {
+    pub(super) fn target(&self, lang_item: LangItem) -> ExpectedUnique<SemanticItemRef> {
         let mut target = ExpectedUnique::new();
         for (_, item) in self
             .entries
             .iter()
             .filter(|(candidate, _)| *candidate == lang_item)
         {
-            target.push(item.semantic_ref(origin));
+            target.push(*item);
         }
         target
     }

@@ -2,7 +2,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ItemOwner, Path, PrimitiveTy,
+    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ItemOwner, ItemStoreRef, Path, PrimitiveTy,
     ScopeId, TraitApplicability, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
@@ -154,18 +154,24 @@ where
             let shadows_current_item = match candidate.item() {
                 AssociatedItemRef::Function(function) => {
                     item_query.function_data(function)?.is_some_and(|data| {
-                        receiver
-                            .saved_function_name_is_shadowed(function.origin, data.name.as_str())
+                        receiver.saved_function_name_is_shadowed(
+                            function.store.origin,
+                            data.name.as_str(),
+                        )
                     })
                 }
                 AssociatedItemRef::Const(konst) => {
                     item_query.const_data(konst)?.is_some_and(|data| {
-                        receiver.saved_const_name_is_shadowed(konst.origin, data.name.as_str())
+                        receiver
+                            .saved_const_name_is_shadowed(konst.store.origin, data.name.as_str())
                     })
                 }
                 AssociatedItemRef::TypeAlias(alias) => {
                     item_query.type_alias_data(alias)?.is_some_and(|data| {
-                        receiver.saved_type_alias_name_is_shadowed(alias.origin, data.name.as_str())
+                        receiver.saved_type_alias_name_is_shadowed(
+                            alias.store.origin,
+                            data.name.as_str(),
+                        )
                     })
                 }
                 AssociatedItemRef::EnumVariant(_) => false,
@@ -396,14 +402,9 @@ where
         receiver: &BodyReceiverImplMatches,
         name: &str,
     ) -> Result<Option<BodyAssociatedItemCandidate>, ReadError> {
-        let item_query = self.context.item_query();
         for impl_match in receiver.matches().inherent() {
-            let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
-                continue;
-            };
             if let Some(candidate) = self.associated_const_from_items(
-                impl_match.impl_ref().origin,
-                &impl_data.items,
+                impl_match.impl_ref().member_store(),
                 receiver.receiver_ty(),
                 name,
                 Some(impl_match.subst()),
@@ -508,31 +509,23 @@ where
         name: &str,
         extra_subst: Option<&Substitution>,
     ) -> Result<(), ReadError> {
-        let item_query = self.context.item_query();
         for selection in selections {
             let trait_impl = selection.trait_impl;
-            let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
-                continue;
-            };
 
             // Impl consts are the concrete declaration for `Type::CONST`. When the impl omits the
             // item, use the trait declaration as a best-effort source for defaulted or incomplete
             // code; const signatures do not preserve whether a default body was written.
             let mut candidate = self.associated_const_from_items(
-                trait_impl.impl_ref.origin,
-                &impl_data.items,
+                trait_impl.impl_ref.member_store(),
                 receiver_ty,
                 name,
                 Some(&selection.subst),
                 Some(selection),
                 extra_subst,
             )?;
-            if candidate.is_none()
-                && let Some(trait_data) = item_query.trait_data(trait_impl.trait_ref)?
-            {
+            if candidate.is_none() {
                 candidate = self.associated_const_from_items(
-                    trait_impl.trait_ref.origin,
-                    &trait_data.items,
+                    trait_impl.trait_ref.member_store(),
                     receiver_ty,
                     name,
                     None,
@@ -564,8 +557,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn associated_const_from_items(
         &self,
-        origin: DefMapRef,
-        assoc_items: &[AssocItemId],
+        store: ItemStoreRef,
         receiver_ty: &Ty,
         name: &str,
         impl_subst: Option<&Substitution>,
@@ -573,11 +565,11 @@ where
         extra_subst: Option<&Substitution>,
     ) -> Result<Option<BodyAssociatedItemCandidate>, ReadError> {
         let item_query = self.context.item_query();
-        for item in assoc_items {
+        for item in item_query.associated_items(store)? {
             let AssocItemId::Const(id) = item else {
                 continue;
             };
-            let const_ref = ConstRef { origin, id: *id };
+            let const_ref = ConstRef { store, id: *id };
             let Some(const_data) = item_query.const_data(const_ref)? else {
                 continue;
             };
@@ -610,7 +602,7 @@ where
         extra_subst: Option<&Substitution>,
     ) -> Result<Ty, ReadError> {
         let mut subst = self.context.generics().subst_for_selected_item_owner(
-            const_ref.origin,
+            const_ref.store.origin,
             owner,
             receiver_ty,
             impl_subst,

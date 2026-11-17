@@ -106,7 +106,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         };
         let name = self.syntax.identifier(&data.name);
         Ok(self
-            .path_for_owner(function_ref.origin, data.owner)?
+            .path_for_owner(function_ref.store.origin, data.owner)?
             .map(|owner| format!("{owner}::{name}")))
     }
 
@@ -117,7 +117,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         };
         let name = self.syntax.identifier(&data.name);
         Ok(self
-            .path_for_owner(type_alias_ref.origin, data.owner)?
+            .path_for_owner(type_alias_ref.store.origin, data.owner)?
             .map(|owner| format!("{owner}::{name}")))
     }
 
@@ -194,20 +194,14 @@ impl<'a, 'db> PathView<'a, 'db> {
     ) -> anyhow::Result<Option<String>> {
         match owner {
             ItemOwner::Module(module_ref) => self.module_path(module_ref),
-            ItemOwner::Trait(trait_id) => self.trait_path(TraitDefRef {
-                origin,
-                id: trait_id,
-            }),
+            ItemOwner::Trait(trait_id) => self.trait_path(TraitDefRef::new(origin, trait_id)),
             ItemOwner::Impl(impl_id) => self.impl_self_path(origin, impl_id),
         }
     }
 
     /// Return the best display path for an impl owner.
     fn impl_self_path(&self, origin: DefMapRef, impl_id: ImplId) -> anyhow::Result<Option<String>> {
-        let Some(data) = ItemStoreQuery::new(self.db).impl_data(ImplRef {
-            origin,
-            id: impl_id,
-        })?
+        let Some(data) = ItemStoreQuery::new(self.db).impl_data(ImplRef::new(origin, impl_id))?
         else {
             return Ok(None);
         };

@@ -7,7 +7,7 @@
 //! separate leaves the walker independent of a runtime scan mode.
 
 use rg_ir_model::{FileId, Span};
-use rg_item_tree::{SourceLocations, TypePath};
+use rg_item_tree::{SourceLocations, TypePath, TypeRef};
 
 use super::{SignatureCompletionSite, SignatureSourceCandidate, SignatureTypePathScope};
 use crate::source::scan::{
@@ -100,12 +100,12 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
                 scope,
                 path: def_map_path,
                 type_ref: self.offset.map(|_| {
-                    rg_item_tree::TypeRef::Path(TypePath {
+                    Box::new(TypeRef::Path(TypePath {
                         location: path.location,
                         absolute: path.absolute,
                         anchor: path.anchor.clone(),
                         segments: path.segments[..=idx].to_vec(),
-                    })
+                    }))
                 }),
                 file_id,
                 span,

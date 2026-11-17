@@ -3,8 +3,8 @@
 use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef,
-    FunctionRef, GenericDefRef, ImplRef, ItemOwner, LocalDefRef, LocalEnumVariantRef, ModuleRef,
-    SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    FunctionRef, GenericDefRef, ImplRef, ItemOwner, ItemStoreRef, LocalDefRef, LocalEnumVariantRef,
+    ModuleRef, SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::FieldList;
 use rg_source::ReadError;
@@ -32,6 +32,31 @@ where
             source,
             _marker: std::marker::PhantomData,
         }
+    }
+
+    /// Read the members selected by `impl_ref.member_store()` or `trait_ref.member_store()`.
+    ///
+    /// Returned IDs are local to that store. Use `id.semantic_ref(store)` to keep the owner when
+    /// looking up a member's data. A scope store has no associated-item list and returns an empty
+    /// slice.
+    pub fn associated_items(&self, store: ItemStoreRef) -> Result<&'a [AssocItemId], ReadError> {
+        Ok(self
+            .source
+            .associated_items(store)?
+            .map_or(&[], |members| members.items()))
+    }
+
+    pub fn associated_functions(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<impl Iterator<Item = FunctionRef> + 'a, ReadError> {
+        Ok(self
+            .associated_items(store)?
+            .iter()
+            .filter_map(move |item| match item {
+                AssocItemId::Function(id) => Some(FunctionRef::new(store, *id)),
+                _ => None,
+            }))
     }
 
     /// Enumerates declarations explicitly; ordinary item reads do not require this scan.
@@ -64,7 +89,7 @@ where
         let Some(function_data) = self.function_data(function_ref)? else {
             return Ok(None);
         };
-        self.type_path_context_for_owner(function_ref.origin, function_data.owner)
+        self.type_path_context_for_owner(function_ref.store.origin, function_data.owner)
     }
 
     /// Recovers the definition context in which generic defaults and predicates were written.
@@ -98,13 +123,13 @@ where
                 let Some(data) = self.type_alias_data(alias)? else {
                     return Ok(None);
                 };
-                self.type_path_context_for_owner(alias.origin, data.owner)
+                self.type_path_context_for_owner(alias.store.origin, data.owner)
             }
             GenericDefRef::Const(konst) => {
                 let Some(data) = self.const_data(konst)? else {
                     return Ok(None);
                 };
-                self.type_path_context_for_owner(konst.origin, data.owner)
+                self.type_path_context_for_owner(konst.store.origin, data.owner)
             }
             GenericDefRef::Static(static_ref) => {
                 let Some(data) = self.static_data(static_ref)? else {
@@ -392,7 +417,7 @@ where
         }))
     }
 
-    /// Provides trait signature/docs/associated-item data after resolution has picked a trait.
+    /// Provides the trait header after resolution has picked a trait.
     pub fn trait_data(&self, trait_ref: TraitDefRef) -> Result<Option<&'a TraitData>, ReadError> {
         Ok(self
             .source
@@ -409,13 +434,11 @@ where
         trait_ref: TraitDefRef,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, ReadError> {
-        let Some(data) = self.trait_data(trait_ref)? else {
-            return Ok(None);
-        };
-        self.associated_type_by_name(trait_ref.origin, &data.items, name)
+        self.associated_type_by_name(trait_ref.member_store(), name)
     }
 
-    /// Follows an impl ref into the header and associated items used by member/type queries.
+    /// Read an impl's receiver type, implemented trait and generic parameters.
+    /// Its associated declarations are reached separately through `impl_ref.member_store()`.
     pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&'a ImplData>, ReadError> {
         Ok(self
             .source
@@ -432,29 +455,27 @@ where
         impl_ref: ImplRef,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, ReadError> {
-        let Some(data) = self.impl_data(impl_ref)? else {
-            return Ok(None);
-        };
-        self.associated_type_by_name(impl_ref.origin, &data.items, name)
+        self.associated_type_by_name(impl_ref.member_store(), name)
     }
 
     /// Find a named type alias inside either kind of associated-item list.
     fn associated_type_by_name(
         &self,
-        origin: DefMapRef,
-        items: &[AssocItemId],
+        store: ItemStoreRef,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, ReadError> {
-        for item in items {
+        let Some(members) = self.source.associated_items(store)? else {
+            return Ok(None);
+        };
+        for item in members.items() {
             let AssocItemId::TypeAlias(id) = item else {
                 continue;
             };
-            let alias = TypeAliasRef { origin, id: *id };
-            if self
-                .type_alias_data(alias)?
+            if members
+                .type_alias_data(*id)
                 .is_some_and(|data| data.name.as_str() == name)
             {
-                return Ok(Some(alias));
+                return Ok(Some(TypeAliasRef::new(store, *id)));
             }
         }
         Ok(None)

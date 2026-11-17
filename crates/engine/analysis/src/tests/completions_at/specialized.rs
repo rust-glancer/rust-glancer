@@ -229,25 +229,25 @@ mod nested {
             // missing trait members
             const REQUIRED
               detail: required trait member: const REQUIRED: u8
-              sort: 00-required|REQUIRED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: ConstId(0) }) })
+              sort: 00-required|REQUIRED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: ConstId(0) }) })
               replace: 488..491
               snippet: const REQUIRED: u8 = ${1:todo!()};
             fn required
               detail: required trait member: fn required(&self, value: u8, object: &(dyn analysis_missing_trait_member_completions::nested::Object + analysis_missing_trait_member_completions::nested::Marker), mapper: impl analysis_missing_trait_member_completions::nested::Object) -> Self::Output
               docs: Handle one request.
-              sort: 00-required|required|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: 00-required|required|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: FunctionId(0) })
               replace: 488..491
               snippet: fn required(&self, value: u8, object: &(dyn analysis_missing_trait_member_completions::nested::Object + analysis_missing_trait_member_completions::nested::Marker), mapper: impl analysis_missing_trait_member_completions::nested::Object) -> Self::Output {
                 ${1:todo!()}
             }
             const DEFAULTED
               detail: default trait member: const DEFAULTED: u8
-              sort: 01-default|DEFAULTED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: ConstId(1) }) })
+              sort: 01-default|DEFAULTED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: ConstId(1) }) })
               replace: 488..491
               snippet: const DEFAULTED: u8 = ${1:todo!()};
             type_alias Defaulted
               detail: default trait member: type Defaulted = u8
-              sort: 01-default|Defaulted|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: TypeAliasId(1) }) })
+              sort: 01-default|Defaulted|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: TypeAliasId(1) }) })
               replace: 488..491
               snippet: type Defaulted = ${1:u8};
         "#]],
@@ -285,7 +285,7 @@ impl Service for ConstWorker {
             fn required
               detail: required trait member: fn required(&self) -> Self::Output
               filter: fn required
-              sort: 00-required|required|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: 00-required|required|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: FunctionId(0) })
               replace: 161..166
               snippet: fn required(&self) -> Self::Output {
                 ${1:todo!()}
@@ -295,7 +295,7 @@ impl Service for ConstWorker {
             type_alias Output
               detail: required trait member: type Output = ()
               filter: type Output
-              sort: 00-required|Output|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: TypeAliasId(0) }) })
+              sort: 00-required|Output|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: TypeAliasId(0) }) })
               replace: 223..230
               snippet: type Output = ${1:()};
 
@@ -303,7 +303,7 @@ impl Service for ConstWorker {
             const LIMIT
               detail: required trait member: const LIMIT: usize
               filter: const LIMIT
-              sort: 00-required|LIMIT|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: ConstId(0) }) })
+              sort: 00-required|LIMIT|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: ConstId(0) }) })
               replace: 289..297
               snippet: const LIMIT: usize = ${1:todo!()};
         "#]],
@@ -477,7 +477,7 @@ pub fn use_it() {
             // macro from value prefix
             fn exported_function
               detail: pub fn exported_function() -> u8
-              sort: 01-module|exported_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
+              sort: 01-module|exported_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(1) })
               replace: 343..347
               snippet: exported_function()$0
             macro exported_value
@@ -487,7 +487,7 @@ pub fn use_it() {
               snippet: exported_value!($0)
             fn make_function
               detail: pub fn make_function() -> u8
-              sort: 01-module|make_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: 01-module|make_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 343..347
               snippet: make_function()$0
             macro make_value
@@ -497,14 +497,14 @@ pub fn use_it() {
               snippet: make_value!($0)
             fn use_it
               detail: pub fn use_it()
-              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(2) })
+              sort: 01-module|use_it|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(2) })
               replace: 343..347
               snippet: use_it()$0
 
             // qualified macro from value prefix
             fn exported_function
               detail: pub fn exported_function() -> u8
-              sort: exported_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
+              sort: exported_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(1) })
               replace: 377..385
               snippet: exported_function()$0
             macro exported_value
@@ -514,7 +514,7 @@ pub fn use_it() {
               snippet: exported_value!($0)
             fn make_function
               detail: pub fn make_function() -> u8
-              sort: make_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: make_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 377..385
               snippet: make_function()$0
             macro make_value
@@ -524,7 +524,7 @@ pub fn use_it() {
               snippet: make_value!($0)
             fn use_it
               detail: pub fn use_it()
-              sort: use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(2) })
+              sort: use_it|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(2) })
               replace: 377..385
               snippet: use_it()$0
         "#]],

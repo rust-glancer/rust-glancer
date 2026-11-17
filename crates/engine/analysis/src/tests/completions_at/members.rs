@@ -442,7 +442,7 @@ pub fn use_it(user: User) {
             // bare dot before statement completions
             inherent_method id
               detail: pub fn id(&self)
-              sort: id|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
+              sort: id|01|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(0) })
               replace: 119..119
               snippet: id()$0
             field name
@@ -1373,7 +1373,7 @@ pub fn use_it(user: User) {
             inherent_method name
               detail: pub fn name(&self) -> Profile
               docs: Name method.
-              sort: name|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
+              sort: name|01|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(0) })
               replace: 216..218
               snippet: name()$0
         "#]],

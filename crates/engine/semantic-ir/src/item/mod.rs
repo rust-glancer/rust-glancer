@@ -5,6 +5,7 @@
 //! Callers that need a `Ty` can project the resulting refs in the type engine without pulling type
 //! machinery into item storage or definition-only queries.
 
+mod associated;
 mod context;
 mod data;
 mod generics;
@@ -20,6 +21,7 @@ mod type_path_resolution;
 mod view;
 
 pub use self::{
+    associated::{AssociatedItemStore, AssociatedItemStoreBuilder},
     context::{SelfTypeOwner, TypePathContext},
     data::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
