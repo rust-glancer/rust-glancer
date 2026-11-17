@@ -55,15 +55,15 @@ pub use self::{
     macro_definition::{
         MacroDefinitionData, MacroDefinitionKind, MacroDefinitionPayload, MacroDefinitionView,
     },
-    map::{DefMap, DefMapBuilder},
+    map::{DefMap, DefMapBuilder, DefMapView, StoredDefMap},
     module::{
         ModuleBuilder, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
         ModuleResolutionView,
     },
-    package::{CrateData, MacroExpansionLimitGroup, MacroExpansionLimitReport},
+    package::{CrateData, CrateMetadata, MacroExpansionLimitGroup, MacroExpansionLimitReport},
     profile::profile_descriptors,
     query::{
-        CrateDataSource, CrateDefMapReader, CrateResolutionEnv, DefMapQuery, DefMapSource,
+        CrateDefMapReader, CrateDefinitionSource, CrateResolutionEnv, DefMapQuery, DefMapSource,
         DefinitionReader, GlobImportSource, MacroDefinitionEnv, NameResolutionEnv, NameResolver,
         ResolvePathResult,
     },

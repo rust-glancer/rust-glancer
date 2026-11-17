@@ -16,6 +16,7 @@ use rg_ir_model::{
     TraitApplicability, TypeAliasRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
+pub use rg_semantic_ir::AssociatedItemFilter;
 use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemStoreQuery};
 use rg_ty::lookup::MemberMethodOrigin as TyMemberMethodOrigin;
 

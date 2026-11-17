@@ -233,7 +233,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<SignatureTypePathScope>> {
         let items = db.source_items(origin, SourceSelection::at(file_id, offset))?;
-        let Some(def_map) = db.def_map_for_origin(origin)? else {
+        let Some(def_map) = db.definitions_for_origin(origin)? else {
             return Ok(None);
         };
         let item_query = ItemStoreQuery::new(db);
@@ -243,18 +243,19 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
             if item.source().file_id != file_id {
                 continue;
             }
-            let span = item
-                .location()
-                .or_else(|| {
-                    item.local_def()
-                        .and_then(|local| def_map.local_def(local.local_def))
-                        .map(|data| data.location)
-                })
-                .or_else(|| {
-                    item.local_impl()
-                        .and_then(|local| def_map.local_impl(local.local_impl))
-                        .map(|data| data.location)
-                });
+            let span = if let Some(location) = item.location() {
+                Some(location)
+            } else if let Some(local) = item.local_def() {
+                def_map
+                    .local_def(local.local_def)?
+                    .map(|data| data.location)
+            } else if let Some(local) = item.local_impl() {
+                def_map
+                    .local_impl(local.local_impl)?
+                    .map(|data| data.location)
+            } else {
+                None
+            };
             let span = span
                 .map(|span| db.source_span(origin, item.source(), span))
                 .transpose()?;

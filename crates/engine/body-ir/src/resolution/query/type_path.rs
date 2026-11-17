@@ -8,7 +8,9 @@ use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, TypeAliasRef,
 };
-use rg_semantic_ir::{SemanticItemSource, TypePathContext, TypePathResolution};
+use rg_semantic_ir::{
+    AssociatedItemFilter, SemanticItemSource, TypePathContext, TypePathResolution,
+};
 use rg_source::ReadError;
 use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, Ty};
@@ -231,7 +233,7 @@ where
         impls.extend(
             self.context
                 .item_lookup_query()
-                .inherent_impls_for_type(ty.def)?,
+                .inherent_impls_for_type(ty.def, AssociatedItemFilter::All)?,
         );
         let item_query = self.context.item_query();
         for impl_ref in impls {
@@ -244,7 +246,9 @@ where
                 continue;
             }
 
-            for item in item_query.associated_items(impl_ref.member_store())? {
+            for item in
+                item_query.associated_items(impl_ref.member_store(), AssociatedItemFilter::All)?
+            {
                 let AssocItemId::TypeAlias(id) = item else {
                     continue;
                 };

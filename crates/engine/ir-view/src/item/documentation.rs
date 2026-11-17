@@ -9,7 +9,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
 use rg_item_tree::{DocumentationPlacement, FromAst, NoSource, TypePath, TypeRef};
 use rg_parse::parse_source_file;
-use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{AssociatedItemFilter, ItemStoreQuery, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_syntax::{AstNode as _, ast};
 use rg_text::RustEdition;
@@ -108,9 +108,8 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
         if let DeclarationRef::Module(module) = owner
             && self
                 .db
-                .module_data(module)
+                .module_docs(module)
                 .context("read documentation placement")?
-                .and_then(|module| module.docs.as_ref())
                 .is_some_and(|docs| docs.is_inner_at(offset))
         {
             return Ok(DocumentationPlacement::Inner);
@@ -197,25 +196,27 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
 
         // An item's generic bounds can give meaning to paths such as `T::make`.
         // Module and macro docs have no generic owner, so they use the module lookup.
+        // The final name is known: narrow owners before matching impls or reading members.
         let candidates = if let Some(generic_owner) = scope.generic_owner {
             type_path.segments.pop();
             let qualifier = IndexedAssociatedPathQualifier::Type(TypeRef::Path(type_path));
             let signature_scope = IndexedSignatureTypeScope::new(scope.context, generic_owner);
-            members.associated_item_candidates_for_signature(signature_scope, &qualifier)
+            members.associated_item_candidates_for_signature(
+                signature_scope,
+                &qualifier,
+                AssociatedItemFilter::Named(name),
+            )
         } else {
-            members.associated_item_candidates_for_module(scope.context.module, &prefix, &prefix_ty)
+            members.associated_item_candidates_for_module(
+                scope.context.module,
+                &prefix,
+                &prefix_ty,
+                AssociatedItemFilter::Named(name),
+            )
         }
         .context("resolve documentation associated items")?;
         for candidate in candidates {
-            let Some(definition) = members
-                .associated_item_definition(candidate)
-                .context("read documentation associated item")?
-            else {
-                continue;
-            };
-            if definition.label() == name {
-                declarations.push(candidate.item().declaration_ref());
-            }
+            declarations.push(candidate.item().declaration_ref());
         }
         Ok(declarations)
     }

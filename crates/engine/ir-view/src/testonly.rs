@@ -1,4 +1,5 @@
 use rg_body_ir::BodyOwner;
+use rg_def_map::DefMapSource as _;
 use rg_ir_model::{
     DefMapRef, FunctionRef, GenericParamRef, ItemOwner, ModuleRef, TraitDefRef, TypeDefId,
     TypeDefRef,
@@ -294,7 +295,7 @@ impl TypeRenderer<'_, '_> {
         let data = self
             .db
             .def_map
-            .crate_data(crate_ref)
+            .crate_metadata(crate_ref)
             .expect("fixture declarations should load")
             .expect("fixture target should exist");
 
@@ -367,11 +368,9 @@ impl TypeRenderer<'_, '_> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .db
-            .def_map_for_origin(module_ref.origin)
-            .expect("fixture def map should load")
-            .expect("target def map should exist while rendering view fixture module path")
-            .module(module_ref.module)
-            .expect("module id should exist while rendering view fixture module path");
+            .module_data(module_ref)
+            .expect("fixture module should load")
+            .expect("fixture module should exist");
 
         match module.parent {
             Some(parent) => {

@@ -41,6 +41,12 @@ impl std::error::Error for ReadError {
     }
 }
 
+impl From<ajika::Error> for ReadError {
+    fn from(error: ajika::Error) -> Self {
+        Self::Query(error)
+    }
+}
+
 impl From<Cancelled> for ReadError {
     fn from(error: Cancelled) -> Self {
         Self::Cancelled(error)

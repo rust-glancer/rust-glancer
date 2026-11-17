@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use rg_arena::Arena;
-use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
+use rg_def_map::{DefMapSource, DefMapView, DefinitionReader};
 use rg_ir_model::{
     BodyId, BodyKey, BodyRef, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, ModuleRef,
     SemanticItemRef,
@@ -55,12 +55,15 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
 }
 
 impl DefMapSource for BodyBuildQuerySource<'_, '_> {
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
+    fn definitions_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Option<DefMapView<'_>>, ReadError> {
         match origin {
-            DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
+            DefMapRef::Crate(crate_ref) => self.def_map.definitions(crate_ref),
             DefMapRef::Body(body_ref) => Ok((*self)
                 .body_local_items(body_ref)
-                .map(BodyLocalItems::def_map)),
+                .map(|items| items.def_map().view())),
         }
     }
 

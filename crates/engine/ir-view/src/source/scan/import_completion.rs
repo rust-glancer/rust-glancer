@@ -11,7 +11,7 @@
 //! use $0;          request-local empty name in the importing module
 //! ```
 
-use rg_def_map::{DefMap, ImportPath, ModuleOrigin};
+use rg_def_map::{DefMapView, ImportPath, ModuleOrigin};
 use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef, Path, PathRoot, Span};
 use rg_item_tree::SourceLocations;
 use rg_source::ReadError;
@@ -67,7 +67,7 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
 
     /// Finds a qualified segment such as `mo$0` or the empty segment in `crate::$0`.
     pub(crate) fn qualified_site(&self) -> Result<Option<ImportQualifiedPathSite>, ReadError> {
-        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.definitions(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
@@ -78,15 +78,12 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
 
     /// Finds a single relative import name such as `use cr$0;`.
     pub(crate) fn unqualified_site(&self) -> Result<Option<ImportUnqualifiedNameSite>, ReadError> {
-        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.definitions(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
 
-        for import in def_map.imports() {
-            if import.source.file_id != self.file_id {
-                continue;
-            }
+        for (_, import) in def_map.imports(Some(self.file_id))? {
             let module = ModuleRef {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
@@ -109,11 +106,11 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn empty_unqualified_site(
         &self,
     ) -> Result<Option<ImportUnqualifiedNameSite>, ReadError> {
-        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.definitions(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
-        for (module_idx, module) in def_map.modules().iter().enumerate() {
+        for (module_idx, module) in def_map.modules()?.iter().enumerate() {
             let source_len = match module.origin {
                 ModuleOrigin::Root { file_id } if file_id == self.file_id => u32::MAX,
                 ModuleOrigin::Inline {
@@ -159,13 +156,10 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
 
     fn scan_import_paths(
         &self,
-        def_map: &DefMap,
+        def_map: DefMapView<'_>,
         best: &mut NarrowestSourceSite<ImportQualifiedPathSite>,
     ) -> Result<(), ReadError> {
-        for import in def_map.imports() {
-            if import.source.file_id != self.file_id {
-                continue;
-            }
+        for (_, import) in def_map.imports(Some(self.file_id))? {
             let module = ModuleRef {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,

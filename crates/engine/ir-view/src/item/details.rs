@@ -300,7 +300,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             kind: SymbolKind::Module,
             path: PathView::new(self.db, self.edition).module_path(module_ref)?,
             signature: Some(format!("mod {name}")),
-            docs: module.docs.as_ref().map(ModuleDocumentation::text),
+            docs: self
+                .db
+                .module_docs(module_ref)?
+                .map(ModuleDocumentation::text),
         }))
     }
 

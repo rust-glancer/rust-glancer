@@ -1,3 +1,10 @@
+//! Namespaces for crate modules and body-local item scopes.
+//!
+//! Collection builds these namespaces while resolving imports and macros. After freezing,
+//! `DefMapView` lets readers use the owned map or its separately stored parts.
+
+mod read;
+
 use std::{collections::HashMap, convert::Infallible, mem};
 
 use rg_arena::Arena;
@@ -10,8 +17,9 @@ use rg_std::{MemoryRecorder, MemorySize, Shrink};
 use rg_text::{Name, identifier_text};
 use wincode::{SchemaRead, SchemaWrite};
 
+pub use self::read::{DefMapView, StoredDefMap};
 use crate::{
-    ItemSource,
+    ItemScope, ItemSource, ModuleDocumentation,
     binding::{NameBinding, Namespace, NamespaceSet, PerNs, Visibility},
     import::ImportData,
     item_scope::ItemScopeBuilder,
@@ -22,6 +30,8 @@ use crate::{
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 struct DefMapData {
+    scopes: Arena<ModuleId, ItemScope>,
+    docs: Arena<ModuleId, Option<ModuleDocumentation>>,
     modules: Arena<ModuleId, ModuleData>,
     local_defs: Arena<LocalDefId, LocalDefData>,
     local_enum_variants: Arena<LocalEnumVariantId, LocalEnumVariantData>,
@@ -400,17 +410,22 @@ impl DefMapBuilder {
 
     /// Freeze each module and move declaration arenas into the retained map.
     pub fn build(self) -> DefMap {
-        // Keep allocation order: parent links, imports, and bindings already contain these ids.
-        let modules = Arena::from_vec(
-            self.modules
-                .into_vec()
-                .into_iter()
-                .map(ModuleBuilder::freeze)
-                .collect(),
-        );
+        // Keep allocation order: parent links, imports, and bindings already contain these IDs.
+        // Allocate all three records together so a ModuleId selects the same module in each arena.
+        let mut modules = Arena::new();
+        let mut scopes = Arena::new();
+        let mut docs = Arena::new();
+        for module in self.modules.into_vec() {
+            let (data, scope, documentation) = module.freeze();
+            modules.alloc(data);
+            scopes.alloc(scope);
+            docs.alloc(documentation);
+        }
         DefMap {
             own_ref: self.own_ref,
             data: DefMapData {
+                scopes,
+                docs,
                 modules,
                 local_defs: self.local_defs,
                 local_enum_variants: self.local_enum_variants,
@@ -425,11 +440,12 @@ impl DefMapBuilder {
 
 /// Frozen namespace map for one analyzed scope.
 ///
-/// There might be several defmaps per crate:
-/// the root defmap represents the semantic layer, but also
-/// each body function has its own defmap that tracks the body-local items.
-/// While functions are not really modules, they work similarly, and we model
-/// them as if each scope is a module.
+/// There can be several DefMaps per crate: one for its module declarations, plus maps for
+/// body-local declarations. Blocks can introduce names and imports too, so those lexical scopes
+/// are represented as synthetic modules.
+///
+/// Target publication splits the completed map into [`StoredDefMap`] outputs. Body-local readers
+/// keep the smaller owned map with the body's other declarations.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub struct DefMap {
     /// Ref to this defmap, which can be used to emit correct refs.
@@ -439,6 +455,18 @@ pub struct DefMap {
 }
 
 impl DefMap {
+    pub fn view(&self) -> DefMapView<'_> {
+        DefMapView::local(self)
+    }
+
+    pub fn module_scope(&self, id: ModuleId) -> Option<&ItemScope> {
+        self.data.scopes.get(id)
+    }
+
+    pub fn module_docs(&self, id: ModuleId) -> Option<&ModuleDocumentation> {
+        self.data.docs.get(id).and_then(Option::as_ref)
+    }
+
     pub fn own_ref(&self) -> DefMapRef {
         self.own_ref
     }
@@ -448,21 +476,9 @@ impl DefMap {
         self.data.modules.as_slice()
     }
 
-    /// Returns refs for all the modules in stable module-id order.
-    pub fn module_refs(&self) -> impl Iterator<Item = ModuleRef> {
-        (0..self.data.modules.len()).map(|id| ModuleRef {
-            origin: self.own_ref,
-            module: ModuleId(id),
-        })
-    }
-
     /// Returns module data by id.
     pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
         self.data.modules.get(module_id)
-    }
-
-    pub fn module_count(&self) -> usize {
-        self.data.modules.len()
     }
 
     /// Returns local definition data by id.
@@ -488,11 +504,6 @@ impl DefMap {
         local_enum_variant: LocalEnumVariantId,
     ) -> Option<&LocalEnumVariantData> {
         self.data.local_enum_variants.get(local_enum_variant)
-    }
-
-    /// Returns all enum variants in stable variant-id order.
-    pub fn local_enum_variants(&self) -> &[LocalEnumVariantData] {
-        self.data.local_enum_variants.as_slice()
     }
 
     pub fn local_enum_variant_entries_for_enum(

@@ -37,28 +37,30 @@ impl BodyOwnerData {
                     .is_none()
             })
         });
-        Self::for_items(items, declarations)
+        Self::for_items(
+            |owner| match owner {
+                ItemOwner::Module(module) => Some(module),
+                ItemOwner::Trait(id) => items.trait_data(id).map(|data| data.owner),
+                ItemOwner::Impl(id) => items.impl_data(id).map(|data| data.owner),
+            },
+            declarations,
+        )
     }
 
     pub(crate) fn for_members<'a>(
-        headers: &'a ItemStore,
+        module: ModuleRef,
         members: &'a AssociatedItemStore,
         store: ItemStoreRef,
     ) -> impl Iterator<Item = Self> + 'a {
-        // Associated stores contain no statics. Their body metadata needs only the owner
-        // headers, without loading module definitions to check foreign blocks.
-        Self::for_items(headers, members.semantic_items(store))
+        // Every member inherits its module from the selected owner header. No other headers
+        // or module definitions are needed; associated stores contain no foreign statics.
+        Self::for_items(move |_| Some(module), members.semantic_items(store))
     }
 
     fn for_items<'a>(
-        items: &'a ItemStore,
+        module_for: impl Fn(ItemOwner) -> Option<ModuleRef> + 'a,
         declarations: impl Iterator<Item = SemanticItemView<'a>> + 'a,
     ) -> impl Iterator<Item = Self> + 'a {
-        let module_for = |owner| match owner {
-            ItemOwner::Module(module) => Some(module),
-            ItemOwner::Trait(id) => items.trait_data(id).map(|data| data.owner),
-            ItemOwner::Impl(id) => items.impl_data(id).map(|data| data.owner),
-        };
         declarations.filter_map(move |item| {
             let (owner, module, location) = match item.item() {
                 SemanticItemRef::Function(reference) => {

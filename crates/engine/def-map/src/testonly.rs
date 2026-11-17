@@ -9,8 +9,8 @@ use rg_workspace::{
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
-    CrateData, CrateDataSource, CrateDefMapReader, DefMap, DefinitionReader,
-    MacroExpansionLimitReport, build::build_fixture_definitions,
+    CrateData, CrateDefMapReader, CrateDefinitionSource, CrateMetadata, DefMap, DefMapView,
+    DefinitionReader, MacroExpansionLimitReport, build::build_fixture_definitions,
 };
 
 /// Definitions collected for one package in kernel fixtures.
@@ -70,11 +70,19 @@ impl DefMapDb {
     }
 }
 
-impl CrateDataSource for DefMapDb {
-    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
+impl CrateDefinitionSource for DefMapDb {
+    fn crate_metadata(&self, krate: CrateRef) -> Result<Option<&CrateMetadata>, ReadError> {
         Ok(self
             .package(krate.package)
-            .and_then(|package| package.crate_data(krate.crate_id)))
+            .and_then(|package| package.crate_data(krate.crate_id))
+            .map(CrateData::metadata))
+    }
+
+    fn definitions(&self, krate: CrateRef) -> Result<Option<DefMapView<'_>>, ReadError> {
+        Ok(self
+            .package(krate.package)
+            .and_then(|package| package.crate_data(krate.crate_id))
+            .map(|data| data.def_map().view()))
     }
 }
 

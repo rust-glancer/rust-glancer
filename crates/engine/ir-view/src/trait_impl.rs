@@ -31,7 +31,7 @@ use rg_ir_model::{
     TypeAliasRef,
 };
 use rg_item_tree::{Documentation, ImplPolarity};
-use rg_semantic_ir::{GenericsQuery, ItemStoreQuery};
+use rg_semantic_ir::{AssociatedItemFilter, GenericsQuery, ItemStoreQuery};
 use rg_ty::{Substitution, TraitApplication, signature::SemanticSignatureQuery};
 
 use crate::{
@@ -197,7 +197,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         // Record only semantic identity needed for absence checks. The impl's syntax may be
         // incomplete, but successfully lowered members still suppress duplicate scaffolds.
         let mut existing = Vec::new();
-        for item in items.associated_items(impl_ref.member_store())? {
+        for item in items.associated_items(impl_ref.member_store(), AssociatedItemFilter::All)? {
             if let Some(key) = self
                 .member_key(impl_ref.member_store(), *item)
                 .context("read existing trait impl member")?
@@ -215,7 +215,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         let signatures_renderer = SignatureRenderer::new(edition);
         let types = TypeRenderer::new(self.db, edition);
         let mut missing = Vec::new();
-        for item in items.associated_items(trait_ref.member_store())? {
+        for item in items.associated_items(trait_ref.member_store(), AssociatedItemFilter::All)? {
             let Some(key) = self
                 .member_key(trait_ref.member_store(), *item)
                 .context("read trait member completion identity")?

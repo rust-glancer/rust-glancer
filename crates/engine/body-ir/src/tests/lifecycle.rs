@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rg_def_map::CrateDependencies;
-use rg_ir_model::{BodyId, BodyKey, BodyRef, DefMapRef, ExprId, ModuleRef, SemanticItemRef};
+use rg_ir_model::{BodyId, BodyKey, BodyRef, DefMapRef, ExprId, SemanticItemRef};
 use rg_item_tree::testonly::fixture_database;
 use rg_profile::test_support::ProfileTest;
 use rg_semantic_ir::{CrateItemSource as _, SemanticItemSource as _, TargetDeclarationReader};
@@ -19,21 +19,20 @@ static SEMANTIC_BODY_READS: AtomicUsize = AtomicUsize::new(0);
 fn body_local_meaning(
     db: &QueryContext<'_>,
     body: BodyRef,
-) -> ajika::Result<Option<(Vec<String>, ModuleRef)>> {
+) -> ajika::Result<Option<(Vec<String>, DefMapRef)>> {
     SEMANTIC_BODY_READS.fetch_add(1, Ordering::Relaxed);
     let declarations = TargetDeclarationReader::for_target(db, body.crate_ref)?;
     let reader = BodyReader::new(db, &declarations);
     let Some(def_map) = reader.body_def_map(body)? else {
         return Ok(None);
     };
-    let module = def_map.module_refs().next().expect("body has a root scope");
     let mut names: Vec<_> = (&reader)
         .all_items(DefMapRef::Body(body))?
         .into_iter()
         .filter_map(|item| item.name().map(ToString::to_string))
         .collect();
     names.sort();
-    Ok(Some((names, module)))
+    Ok(Some((names, def_map.own_ref())))
 }
 
 #[test]
@@ -102,9 +101,9 @@ pub fn outer() { struct Local; const VALUE: usize = 2 + 2; fn nested() {} }
         database
             .run(|db| {
                 let meaning = body_local_meaning(db, body)?;
-                let (names, module) = meaning.as_ref().as_ref().expect("visible body");
+                let (names, origin) = meaning.as_ref().as_ref().expect("visible body");
                 assert_eq!(names, &[expected_name, "VALUE", "nested"]);
-                assert_eq!(module.origin, DefMapRef::Body(body));
+                assert_eq!(*origin, DefMapRef::Body(body));
                 Ok(())
             })
             .expect("read local meaning");

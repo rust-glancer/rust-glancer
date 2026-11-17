@@ -21,7 +21,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, DefMapRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef, TypeDefRef,
 };
-use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 
@@ -166,11 +166,12 @@ where
                 let SemanticItemRef::Trait(trait_ref) = view.item() else {
                     continue;
                 };
-                let members = self
+                let mut members = self
                     .context
                     .item_query()
-                    .associated_items(trait_ref.member_store())?;
-                if !members.is_empty() {
+                    .associated_items(trait_ref.member_store(), AssociatedItemFilter::All)?
+                    .peekable();
+                if members.peek().is_some() {
                     index.traits_with_associated_items.push(trait_ref);
                 }
 

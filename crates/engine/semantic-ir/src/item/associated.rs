@@ -6,6 +6,30 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::{ConstData, FunctionData, SemanticItemView, TypeAliasData, view::SemanticItemData};
 
+/// Completion asks for all members; a complete path such as `Vec::pop` already knows the name.
+/// Carry that distinction into candidate selection so unrelated owners need not be opened.
+#[derive(Debug, Clone, Copy)]
+pub enum AssociatedItemFilter<'a> {
+    All,
+    Named(&'a str),
+}
+
+impl AssociatedItemFilter<'_> {
+    pub fn matches(self, name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Named(expected) => expected == name,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum AssociatedItemKind {
+    Function,
+    Const,
+    TypeAlias,
+}
+
 /// Cheap hints for selecting owners before reading their members.
 ///
 /// Startup records written names only. For `impl Bag { methods!(); }`, the empty name lists do
@@ -15,8 +39,26 @@ use super::{ConstData, FunctionData, SemanticItemView, TypeAliasData, view::Sema
 pub(crate) struct AssociatedItemHints {
     pub functions: Vec<Name>,
     pub consts: Vec<Name>,
-    pub has_types: bool,
+    pub types: Vec<Name>,
     pub has_macros: bool,
+}
+
+impl AssociatedItemHints {
+    pub(crate) fn names(self) -> impl Iterator<Item = (AssociatedItemKind, Name)> {
+        self.functions
+            .into_iter()
+            .map(|name| (AssociatedItemKind::Function, name))
+            .chain(
+                self.consts
+                    .into_iter()
+                    .map(|name| (AssociatedItemKind::Const, name)),
+            )
+            .chain(
+                self.types
+                    .into_iter()
+                    .map(|name| (AssociatedItemKind::TypeAlias, name)),
+            )
+    }
 }
 
 /// Functions, associated types and constants declared inside one trait or impl block.

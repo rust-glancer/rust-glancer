@@ -7,7 +7,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
-use rg_semantic_ir::SemanticItemSource;
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 
@@ -77,12 +77,14 @@ where
     R: SolverScope,
 {
     /// Match inherent impls plus an already-discovered set of relevant traits.
+    /// The member filter narrows inherent owners; the caller has already selected the traits.
     pub fn matches_for_receiver_with_traits(
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
+        inherent_filter: AssociatedItemFilter<'_>,
     ) -> Result<ReceiverImplMatches, ReadError> {
-        let mut matches = self.inherent_matches_for_receiver(receiver_ty)?;
+        let mut matches = self.inherent_matches_for_receiver(receiver_ty, inherent_filter)?;
         matches.extend(self.trait_matches_for_receiver(receiver_ty, trait_refs)?);
         Ok(matches)
     }
@@ -104,6 +106,7 @@ where
     fn inherent_matches_for_receiver(
         &self,
         receiver_ty: &Ty,
+        filter: AssociatedItemFilter<'_>,
     ) -> Result<ReceiverImplMatches, ReadError> {
         let mut inherent_impls = UniqueVec::new();
         for receiver in receiver_ty.as_adts() {
@@ -111,7 +114,7 @@ where
             let candidates = self
                 .context
                 .item_lookup()
-                .inherent_impls_for_type(receiver.def)?;
+                .inherent_impls_for_type(receiver.def, filter)?;
             inherent_impls.extend(candidates);
         }
 
@@ -137,7 +140,10 @@ where
                 | Ty::Dyn(_)
         );
         if has_structural_self_head {
-            let candidates = self.context.item_lookup().structural_inherent_impls()?;
+            let candidates = self
+                .context
+                .item_lookup()
+                .structural_inherent_impls(filter)?;
             matches.extend(self.inherent_matches_for_receiver_from_impls(receiver_ty, candidates)?);
         }
 

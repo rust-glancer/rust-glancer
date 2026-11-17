@@ -1,8 +1,10 @@
-//! Typed dense arenas for phase-local rust-glancer ids.
+//! Typed dense arenas for rust-glancer identities.
 //!
-//! The crate intentionally models only the simple arena shape used throughout the engine:
-//! builders allocate values into a dense `Arena`, and retained project snapshots compact that
-//! storage through the workspace-wide `Shrink` hierarchy.
+//! `Arena` owns records during construction and in small retained stores. `StoredArena` publishes
+//! the same records as grouped Ajika outputs, so a point read can acquire part of a large arena
+//! while keeping the IDs allocated during construction.
+
+mod stored;
 
 use std::{
     marker::PhantomData,
@@ -11,6 +13,8 @@ use std::{
 };
 
 use wincode::{SchemaRead, SchemaWrite};
+
+pub use self::stored::StoredArena;
 
 /// Stable typed index into an arena.
 ///

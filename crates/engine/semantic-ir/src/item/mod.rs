@@ -22,7 +22,7 @@ mod view;
 
 pub(crate) use self::associated::AssociatedItemHints;
 pub use self::{
-    associated::{AssociatedItemStore, AssociatedItemStoreBuilder},
+    associated::{AssociatedItemFilter, AssociatedItemStore, AssociatedItemStoreBuilder},
     context::{SelfTypeOwner, TypePathContext},
     data::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
@@ -39,7 +39,7 @@ pub use self::{
         LookupQuestion, SemanticItemSource,
     },
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
-    store::{ItemStore, ItemStoreBuilder},
+    store::{ItemStore, ItemStoreBuilder, StoredItemStore},
     type_path_resolution::TypePathResolution,
     view::SemanticItemView,
 };

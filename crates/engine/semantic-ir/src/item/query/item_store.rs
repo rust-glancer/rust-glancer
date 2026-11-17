@@ -11,8 +11,8 @@ use rg_source::ReadError;
 
 use super::SemanticItemSource;
 use crate::{
-    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, SelfTypeOwner,
-    SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
+    AssociatedItemFilter, ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData,
+    SelfTypeOwner, SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
 };
 
 /// Shared item operations, independent of how providers acquire declaration data.
@@ -38,21 +38,31 @@ where
     ///
     /// Returned IDs are local to that store. Use `id.semantic_ref(store)` to keep the owner when
     /// looking up a member's data. A scope store has no associated-item list and returns an empty
-    /// slice.
-    pub fn associated_items(&self, store: ItemStoreRef) -> Result<&'a [AssocItemId], ReadError> {
-        Ok(self
-            .source
-            .associated_items(store)?
-            .map_or(&[], |members| members.items()))
+    /// iterator. A name filter reads the selected store once and compares its declaration names
+    /// without constructing documentation or other presentation data for rejected members.
+    pub fn associated_items<'name>(
+        &self,
+        store: ItemStoreRef,
+        filter: AssociatedItemFilter<'name>,
+    ) -> Result<impl Iterator<Item = &'a AssocItemId> + use<'a, 'name, S>, ReadError> {
+        let members = self.source.associated_items(store)?;
+        Ok(members.into_iter().flat_map(move |members| {
+            members.items().iter().filter(move |item| match filter {
+                AssociatedItemFilter::All => true,
+                AssociatedItemFilter::Named(name) => members
+                    .item(item.semantic_ref(store))
+                    .and_then(|item| item.name())
+                    .is_some_and(|item_name| item_name == name),
+            })
+        }))
     }
 
     pub fn associated_functions(
         &self,
         store: ItemStoreRef,
-    ) -> Result<impl Iterator<Item = FunctionRef> + 'a, ReadError> {
+    ) -> Result<impl Iterator<Item = FunctionRef> + use<'a, S>, ReadError> {
         Ok(self
-            .associated_items(store)?
-            .iter()
+            .associated_items(store, AssociatedItemFilter::All)?
             .filter_map(move |item| match item {
                 AssocItemId::Function(id) => Some(FunctionRef::new(store, *id)),
                 _ => None,

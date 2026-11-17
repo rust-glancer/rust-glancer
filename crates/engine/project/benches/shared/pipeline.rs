@@ -6,8 +6,8 @@ use std::{
 };
 
 use rg_def_map::{
-    AssociatedItemInput, AssociatedItemOwner, CrateData, CrateDataSource, CrateDefMapReader,
-    CrateDependencies, DefMapQuery, GeneratedItemStore,
+    AssociatedItemInput, AssociatedItemOwner, CrateData, CrateDefMapReader, CrateDefinitionSource,
+    CrateDependencies, CrateMetadata, DefMapQuery, DefMapView, GeneratedItemStore,
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
@@ -174,9 +174,15 @@ pub(crate) struct Declarations {
     items: HashMap<CrateRef, TargetItemData>,
 }
 
-impl CrateDataSource for Declarations {
-    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
-        Ok(self.definitions.get(&krate))
+impl CrateDefinitionSource for Declarations {
+    fn crate_metadata(&self, krate: CrateRef) -> Result<Option<&CrateMetadata>, ReadError> {
+        Ok(self.definitions.get(&krate).map(CrateData::metadata))
+    }
+    fn definitions(&self, krate: CrateRef) -> Result<Option<DefMapView<'_>>, ReadError> {
+        Ok(self
+            .definitions
+            .get(&krate)
+            .map(|data| data.def_map().view()))
     }
 }
 

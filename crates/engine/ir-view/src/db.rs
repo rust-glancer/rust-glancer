@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use rg_body_ir::{BodyReader, DeclarationSourceView};
-use rg_def_map::{DefMap, DefMapSource, DefinitionReader, ItemSource};
+use rg_def_map::{DefMap, DefMapSource, DefMapView, DefinitionReader, ItemSource};
 use rg_ir_model::{
     CrateRef, DefMapRef, FileId, ItemStoreRef, LocalDefRef, ModuleRef, PackageSlot,
     SemanticItemRef, SourceId, Span,
@@ -97,13 +97,16 @@ impl<'db> IndexedViewDb<'db> {
         &self.cancellation
     }
 
-    pub(crate) fn def_map_for_origin(
+    pub(crate) fn definitions_for_origin(
         &self,
         origin: DefMapRef,
-    ) -> Result<Option<&DefMap>, ReadError> {
+    ) -> Result<Option<DefMapView<'_>>, ReadError> {
         match origin {
-            DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
-            DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
+            DefMapRef::Crate(crate_ref) => self.def_map.definitions(crate_ref),
+            DefMapRef::Body(body_ref) => self
+                .body_ir
+                .body_def_map(body_ref)
+                .map(|map| map.map(DefMap::view)),
         }
     }
 
@@ -189,11 +192,11 @@ impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
 }
 
 impl DefMapSource for &IndexedViewDb<'_> {
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
-        match origin {
-            DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
-            DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
-        }
+    fn definitions_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Option<DefMapView<'_>>, ReadError> {
+        IndexedViewDb::definitions_for_origin(self, origin)
     }
 
     fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, ReadError> {

@@ -1876,6 +1876,7 @@ dependencies = [
 name = "rg_arena"
 version = "0.0.0"
 dependencies = [
+ "ajika",
  "rg_std",
  "wincode",
 ]

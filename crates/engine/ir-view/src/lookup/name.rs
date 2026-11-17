@@ -476,7 +476,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 (
                     DeclarationRef::Module(module),
                     SymbolKind::Module,
-                    data.docs.as_ref().map(ModuleDocumentation::text),
+                    self.db.module_docs(module)?.map(ModuleDocumentation::text),
                     data.user_facing_attrs,
                 )
             }

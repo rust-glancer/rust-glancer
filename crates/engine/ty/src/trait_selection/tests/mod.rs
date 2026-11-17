@@ -8,6 +8,7 @@ mod utils;
 use std::fmt::Write as _;
 
 use expect_test::expect;
+use rg_semantic_ir::AssociatedItemFilter;
 use rg_source::ReadError;
 use rg_std::CancellationToken;
 
@@ -115,7 +116,7 @@ fn named_trait_discovery_ignores_unrelated_blanket_impls() {
         args: Vec::new().into(),
     });
     let matches = impl_query
-        .matches_for_receiver_with_traits(&receiver_ty, relevant_traits)
+        .matches_for_receiver_with_traits(&receiver_ty, relevant_traits, AssociatedItemFilter::All)
         .expect("bounded named trait lookup should succeed");
 
     assert_eq!(matches.traits().len(), 1);

@@ -1,4 +1,5 @@
 use expect_test::expect;
+use rg_ir_model::ModuleId;
 
 use super::utils;
 use crate::Namespace;
@@ -401,7 +402,10 @@ pub struct Thing;
         );
         let project = utils::DefMapFixtureDb::build(&fixture);
         let target = project.lib("import_cycle");
-        let scope = &target.def_map().modules()[0].scope;
+        let scope = target
+            .def_map()
+            .module_scope(ModuleId(0))
+            .expect("root scope");
         let binding = |name: &str| {
             scope
                 .entry(name)

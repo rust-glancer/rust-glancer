@@ -6,7 +6,7 @@ use rg_ir_model::{
     ScopeId, TraitApplicability, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::SemanticItemSource;
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
@@ -148,7 +148,11 @@ where
             .context
             .impls()
             .matches_for_receiver_with_associated_items(scope, ty)?;
-        query.candidates_for_matches(receiver.receiver_ty(), receiver.matches())
+        query.candidates_for_matches(
+            receiver.receiver_ty(),
+            receiver.matches(),
+            AssociatedItemFilter::All,
+        )
     }
 
     fn candidates_for_trait_applications(
@@ -156,7 +160,11 @@ where
         applications: impl IntoIterator<Item = TraitApplication>,
     ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context)
-            .candidates_for_trait_applications(applications, TraitApplicability::Yes)
+            .candidates_for_trait_applications(
+                applications,
+                TraitApplicability::Yes,
+                AssociatedItemFilter::All,
+            )
     }
 
     /// Resolve an associated value path from a type prefix and a final item name.
@@ -533,7 +541,7 @@ where
         extra_subst: Option<&Substitution>,
     ) -> Result<Option<BodyAssociatedItemCandidate>, ReadError> {
         let item_query = self.context.item_query();
-        for item in item_query.associated_items(store)? {
+        for item in item_query.associated_items(store, AssociatedItemFilter::All)? {
             let AssocItemId::Const(id) = item else {
                 continue;
             };

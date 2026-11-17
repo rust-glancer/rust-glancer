@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use rg_ir_model::{EnumVariantRef, TypeDefRef, identity::DeclarationRef};
 use rg_ir_view::{
     lookup::name::NameNamespace,
-    member::{ConstructorShape, MemberAssociatedItem, MemberView},
+    member::{AssociatedItemFilter, ConstructorShape, MemberAssociatedItem, MemberView},
     source::{
         IndexedAssociatedTypeBindingScope, IndexedAssociatedTypeBindingSite,
         IndexedQualifiedPathScope, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
@@ -47,7 +47,11 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     return Ok(Vec::new());
                 };
                 members
-                    .associated_item_candidates_for_signature(scope, qualifier)
+                    .associated_item_candidates_for_signature(
+                        scope,
+                        qualifier,
+                        AssociatedItemFilter::All,
+                    )
                     .context("collect signature associated path candidates")?
             }
             IndexedQualifiedPathScope::Import { module } => {

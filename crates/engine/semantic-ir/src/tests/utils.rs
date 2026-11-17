@@ -324,6 +324,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
 
         def_map
             .modules()
+            .expect("fixture modules")
             .iter()
             .enumerate()
             .find_map(|(module_idx, _)| {
@@ -460,6 +461,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .def_map(module_ref.origin.origin_crate())
             .expect("crate def map should exist while rendering query module path")
             .module(module_ref.module)
+            .expect("fixture module read")
             .expect("module id should exist while rendering query module path");
 
         match module.parent {
@@ -502,6 +504,7 @@ impl CrateSemanticIrSnapshot<'_> {
             writeln!(&mut dump, "{module_path}").expect("string writes should not fail");
             let module = def_map
                 .module(module_id)
+                .expect("fixture module read")
                 .expect("module id should exist while rendering semantic IR");
 
             for local_def in &module.local_defs {
@@ -840,6 +843,7 @@ impl CrateSemanticIrSnapshot<'_> {
             .expect("crate def map should exist while sorting semantic IR modules");
         let mut modules = def_map
             .modules()
+            .expect("fixture modules")
             .iter()
             .enumerate()
             .map(|(idx, _)| {
@@ -857,6 +861,7 @@ impl CrateSemanticIrSnapshot<'_> {
             .def_map(self.crate_ref)
             .expect("crate def map should exist while rendering module path")
             .module(module_id)
+            .expect("fixture module read")
             .expect("module id should exist while rendering module path");
 
         match module.parent {

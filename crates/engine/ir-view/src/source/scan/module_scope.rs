@@ -4,7 +4,7 @@
 //! semantic module from which names resolve. This scanner joins those two facts without making
 //! analysis reconstruct module ancestry from source text.
 
-use rg_def_map::{DefMap, DefinitionReader, ModuleFileSelection, ModuleOrigin};
+use rg_def_map::{DefMapView, DefinitionReader, ModuleFileSelection, ModuleOrigin};
 use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleId, ModuleRef};
 use rg_source::ReadError;
 
@@ -61,11 +61,11 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
 
     /// Return source ownership and already-declared child names for the selected module.
     pub(crate) fn site(&self) -> Result<Option<ModuleSourceSite>, ReadError> {
-        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.definitions(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
-        for (module_index, module) in def_map.modules().iter().enumerate() {
+        for (module_index, module) in def_map.modules()?.iter().enumerate() {
             let source_len = match module.origin {
                 ModuleOrigin::Root { file_id } if file_id == self.file_id => u32::MAX,
                 ModuleOrigin::Inline {
@@ -98,7 +98,7 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
         };
 
         let Some((file_base, inline_module_path)) =
-            Self::file_base_and_inline_path(def_map, module_id, self.file_id)
+            Self::file_base_and_inline_path(def_map, module_id, self.file_id)?
         else {
             return Ok(None);
         };
@@ -107,11 +107,11 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
         // excluded before filesystem candidates are rendered.
         let mut declared_children = Vec::new();
         for (name, child) in def_map
-            .module(module_id)
+            .module(module_id)?
             .into_iter()
             .flat_map(|module| &module.children)
         {
-            let Some(child) = def_map.module(*child) else {
+            let Some(child) = def_map.module(*child)? else {
                 continue;
             };
             let is_current_declaration = match child.origin {
@@ -178,16 +178,16 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
         else {
             return Ok(None);
         };
-        let Some(def_map) = def_map_txn.def_map(crate_ref)? else {
+        let Some(def_map) = def_map_txn.definitions(crate_ref)? else {
             return Ok(None);
         };
         let Some((file_base, semantic_inline_module_path)) =
-            Self::file_base_and_inline_path(def_map, module.module, file_id)
+            Self::file_base_and_inline_path(def_map, module.module, file_id)?
         else {
             return Ok(None);
         };
         let declared_children = def_map
-            .module(module.module)
+            .module(module.module)?
             .into_iter()
             .flat_map(|module| &module.children)
             .map(|(name, _)| name.to_string())
@@ -203,19 +203,27 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
 
     /// Walk from an inline completion site to the semantic module that defines the file base.
     fn file_base_and_inline_path(
-        def_map: &DefMap,
+        def_map: DefMapView<'_>,
         module_id: ModuleId,
         file_id: FileId,
-    ) -> Option<(ModuleFileBase, Vec<String>)> {
+    ) -> Result<Option<(ModuleFileBase, Vec<String>)>, ReadError> {
         let mut inline_module_path = Vec::new();
         let mut ancestor = Some(module_id);
         let file_base = loop {
-            let module = def_map.module(ancestor?)?;
+            let Some(ancestor_id) = ancestor else {
+                return Ok(None);
+            };
+            let Some(module) = def_map.module(ancestor_id)? else {
+                return Ok(None);
+            };
             match module.origin {
                 ModuleOrigin::Inline {
                     declaration_source, ..
                 } if declaration_source.file_id == file_id => {
-                    inline_module_path.push(module.name.as_ref()?.to_string());
+                    let Some(name) = &module.name else {
+                        return Ok(None);
+                    };
+                    inline_module_path.push(name.to_string());
                 }
                 ModuleOrigin::Root { file_id: root_file } if root_file == file_id => {
                     break ModuleFileBase::TargetRoot;
@@ -233,11 +241,11 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
                 ModuleOrigin::Root { .. }
                 | ModuleOrigin::Synthetic { .. }
                 | ModuleOrigin::Inline { .. }
-                | ModuleOrigin::OutOfLine { .. } => return None,
+                | ModuleOrigin::OutOfLine { .. } => return Ok(None),
             }
             ancestor = module.parent;
         };
         inline_module_path.reverse();
-        Some((file_base, inline_module_path))
+        Ok(Some((file_base, inline_module_path)))
     }
 }

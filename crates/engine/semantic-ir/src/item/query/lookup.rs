@@ -17,7 +17,7 @@ use super::{
     ItemStoreQuery, SemanticItemSource,
     candidates::{LookupAnswer, LookupQuestion},
 };
-use crate::{ItemLookupEnv, ItemReader, TraitImplSelfHead};
+use crate::{AssociatedItemFilter, ItemLookupEnv, ItemReader, TraitImplSelfHead};
 
 /// A use-site view. Candidate answers have the same error channel as its semantic source.
 #[derive(Debug, Clone)]
@@ -101,7 +101,7 @@ impl<'item> ItemLookupQuery<'item> {
         S: SemanticItemSource<'query>,
     {
         let mut functions = UniqueVec::new();
-        for impl_ref in self.inherent_impls_for_type(ty)? {
+        for impl_ref in self.inherent_impls_for_type(ty, AssociatedItemFilter::All)? {
             functions.extend(item_query.associated_functions(impl_ref.member_store())?);
         }
         Ok(functions)
@@ -130,14 +130,33 @@ impl<'item> ItemLookupQuery<'item> {
         };
         Ok(answer.unwrap_or_default())
     }
-    pub fn structural_inherent_impls(&self) -> Result<UniqueVec<ImplRef>, ReadError> {
-        let LookupAnswer::Impls(answer) = self.ask(LookupQuestion::StructuralImpls)? else {
+    pub fn structural_inherent_impls(
+        &self,
+        filter: AssociatedItemFilter<'_>,
+    ) -> Result<UniqueVec<ImplRef>, ReadError> {
+        let question = match filter {
+            AssociatedItemFilter::All => LookupQuestion::StructuralImpls,
+            AssociatedItemFilter::Named(name) => {
+                LookupQuestion::StructuralImplsWithItemName(Name::new(name))
+            }
+        };
+        let LookupAnswer::Impls(answer) = self.ask(question)? else {
             unreachable!("candidate answer matches its question")
         };
         Ok(answer)
     }
-    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, ReadError> {
-        let LookupAnswer::Impls(answer) = self.ask(LookupQuestion::InherentImpls(ty))? else {
+    pub fn inherent_impls_for_type(
+        &self,
+        ty: TypeDefRef,
+        filter: AssociatedItemFilter<'_>,
+    ) -> Result<UniqueVec<ImplRef>, ReadError> {
+        let question = match filter {
+            AssociatedItemFilter::All => LookupQuestion::InherentImpls(ty),
+            AssociatedItemFilter::Named(name) => {
+                LookupQuestion::InherentImplsWithItemName(ty, Name::new(name))
+            }
+        };
+        let LookupAnswer::Impls(answer) = self.ask(question)? else {
             unreachable!("candidate answer matches its question")
         };
         Ok(answer)
@@ -193,9 +212,17 @@ impl<'item> ItemLookupQuery<'item> {
         };
         Ok(answer)
     }
-    pub fn traits_with_associated_items(&self) -> Result<UniqueVec<TraitDefRef>, ReadError> {
-        let LookupAnswer::Traits(answer) = self.ask(LookupQuestion::TraitsWithAssociatedItems)?
-        else {
+    pub fn traits_with_associated_items(
+        &self,
+        filter: AssociatedItemFilter<'_>,
+    ) -> Result<UniqueVec<TraitDefRef>, ReadError> {
+        let question = match filter {
+            AssociatedItemFilter::All => LookupQuestion::TraitsWithAssociatedItems,
+            AssociatedItemFilter::Named(name) => {
+                LookupQuestion::TraitsWithItemName(Name::new(name))
+            }
+        };
+        let LookupAnswer::Traits(answer) = self.ask(question)? else {
             unreachable!("candidate answer matches its question")
         };
         Ok(answer)

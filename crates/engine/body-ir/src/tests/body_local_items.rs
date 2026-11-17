@@ -1,6 +1,6 @@
 use expect_test::expect;
 use rg_def_map::{ItemSourceKind, ModuleOrigin, Namespace};
-use rg_ir_model::{BodyId, DefId};
+use rg_ir_model::{BodyId, DefId, ModuleId};
 use rg_workspace::TargetKind;
 
 use super::utils::check_project_body_ir;
@@ -1561,8 +1561,12 @@ fn use_it() {
         let binding = map
             .modules()
             .iter()
-            .filter(|module| matches!(module.origin, ModuleOrigin::Synthetic { .. }))
-            .find_map(|module| module.scope.entry("Thing"))
+            .enumerate()
+            .filter(|(_, module)| matches!(module.origin, ModuleOrigin::Synthetic { .. }))
+            .find_map(|(index, _)| {
+                map.module_scope(ModuleId(index))
+                    .and_then(|scope| scope.entry("Thing"))
+            })
             .and_then(|entry| entry.binding(Namespace::Types))
             .expect("body import should retain a target");
         assert!(matches!(binding.def, DefId::Local(_)));

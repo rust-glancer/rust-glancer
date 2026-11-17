@@ -1,4 +1,4 @@
-use rg_def_map::{CrateDataSource as _, CrateDependencies};
+use rg_def_map::{CrateDefinitionSource as _, CrateDependencies};
 use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, ItemStoreId, LocalDefRef, SemanticItemRef};
 use rg_item_tree::testonly::fixture_database;
 use rg_source::{CapturedSource, QueryContext, SourceInput};
@@ -70,15 +70,16 @@ macro_rules! Added { () => {} }
                 })
                 .expect("fixture function exists");
             let data = declarations
-                .crate_data(target)?
+                .definitions(target)?
                 .expect("fixture target exists");
             let definition = data
-                .def_map()
-                .local_def_refs()
-                .find(|definition| {
-                    data.def_map()
-                        .local_def(definition.local_def)
-                        .is_some_and(|data| data.name.as_str() == "Added")
+                .local_defs(None)?
+                .into_iter()
+                .find_map(|(id, data)| {
+                    (data.name.as_str() == "Added").then_some(LocalDefRef {
+                        origin: DefMapRef::Crate(target),
+                        local_def: id,
+                    })
                 })
                 .expect("fixture macro definition exists");
             Ok((function, definition))
