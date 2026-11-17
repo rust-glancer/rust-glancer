@@ -42,7 +42,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         let crate_data = self
             .db
             .def_map
-            .crate_data(crate_ref)
+            .crate_metadata(crate_ref)
             .context("load crate data for module path")?;
         let mut names = Vec::new();
         let mut current = module_ref.module;

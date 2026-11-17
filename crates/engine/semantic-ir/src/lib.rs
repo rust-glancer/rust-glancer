@@ -34,9 +34,9 @@ pub use self::{
         GenericParamSource, GenericParamView, Generics, GenericsQuery, ImplData, ItemLookupEnv,
         ItemLookupIndex, ItemLookupQuery, ItemLookupShard, ItemResolutionQuery, ItemStore,
         ItemStoreBuilder, ItemStoreQuery, LangItemIndex, LookupAnswer, LookupKeys, LookupQuestion,
-        SelfTypeOwner, SemanticItemSource, SemanticItemView, StaticData, StructData, TraitData,
-        TraitImplSelfHead, TypeAliasData, TypeAliasSignature, TypePathContext, TypePathResolution,
-        UnionData,
+        SelfTypeOwner, SemanticItemSource, SemanticItemView, StaticData, StoredItemStore,
+        StructData, TraitData, TraitImplSelfHead, TypeAliasData, TypeAliasSignature,
+        TypePathContext, TypePathResolution, UnionData,
     },
     reader::{CrateItemSource, ItemReader},
     source::{

@@ -1,8 +1,9 @@
 //! Mutable and frozen module records, their source origins, and declaration metadata.
 //!
 //! `ModuleBuilder` collects names and declarations while imports and macros are being resolved.
-//! Freezing produces `ModuleData`; both expose the same metadata view for name lookup. The item
-//! scope is read separately because import collection can temporarily own its mutable buffer.
+//! Freezing separates module metadata, namespace bindings, and documentation. Both mutable and
+//! frozen metadata expose the same view for name lookup. The item scope is read separately during
+//! collection because import resolution can temporarily own its mutable buffer.
 
 use rg_ir_model::{FileId, ImportId, LocalDefId, LocalImplId, ModuleId, SourceId};
 use rg_item_tree::{Documentation, UserFacingAttrs};
@@ -12,12 +13,12 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{ItemScope, ItemScopeBuilder, ItemSource, Visibility};
 
-/// One module in the frozen namespace graph.
+/// Structural metadata for one module: its parent, children, and declaration IDs.
+/// Bindings and documentation are read separately, so following parent links can leave them unloaded.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ModuleData {
     pub name: Option<Name>,
     pub name_location: Option<SourceId>,
-    pub docs: Option<ModuleDocumentation>,
     pub user_facing_attrs: UserFacingAttrs,
     /// Visibility of the declaration that introduced this module identity.
     ///
@@ -30,7 +31,6 @@ pub struct ModuleData {
     pub impls: Vec<LocalImplId>,
     pub imports: Vec<ImportId>,
     pub unresolved_imports: Vec<ImportId>,
-    pub scope: ItemScope,
     pub origin: ModuleOrigin,
 }
 
@@ -53,8 +53,9 @@ impl ModuleData {
 /// scope to replay imports from.
 ///
 /// Import collection takes the buffer and returns it before macro lookup resumes. Winning import
-/// routes live only in mutable namespace slots; freezing keeps the selected bindings and
-/// unresolved-import report in `ModuleData`, without the collector's scheduling state.
+/// routes live only in mutable namespace slots; freezing keeps the selected bindings in
+/// `ItemScope` and the unresolved-import report in `ModuleData`. The collector's scheduling
+/// state is discarded.
 #[derive(Debug)]
 pub struct ModuleBuilder {
     pub name: Option<Name>,
@@ -99,11 +100,10 @@ impl ModuleBuilder {
         }
     }
 
-    pub(crate) fn freeze(self) -> ModuleData {
-        ModuleData {
+    pub(crate) fn freeze(self) -> (ModuleData, ItemScope, Option<ModuleDocumentation>) {
+        let data = ModuleData {
             name: self.name,
             name_location: self.name_location,
-            docs: self.docs,
             user_facing_attrs: self.user_facing_attrs,
             visibility: self.visibility,
             parent: self.parent,
@@ -112,9 +112,9 @@ impl ModuleBuilder {
             impls: self.impls,
             imports: self.imports,
             unresolved_imports: self.unresolved_imports,
-            scope: self.scope.freeze(),
             origin: self.origin,
-        }
+        };
+        (data, self.scope.freeze(), self.docs)
     }
 }
 

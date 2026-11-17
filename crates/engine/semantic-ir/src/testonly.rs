@@ -1,5 +1,5 @@
 use rg_def_map::{
-    CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMap, DefinitionReader,
+    CrateDefMapReader, CrateDefinitionSource, CrateDependencies, DefMapView, DefinitionReader,
 };
 use rg_ir_model::{CrateRef, DefMapRef, PackageSlot};
 use rg_source::{QueryContext, QueryDatabase};
@@ -89,11 +89,10 @@ impl<'db> SemanticIrView<'db> {
         self.targets
     }
 
-    pub fn def_map(&self, target: CrateRef) -> Option<&'db DefMap> {
+    pub fn def_map(&self, target: CrateRef) -> Option<DefMapView<'db>> {
         self.declarations
-            .crate_data(target)
+            .definitions(target)
             .expect("fixture definitions should load")
-            .map(CrateData::def_map)
     }
 
     pub fn all_items(&self, origin: DefMapRef) -> Vec<SemanticItemView<'db>> {

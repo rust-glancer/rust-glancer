@@ -7,9 +7,9 @@ use std::{
 };
 
 use rg_def_map::{
-    AssociatedItemInput, AssociatedItemOwner, CrateData, CrateDataSource, CrateDefMapReader,
-    CrateDependencies, DefMapQuery, GeneratedItemStore, GeneratedSourceStore,
-    MacroExpansionLimitReport, MacroScopeData,
+    AssociatedItemInput, AssociatedItemOwner, CrateData, CrateDefMapReader, CrateDefinitionSource,
+    CrateDependencies, CrateMetadata, DefMapQuery, DefMapView, GeneratedItemStore,
+    GeneratedSourceStore, MacroExpansionLimitReport, MacroScopeData, StoredDefMap,
 };
 use rg_ir_model::{
     CrateRef, DefMapRef, FileId, ItemStoreId, ItemStoreRef, LocalDefRef, SemanticItemRef,
@@ -29,7 +29,7 @@ use crate::{
     AssociatedItemStore, BodyOwnerData, CrateItemSource, DeclarationSourceResolver, ItemLookupEnv,
     ItemLookupIndex, ItemLookupShard, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
     LookupKeys, LookupQuestion, SemanticItemSource, SemanticItemView, SourceOwnershipIndex,
-    SourceSelection, SymbolNameData, SymbolNameIndex, item::AssociatedItemHints,
+    SourceSelection, StoredItemStore, SymbolNameData, SymbolNameIndex, item::AssociatedItemHints,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
@@ -57,15 +57,22 @@ pub struct TargetSourceFiles {
 
 /// Handles for the independently readable parts of one target's declarations.
 ///
+/// Module-level collection and lowering finish together before publication. Consumers then read
+/// individual outputs: resolving `api::run` can open `api`'s bindings from `definitions`, then
+/// `run`'s semantic record group from `items`. The output handles keep those reads separate.
+///
 /// `items` contains module declarations and trait/impl headers. Their associated declarations
 /// are separate owner queries: this result keeps the inputs and macro scopes needed to build
 /// them, along with cheap name hints for deciding which owners to open. Lang-item preparation
 /// demands the selected owners after this query completes; other owners wait for their readers.
 #[ajika::output]
 pub struct TargetDeclarations {
+    /// Files and expansion diagnostics needed to integrate this target into the project.
     metadata: TargetDeclarationMetadata,
-    definitions: CrateData,
-    items: ItemStore,
+    /// Crate-wide language facts, including extern roots and the standard prelude.
+    crate_metadata: CrateMetadata,
+    definitions: StoredDefMap,
+    items: StoredItemStore,
     generated_sources: GeneratedSourceStore,
     member_inputs: AssociatedItemInputs,
     macro_scopes: MacroScopeData,
@@ -144,10 +151,16 @@ pub fn target_declarations(
         .enumerate()
         .map(|(shard, data)| db.output(("lookup", shard as u32), data.into()))
         .collect::<ajika::Result<Vec<_>>>()?;
+    // Header resolution and index construction have finished using the owned records. Move them
+    // into their read groups now; the returned handles become readable when this query completes.
+    let (crate_metadata, definitions) = data.into_parts();
+    let definitions = StoredDefMap::publish(db, definitions)?;
+    let items = StoredItemStore::publish(db, items)?;
     TargetDeclarations::new(
         db,
         metadata,
-        data,
+        crate_metadata,
+        definitions,
         items,
         generated_sources,
         member_inputs,
@@ -185,7 +198,7 @@ impl TargetItemData {
         trees: ItemTrees,
         generated_items: GeneratedItemStore,
         member_inputs: &HashMap<AssociatedItemOwner, AssociatedItemInput>,
-        dependencies: &(impl CrateDataSource + CrateItemSource),
+        dependencies: &(impl CrateDefinitionSource + CrateItemSource),
     ) -> ajika::Result<Self> {
         let mut items = ItemStore::lower_crate(data.def_map(), &trees, &generated_items)
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
@@ -319,8 +332,10 @@ fn visible_targets(db: &QueryContext<'_>, root: CrateRef) -> ajika::Result<HashS
     Ok(reached)
 }
 
-/// Restricts declaration reads to the targets in this view. Ajika retains the payloads for
-/// the consuming query frame.
+/// Opens declaration outputs for the targets allowed in this operation.
+///
+/// The reader stores only target identities. Each read selects its outputs through Ajika, which
+/// keeps the returned values alive for the consuming query frame.
 pub struct TargetDeclarationReader<'db> {
     db: &'db QueryContext<'db>,
     targets: Arc<HashSet<CrateRef>>,
@@ -386,10 +401,16 @@ impl fmt::Debug for TargetDeclarationReader<'_> {
     }
 }
 
-impl CrateDataSource for TargetDeclarationReader<'_> {
-    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
-        self.acquire(krate, |result| &result.definitions)
+impl CrateDefinitionSource for TargetDeclarationReader<'_> {
+    fn crate_metadata(&self, krate: CrateRef) -> Result<Option<&CrateMetadata>, ReadError> {
+        self.acquire(krate, |result| &result.crate_metadata)
             .map_err(ReadError::Query)
+    }
+
+    fn definitions(&self, krate: CrateRef) -> Result<Option<DefMapView<'_>>, ReadError> {
+        Ok(self
+            .acquire(krate, |result| &result.definitions)?
+            .map(|map| map.view(self.db)))
     }
 }
 
@@ -404,9 +425,7 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         if !self.targets.contains(&krate) || store.id == ItemStoreId::Scope {
             return Ok(None);
         }
-        let Some(members) =
-            associated_declarations(self.db, krate, store.id).map_err(ReadError::Query)?
-        else {
+        let Some(members) = associated_declarations(self.db, krate, store.id)? else {
             return Ok(None);
         };
         members
@@ -426,13 +445,10 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
                 .associated_items(store)?
                 .and_then(|members| members.item(item)));
         }
-        let Some(items) = self
-            .acquire(krate, |result| &result.items)
-            .map_err(ReadError::Query)?
-        else {
+        let Some(items) = self.acquire(krate, |result| &result.items)? else {
             return Ok(None);
         };
-        Ok(items.semantic_item_view(item))
+        items.item(self.db, item).map_err(ReadError::Query)
     }
 
     fn item_for_local_def(
@@ -442,14 +458,11 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         let Some(krate) = definition.origin.as_crate_ref() else {
             return Ok(None);
         };
-        let Some(items) = self
-            .acquire(krate, |result| &result.items)
-            .map_err(ReadError::Query)?
-        else {
+        let Some(items) = self.acquire(krate, |result| &result.items)? else {
             return Ok(None);
         };
         Ok(items
-            .item_for_local_def(definition.local_def)
+            .item_for_local_def(self.db, definition.local_def)?
             .map(|item| item.semantic_ref(definition.origin)))
     }
 
@@ -457,24 +470,20 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         let Some(krate) = origin.as_crate_ref() else {
             return Ok(Vec::new());
         };
-        Ok(self
-            .acquire(krate, |result| &result.items)
-            .map_err(ReadError::Query)?
-            .map(|items| items.scope_items().collect())
-            .unwrap_or_default())
+        let Some(items) = self.acquire(krate, |result| &result.items)? else {
+            return Ok(Vec::new());
+        };
+        items.scope_items(self.db).map_err(ReadError::Query)
     }
 
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
         let Some(krate) = origin.as_crate_ref() else {
             return Ok(Vec::new());
         };
-        let Some(items) = self
-            .acquire(krate, |result| &result.items)
-            .map_err(ReadError::Query)?
-        else {
+        let Some(items) = self.acquire(krate, |result| &result.items)? else {
             return Ok(Vec::new());
         };
-        let mut result: Vec<_> = items.scope_items().collect();
+        let mut result = items.scope_items(self.db)?;
         for owner in items.member_stores() {
             if let Some(members) = self.associated_items(owner)? {
                 result.extend(members.semantic_items(owner));
@@ -491,24 +500,14 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         let Some(krate) = origin.as_crate_ref() else {
             return Ok(Vec::new());
         };
-        let Some(items) = self
-            .acquire(krate, |result| &result.items)
-            .map_err(ReadError::Query)?
-        else {
+        let Some(items) = self.acquire(krate, |result| &result.items)? else {
             return Ok(Vec::new());
         };
-        let mut selected: Vec<_> = items
-            .scope_items()
-            .filter(|item| {
-                selection
-                    .file()
-                    .is_none_or(|file| item.source().file_id == file)
-            })
-            .collect();
-        for owner in DeclarationSourceResolver::new(self.db, krate)
-            .member_stores(selection)
-            .map_err(ReadError::Query)?
-        {
+        let mut selected = match selection.file() {
+            Some(file) => items.source_items(self.db, file)?,
+            None => items.scope_items(self.db)?,
+        };
+        for owner in DeclarationSourceResolver::new(self.db, krate).member_stores(selection)? {
             if let Some(members) = self.associated_items(owner)? {
                 selected.extend(members.semantic_items(owner));
             }
@@ -544,14 +543,11 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         // Broad search must learn names from every macro-bearing owner. Keep that cached discovery
         // separate from startup's written-name table, so subsequent searches can share both tables
         // without copying them or reopening ordinary member stores.
-        let tables = self
-            .db
-            .parallel_map(&targets, |db, &krate| {
-                let written = target_declarations(db, krate)?.symbol_names.value(db)?;
-                let generated = db.query::<macro_symbol_names>(krate)?;
-                Ok([written, generated])
-            })
-            .map_err(ReadError::Query)?;
+        let tables = self.db.parallel_map(&targets, |db, &krate| {
+            let written = target_declarations(db, krate)?.symbol_names.value(db)?;
+            let generated = db.query::<macro_symbol_names>(krate)?;
+            Ok([written, generated])
+        })?;
         Ok(tables.into_iter().flatten().collect())
     }
 
@@ -562,6 +558,10 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
     }
 }
 
+/// Resolves this target's paths while its semantic headers are still being built.
+///
+/// Its own records come from the owned maps: querying the same target again would recurse into
+/// its producer. Dependencies use their normal readers. This target's members wait for publication.
 #[derive(Clone, Copy)]
 struct LocalDeclarations<'a, D> {
     dependencies: D,
@@ -569,12 +569,19 @@ struct LocalDeclarations<'a, D> {
     items: &'a ItemStore,
 }
 
-impl<D: CrateDataSource> CrateDataSource for LocalDeclarations<'_, D> {
-    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
+impl<D: CrateDefinitionSource> CrateDefinitionSource for LocalDeclarations<'_, D> {
+    fn crate_metadata(&self, krate: CrateRef) -> Result<Option<&CrateMetadata>, ReadError> {
         if krate == self.items.crate_ref() {
-            return Ok(Some(self.definitions));
+            return Ok(Some(self.definitions.metadata()));
         }
-        self.dependencies.crate_data(krate)
+        self.dependencies.crate_metadata(krate)
+    }
+
+    fn definitions(&self, krate: CrateRef) -> Result<Option<DefMapView<'_>>, ReadError> {
+        if krate == self.items.crate_ref() {
+            return Ok(Some(self.definitions.def_map().view()));
+        }
+        self.dependencies.definitions(krate)
     }
 }
 

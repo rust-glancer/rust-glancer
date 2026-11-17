@@ -108,25 +108,25 @@ impl<'db> DeclarationSourceResolver<'db> {
                 .collect());
         };
         let items = target.items.value_ref(self.db)?;
-        let definitions = target.definitions.value_ref(self.db)?.def_map();
+        let definitions = target.definitions.value_ref(self.db)?.view(self.db);
         let mut selected = Vec::new();
         for &owner in owners {
             let (source, location) = match owner.id {
                 ItemStoreId::Trait(id) => {
                     let header = items
-                        .trait_data(id)
+                        .trait_data(self.db, id)?
                         .expect("ownership names a collected trait");
                     let data = definitions
-                        .local_def(header.local_def.local_def)
+                        .local_def(header.local_def.local_def)?
                         .expect("trait has collected definition");
                     (header.source, data.location)
                 }
                 ItemStoreId::Impl(id) => {
                     let header = items
-                        .impl_data(id)
+                        .impl_data(self.db, id)?
                         .expect("ownership names a collected impl");
                     let data = definitions
-                        .local_impl(header.local_impl.local_impl)
+                        .local_impl(header.local_impl.local_impl)?
                         .expect("impl has collected definition");
                     (header.source, data.location)
                 }

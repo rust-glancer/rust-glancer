@@ -39,7 +39,7 @@ pub use self::{
         LookupQuestion, SemanticItemSource,
     },
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
-    store::{ItemStore, ItemStoreBuilder},
+    store::{ItemStore, ItemStoreBuilder, StoredItemStore},
     type_path_resolution::TypePathResolution,
     view::SemanticItemView,
 };

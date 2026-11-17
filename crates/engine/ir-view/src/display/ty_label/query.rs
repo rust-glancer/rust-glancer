@@ -71,15 +71,17 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
         {
             // The compiler identity gives us the defining crate without relying on its import
             // name. Walk to the root's child to distinguish `iter::adapters` from `slice::iter`.
-            let Some(modules) = self.db.def_map_for_origin(ty.def.origin)? else {
+            let Some(modules) = self.db.definitions_for_origin(ty.def.origin)? else {
                 return Ok(None);
             };
-            let mut module = modules.module(data.owner.module);
+            let Some(mut current) = modules.module(data.owner.module)? else {
+                return Ok(None);
+            };
             loop {
-                let Some(current) = module else {
+                let Some(parent_id) = current.parent else {
                     return Ok(None);
                 };
-                let Some(parent) = current.parent.and_then(|parent| modules.module(parent)) else {
+                let Some(parent) = modules.module(parent_id)? else {
                     return Ok(None);
                 };
                 if parent.parent.is_none() {
@@ -88,7 +90,7 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
                     }
                     break;
                 }
-                module = Some(parent);
+                current = parent;
             }
 
             // Normalize through the real impl rather than guessing from adapter arguments:

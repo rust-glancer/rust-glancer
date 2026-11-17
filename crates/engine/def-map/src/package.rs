@@ -8,21 +8,16 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::map::DefMap;
 
-/// Definition and resolution state for one semantic crate.
+/// Completed declaration collection, before publication into independently readable outputs.
+///
+/// Builders use the complete map to finish resolution. Target publication then separates the
+/// crate-wide facts in [`CrateMetadata`] from the namespace records in [`DefMap`].
 ///
 /// The crate's identity is its configured target's `CrateRef`. The target kind preserves language
 /// boundaries such as the difference between a proc-macro export and its host-side implementation.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
 pub struct CrateData {
-    target_kind: TargetKind,
-    // Const arithmetic must use the compilation target even when it differs from the host.
-    target_pointer_width: Option<u32>,
-    name: String,
-    root_module: ModuleId,
-    // Crate-wide extern roots from Cargo dependencies and root `extern crate` declarations.
-    extern_prelude: HashMap<Name, ModuleRef>,
-    // Standard prelude module selected for this crate, if sysroot sources are available.
-    prelude: Option<ModuleRef>,
+    metadata: CrateMetadata,
     def_map: DefMap,
 }
 
@@ -38,16 +33,46 @@ impl CrateData {
         def_map: DefMap,
     ) -> Self {
         Self {
-            target_kind,
-            target_pointer_width,
-            name,
-            root_module,
-            extern_prelude,
-            prelude,
+            metadata: CrateMetadata {
+                target_kind,
+                target_pointer_width,
+                name,
+                root_module,
+                extern_prelude,
+                prelude,
+            },
             def_map,
         }
     }
 
+    pub fn metadata(&self) -> &CrateMetadata {
+        &self.metadata
+    }
+
+    pub fn def_map(&self) -> &DefMap {
+        &self.def_map
+    }
+
+    pub fn into_parts(self) -> (CrateMetadata, DefMap) {
+        (self.metadata, self.def_map)
+    }
+}
+
+/// Facts shared by the crate's modules, such as its name, external roots, and standard prelude.
+/// Keeping these separate lets path and type queries read crate identity and dependencies without
+/// loading declaration tables.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct CrateMetadata {
+    target_kind: TargetKind,
+    // Const arithmetic uses the compilation target, which may differ from the host.
+    target_pointer_width: Option<u32>,
+    name: String,
+    root_module: ModuleId,
+    extern_prelude: HashMap<Name, ModuleRef>,
+    prelude: Option<ModuleRef>,
+}
+
+impl CrateMetadata {
     /// Returns the Cargo target role whose language rules apply to this semantic crate.
     pub fn target_kind(&self) -> &TargetKind {
         &self.target_kind
@@ -82,14 +107,10 @@ impl CrateData {
         self.prelude
     }
 
-    pub fn def_map(&self) -> &DefMap {
-        &self.def_map
-    }
-
     /// Returns crate dependencies whose ordinary declarations participate in item lookup.
     ///
-    /// Names are irrelevant to this traversal. Keeping only crate identities in the persisted
-    /// directory lets type queries walk the dependency graph without decoding module scopes.
+    /// Names are irrelevant to this traversal. Type queries walk these crate identities
+    /// without decoding module scopes.
     pub(crate) fn item_lookup_dependencies(&self) -> UniqueVec<CrateRef> {
         let mut dependencies = self
             .extern_prelude

@@ -7,7 +7,8 @@ use rg_workspace::WorkspaceMetadata;
 
 use super::target::CrateDependencies;
 use crate::{
-    CrateData, CrateDataSource, CrateDefMapReader, DefMapQuery, MacroExpansionLimitReport,
+    CrateData, CrateDefMapReader, CrateDefinitionSource, CrateMetadata, DefMapQuery, DefMapView,
+    MacroExpansionLimitReport,
     testonly::{DefMapDb, PackageDefMaps},
 };
 
@@ -59,8 +60,12 @@ pub(crate) fn build_fixture_definitions(
 #[derive(Default)]
 struct FixtureDefinitions(HashMap<CrateRef, CrateData>);
 
-impl CrateDataSource for FixtureDefinitions {
-    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
-        Ok(self.0.get(&krate))
+impl CrateDefinitionSource for FixtureDefinitions {
+    fn crate_metadata(&self, krate: CrateRef) -> Result<Option<&CrateMetadata>, ReadError> {
+        Ok(self.0.get(&krate).map(CrateData::metadata))
+    }
+
+    fn definitions(&self, krate: CrateRef) -> Result<Option<DefMapView<'_>>, ReadError> {
+        Ok(self.0.get(&krate).map(|data| data.def_map().view()))
     }
 }

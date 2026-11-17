@@ -1,3 +1,5 @@
+mod stored;
+
 use rg_arena::Arena;
 use rg_ir_model::{
     ConstId, ConstRef, CrateRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef,
@@ -8,6 +10,7 @@ use rg_item_tree::LangItem;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
+pub use self::stored::StoredItemStore;
 use super::{
     ConstData, EnumData, FunctionData, ImplData, SemanticItemView, StaticData, StructData,
     TraitData, TypeAliasData, UnionData, lang_item::LangItemIndex, view::SemanticItemData,
@@ -104,9 +107,12 @@ impl ItemStoreBuilder {
 /// impl applies to a receiver, then ask for the declarations inside it.
 ///
 /// The `functions`, `type_aliases` and `consts` arenas here hold free declarations only. Associated
-/// references record which store owns their local ID. Saved targets compute those stores on demand
+/// references record which store owns their local ID. Targets compute those stores on demand
 /// through `associated_declarations`. Body-local readers own their completed member stores separately.
-/// This store has the same contents regardless of how a reader acquires members.
+///
+/// Target publication consumes this construction store into [`StoredItemStore`]. A target reader
+/// can then acquire a group of records without decoding unrelated declaration kinds. The lang-item
+/// index is published separately; it does not need another copy inside the stored item handles.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemStore {
     // DefMap this item store corresponds to.

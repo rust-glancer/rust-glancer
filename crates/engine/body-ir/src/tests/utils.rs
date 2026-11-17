@@ -1261,7 +1261,9 @@ impl CrateBodyIrSnapshot<'_> {
             DefId::EnumVariant(variant_def) => {
                 let variant_data = match variant_def.origin {
                     DefMapRef::Crate(target) => self.project.def_map(target).and_then(|def_map| {
-                        def_map.local_enum_variant(variant_def.local_enum_variant)
+                        def_map
+                            .local_enum_variant(variant_def.local_enum_variant)
+                            .expect("fixture variant read")
                     }),
                     DefMapRef::Body(body) => self.project.body_def_map(body).and_then(|def_map| {
                         def_map.local_enum_variant(variant_def.local_enum_variant)
@@ -1683,6 +1685,7 @@ impl CrateBodyIrSnapshot<'_> {
             .def_map(module_ref.origin.origin_crate())
             .expect("crate def map should exist while rendering body IR module path")
             .module(module_ref.module)
+            .expect("fixture module read")
             .expect("module id should exist while rendering body IR module path");
 
         match module.parent {

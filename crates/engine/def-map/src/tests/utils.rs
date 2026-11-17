@@ -194,9 +194,9 @@ impl<'a> FixtureCrate<'a> {
             .def_map_db()
             .package(self.crate_ref.package)
             .and_then(|package| package.crate_data(self.crate_ref.crate_id))
-            .map(|crate_data| crate_data.root_module())
-            .and_then(|root_module| self.def_map().module(root_module))
-            .and_then(|module| module.scope.entry(name));
+            .map(|crate_data| crate_data.metadata().root_module())
+            .and_then(|root_module| self.def_map().module_scope(root_module))
+            .and_then(|scope| scope.entry(name));
         FixtureEntry {
             db: self.db,
             package_name: &self.package.name,
@@ -636,9 +636,9 @@ impl<'a> CrateDefMapSnapshot<'a> {
                 .module(module_id)
                 .expect("module id should exist in def map dump");
 
-            for name in self.sorted_scope_names(&module.scope) {
-                let entry = module
-                    .scope
+            let scope = def_map.module_scope(module_id).expect("module scope");
+            for name in self.sorted_scope_names(scope) {
+                let entry = scope
                     .entry(&name)
                     .expect("scope entry should exist while dumping");
                 dump.push_str(&format!("- {name} : {}\n", self.render_scope_entry(entry)));

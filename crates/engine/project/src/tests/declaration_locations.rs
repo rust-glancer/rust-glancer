@@ -9,15 +9,22 @@ use crate::{Project, SavedFileChange, profile_descriptors, testonly::ProjectSour
 
 #[test]
 fn declaration_reuse_keeps_current_locations_through_save_and_restart() {
+    // Put the caller and callee in different record groups. Navigation and type reads must
+    // still agree after persisted records are reloaded and a signature changes.
+    let neighbors = (0..150)
+        .map(|index| format!("pub fn neighbor_{index}() {{}}\n"))
+        .collect::<String>();
     let fixture = ProjectSourceFixture::build(
-        r#"
+        &r#"
 //- /src/lib.rs crate:locations
 mod model;
 pub fn inspect() { let value = model::later(); let _ = value; }
 //- /src/model.rs
+$NEIGHBORS
 pub fn first() { let value = 1u8; let _ = value; }
 pub fn later() -> u8 { 2 }
-"#,
+"#
+        .replace("$NEIGHBORS", &neighbors),
     );
     let path = fixture.path("src/model.rs");
     let original = fs::read_to_string(&path).expect("model source");

@@ -108,9 +108,8 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
         if let DeclarationRef::Module(module) = owner
             && self
                 .db
-                .module_data(module)
+                .module_docs(module)
                 .context("read documentation placement")?
-                .and_then(|module| module.docs.as_ref())
                 .is_some_and(|docs| docs.is_inner_at(offset))
         {
             return Ok(DocumentationPlacement::Inner);

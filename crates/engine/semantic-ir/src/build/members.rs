@@ -132,15 +132,28 @@ pub fn associated_declarations(
 ) -> ajika::Result<Option<AssociatedDeclarations>> {
     let target = target_declarations(db, krate)?;
     let headers = target.items.value_ref(db)?;
-    let (item_owner, source_store) = match owner {
-        ItemStoreId::Trait(id) if headers.trait_data(id).is_some() => (
-            ItemOwner::Trait(id),
-            GeneratedSourceStoreId::TraitMembers(id),
-        ),
-        ItemStoreId::Impl(id) if headers.impl_data(id).is_some() => {
-            (ItemOwner::Impl(id), GeneratedSourceStoreId::ImplMembers(id))
+    let (item_owner, source_store, module) = match owner {
+        ItemStoreId::Trait(id) => {
+            let Some(header) = headers.trait_data(db, id)? else {
+                return Ok(None);
+            };
+            (
+                ItemOwner::Trait(id),
+                GeneratedSourceStoreId::TraitMembers(id),
+                header.owner,
+            )
         }
-        _ => return Ok(None),
+        ItemStoreId::Impl(id) => {
+            let Some(header) = headers.impl_data(db, id)? else {
+                return Ok(None);
+            };
+            (
+                ItemOwner::Impl(id),
+                GeneratedSourceStoreId::ImplMembers(id),
+                header.owner,
+            )
+        }
+        ItemStoreId::Scope => return Ok(None),
     };
     let input = target.member_inputs.value_ref(db)?.get(db, owner)?;
     let store = ItemStoreRef {
@@ -171,7 +184,7 @@ pub fn associated_declarations(
     items.shrink_to_fit();
     lang_items.shrink_to_fit();
     sources.shrink_to_fit();
-    let bodies: Vec<_> = BodyOwnerData::for_members(headers, &items, store).collect();
+    let bodies: Vec<_> = BodyOwnerData::for_members(module, &items, store).collect();
     AssociatedDeclarations::new(db, items, lang_items, sources, files, bodies).map(Some)
 }
 

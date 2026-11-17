@@ -2,8 +2,9 @@ use std::{collections::HashMap, fmt::Write as _, iter, sync::Arc};
 
 use expect_test::Expect;
 use rg_def_map::{
-    DefMap, DefMapBuilder, DefMapSource, ItemSource, LocalDefData, LocalDefKind, ModuleBuilder,
-    ModuleOrigin, NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
+    DefMap, DefMapBuilder, DefMapSource, DefMapView, ItemSource, LocalDefData, LocalDefKind,
+    ModuleBuilder, ModuleOrigin, NameBinding, NameBindingProvenance, Namespace, NamespaceSet,
+    Visibility,
 };
 use rg_ir_model::{
     AssocItemId, CrateId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionRef, GenericDefRef,
@@ -122,14 +123,17 @@ impl From<&str> for TraitSelectionFixture {
 }
 
 impl DefMapSource for TraitSelectionFixture {
-    fn def_map_for_origin(&self, origin_ref: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
+    fn definitions_for_origin(
+        &self,
+        origin_ref: DefMapRef,
+    ) -> Result<Option<DefMapView<'_>>, ReadError> {
         if origin_ref == DefMapRef::Crate(self.target) {
-            return Ok(Some(&self.def_map));
+            return Ok(Some(self.def_map.view()));
         }
         Ok(origin_ref
             .as_crate_ref()
             .and_then(|crate_ref| self.dependency(crate_ref))
-            .map(|dependency| &dependency.def_map))
+            .map(|dependency| dependency.def_map.view()))
     }
 
     fn crate_is_proc_macro(&self, _crate_ref: CrateRef) -> Result<bool, ReadError> {

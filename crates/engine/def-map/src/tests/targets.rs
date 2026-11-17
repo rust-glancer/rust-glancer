@@ -236,9 +236,9 @@ pub use a::Generated as FromA;
     );
     let krate = fixture.crate_ref("a", TargetKind::Test);
     let map = fixture.def_map(krate).expect("test target should exist");
-    let root = map.module(ModuleId(0)).expect("test root should exist");
     let bindings = ["Generated", "FromA"].map(|name| {
-        root.scope
+        map.module_scope(ModuleId(0))
+            .expect("root scope")
             .entry(name)
             .and_then(|entry| entry.binding(Namespace::Types))
             .expect("test target should resolve both routes to the generated dependency item")

@@ -1,4 +1,4 @@
-use rg_def_map::{CrateData, CrateDataSource, DefMap, DefMapSource};
+use rg_def_map::{CrateDefinitionSource, DefMap, DefMapSource, DefMapView};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstRef, CrateRef, DefMapRef, FunctionRef, ItemStoreRef, LocalDefRef,
     ModuleRef, OuterBodyOwner, SemanticItemRef, StaticRef,
@@ -58,7 +58,7 @@ impl<'db> BodyIrView<'db> {
         self.bodies.clone()
     }
 
-    pub fn def_map(&self, target: CrateRef) -> Option<&'db DefMap> {
+    pub fn def_map(&self, target: CrateRef) -> Option<DefMapView<'db>> {
         self.semantic.def_map(target)
     }
 
@@ -116,14 +116,16 @@ impl<'db> BodyIrView<'db> {
 }
 
 impl DefMapSource for BodyIrView<'_> {
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
+    fn definitions_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Option<DefMapView<'_>>, ReadError> {
         match origin {
-            DefMapRef::Crate(target) => self
-                .semantic
-                .declarations()
-                .crate_data(target)
-                .map(|data| data.map(CrateData::def_map)),
-            DefMapRef::Body(body) => self.bodies.body_def_map(body),
+            DefMapRef::Crate(target) => self.semantic.declarations().definitions(target),
+            DefMapRef::Body(body) => self
+                .bodies
+                .body_def_map(body)
+                .map(|map| map.map(DefMap::view)),
         }
     }
     fn crate_is_proc_macro(&self, target: CrateRef) -> Result<bool, ReadError> {

@@ -459,8 +459,8 @@ where
 
         Ok(self
             .def_maps
-            .module_data(module_ref)?
-            .and_then(|module| module.scope.entry(name))
+            .module_scope(module_ref)?
+            .and_then(|scope| scope.entry(name))
             .map(|entry| entry.as_view()))
     }
 
@@ -479,10 +479,9 @@ where
 
         Ok(self
             .def_maps
-            .module_data(module_ref)?
-            .map(|module| {
-                module
-                    .scope
+            .module_scope(module_ref)?
+            .map(|scope| {
+                scope
                     .entries()
                     .map(|(name, entry)| (name, entry.as_view()))
                     .collect()
@@ -549,9 +548,10 @@ where
         let data = if self.is_active_body_origin(def_ref.origin) {
             self.state.builder.macro_definition(def_ref.local_def)
         } else {
-            self.def_maps
-                .def_map_for_origin(def_ref.origin)?
-                .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
+            let Some(def_map) = self.def_maps.definitions_for_origin(def_ref.origin)? else {
+                return Ok(None);
+            };
+            def_map.macro_definition(def_ref.local_def)?
         };
         let Some(data) = data else {
             return Ok(None);

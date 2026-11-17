@@ -182,16 +182,41 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         Self { db }
     }
 
-    /// Read the kind without requiring a source declaration for every module.
-    /// Root and synthetic modules still have a kind even though they have no declaration span.
+    /// Classify the declaration without projecting a navigation target. Disambiguators such as
+    /// `struct@Name` need this before choosing a target; source coordinates are read afterward.
+    /// Root and synthetic modules also have a kind when they have no declaration span.
     pub fn kind(&self, declaration: DeclarationRef) -> anyhow::Result<Option<SymbolKind>> {
-        if matches!(declaration, DeclarationRef::Module(_)) {
-            return Ok(Some(SymbolKind::Module));
-        }
-        Ok(self
-            .declaration(declaration)
-            .context("read declaration kind")?
-            .map(|declaration| declaration.kind()))
+        let items = ItemStoreQuery::new(self.db);
+        Ok(match declaration {
+            DeclarationRef::Module(_) => Some(SymbolKind::Module),
+            DeclarationRef::LocalDef(definition) => self
+                .db
+                .local_def_data(definition)?
+                .map(|data| SymbolKind::from_local_def_kind(data.kind)),
+            DeclarationRef::Item(item) => items.semantic_item_view(item)?.map(|view| {
+                if let Some(function) = view.function_data() {
+                    match function.owner {
+                        ItemOwner::Module(_) => SymbolKind::Function,
+                        ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
+                    }
+                } else {
+                    SymbolKind::from_semantic_item_kind(view.kind())
+                }
+            }),
+            DeclarationRef::Field(field) => items
+                .field_data(field)?
+                .filter(|data| data.field.key.is_some())
+                .map(|_| SymbolKind::Field),
+            DeclarationRef::EnumVariant(variant) => items
+                .enum_variant_data(variant)?
+                .map(|_| SymbolKind::EnumVariant),
+            DeclarationRef::BodyBinding(binding) => self
+                .db
+                .body_ir
+                .body(binding.body)?
+                .filter(|body| body.binding(binding.binding).is_some())
+                .map(|_| SymbolKind::Variable),
+        })
     }
 
     /// Return source facts for one declaration ref.
@@ -271,7 +296,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(crate_data) = self
                     .db
                     .def_map
-                    .crate_data(module_ref.origin.origin_crate())?
+                    .crate_metadata(module_ref.origin.origin_crate())?
                 else {
                     return Ok(Vec::new());
                 };

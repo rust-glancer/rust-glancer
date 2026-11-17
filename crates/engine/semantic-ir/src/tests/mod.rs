@@ -293,13 +293,15 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
             [("emit", "emit"), ("traced", "traced"), ("Stored", "stored")]
         {
             let export = def_map
-                .local_def_refs()
-                .find(|local_def_ref| {
-                    def_map
-                        .local_def(local_def_ref.local_def)
-                        .is_some_and(|data| {
-                            data.kind == LocalDefKind::MacroDefinition
-                                && data.name.as_str() == export_name
+                .local_defs(None)
+                .expect("fixture definitions")
+                .into_iter()
+                .find_map(|(id, data)| {
+                    (data.kind == LocalDefKind::MacroDefinition
+                        && data.name.as_str() == export_name)
+                        .then_some(LocalDefRef {
+                            origin: DefMapRef::Crate(crate_ref),
+                            local_def: id,
                         })
                 })
                 .expect("proc-macro export should exist");
@@ -316,10 +318,12 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
             let implementation = def_map
                 .macro_definition(export.local_def)
+                .expect("fixture macro read")
                 .and_then(|data| data.proc_macro_implementation())
                 .expect("proc-macro export should retain its implementation identity");
             let implementation_def = def_map
                 .local_def(implementation)
+                .expect("fixture definition read")
                 .expect("proc-macro implementation definition should exist");
             assert_eq!(implementation_def.name.as_str(), implementation_name);
 
