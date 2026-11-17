@@ -1,4 +1,4 @@
-//! Resolve saved declaration occurrences against the source snapshot of this operation.
+//! Resolve declaration occurrences against the source snapshot of this operation.
 //!
 //! Saved declarations retain source IDs even when byte positions change. This module joins their
 //! source identity to the file tables read through the operation's query context. Generated syntax
@@ -15,14 +15,14 @@ use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLo
 use rg_item_tree::{DeclarationSourceStore, SourceLocations, file_declaration_sources};
 use rg_source::QueryContext;
 
-pub(crate) use self::resolve::SavedSourceResolver;
+pub(crate) use self::resolve::DeclarationSourceResolver;
 pub use self::{
     ownership::{SourceOwnership, SourceOwnershipIndex, complete_source_ownership},
     resolve::SourceSelection,
 };
 use crate::{associated_declarations, target_declarations};
 
-/// The source tables needed to read occurrences and previews from one saved declaration source.
+/// The source tables needed to read occurrences and previews from one declaration source.
 ///
 /// Open this view using the declaration's [`ItemSource`], then resolve its [`SourceId`] values
 /// through [`SourceLocations`]. The source chooses the table; an ID alone cannot do that.
@@ -30,7 +30,7 @@ use crate::{associated_declarations, target_declarations};
 /// Opening the view performs the query reads and can fail. Afterward, occurrence lookup only
 /// reads borrowed tables: it performs no further queries, though a missing or unmapped occurrence
 /// can still return `None`. Reuse the opened view while walking one declaration's signature.
-pub enum SavedDeclarationSourceView<'db> {
+pub enum ItemSourceView<'db> {
     File(&'db DeclarationSourceStore<Span>),
     Generated {
         locations: &'db GeneratedExpansionLocations,
@@ -38,10 +38,10 @@ pub enum SavedDeclarationSourceView<'db> {
     },
 }
 
-impl<'db> SavedDeclarationSourceView<'db> {
-    /// Acquire the file mappings for this saved source. Builtin derives can inherit another
+impl<'db> ItemSourceView<'db> {
+    /// Acquire the file mappings for this source. Builtin derives can inherit another
     /// source's IDs, so follow that chain until reaching an actual file or expansion table.
-    /// Body-owned declarations need the body reader, which also knows about current editor bodies.
+    /// Body-owned declarations need the body reader, which owns their resolved occurrence tables.
     pub fn new(
         db: &'db QueryContext<'db>,
         krate: CrateRef,
@@ -91,7 +91,7 @@ impl<'db> SavedDeclarationSourceView<'db> {
                 }
                 ItemSourceKind::Body(_) => {
                     return Err(ajika::Error::application(
-                        "saved source reader received a body declaration",
+                        "item source reader received a body declaration",
                     ));
                 }
             }
@@ -118,7 +118,7 @@ impl<'db> SavedDeclarationSourceView<'db> {
     }
 }
 
-impl SourceLocations for SavedDeclarationSourceView<'_> {
+impl SourceLocations for ItemSourceView<'_> {
     fn location(&self, occurrence: SourceId) -> Option<SourceLocation> {
         match self {
             Self::File(locations) => locations.location(occurrence),

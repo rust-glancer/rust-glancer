@@ -21,6 +21,7 @@ mod unqualified;
 mod visibility;
 
 use anyhow::Context as _;
+use rg_ir_view::source::SourceCompletionView;
 
 use self::{
     apostrophe::ApostropheCompletionResolver,
@@ -36,8 +37,8 @@ use self::{
 use super::{
     CompletionQuery,
     site::{
-        CompletionSite, CompletionSiteDetector, CompletionSourceAttachment, ItemListCompletionKind,
-        NameCompletionContext, SpecializedCompletionContext, SyntaxCompletionContext,
+        CompletionSite, CompletionSiteDetector, ItemListCompletionKind, NameCompletionContext,
+        SpecializedCompletionContext, SyntaxCompletionContext,
     },
     syntax::CompletionSyntaxContext,
 };
@@ -201,13 +202,13 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .completions(site, syntax_context)
                     .context("collect unqualified completions")?;
                 if context == NameCompletionContext::Type
-                    && let Some(binding) = CompletionSourceAttachment::new(
-                        self.analysis,
-                        self.query.crate_ref,
-                        self.query.file_id,
-                    )
-                    .implicit_associated_type_binding_site_at(self.query.offset)
-                    .context("detect implicit associated type binding")?
+                    && let Some(binding) = SourceCompletionView::new(self.analysis.view_db())
+                        .implicit_associated_type_binding_site_at(
+                            self.query.crate_ref,
+                            self.query.file_id,
+                            self.query.offset,
+                        )
+                        .context("detect implicit associated type binding")?
                 {
                     completions.extend(
                         AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)

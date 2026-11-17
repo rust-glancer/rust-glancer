@@ -20,7 +20,7 @@ use super::{
     attempt::{AttemptKey, AttemptWaiter},
     session::{RequestId, SchedulerState, SessionKey},
 };
-use crate::ingress::{CapturedDocument, DocumentRevisionWatch};
+use crate::ingress::{CapturedDocument, EditorRevisionWatch};
 
 pub(super) type CompletionFuture =
     Pin<Box<dyn Future<Output = Result<QueryValue<Vec<CompletionItem>>, QueryError>> + Send>>;
@@ -69,7 +69,7 @@ impl CompletionRequest {
     pub(crate) async fn submit_attempt<Run, Fut>(
         &self,
         input: DocumentPositionSnapshot,
-        invalidation: DocumentRevisionWatch,
+        invalidation: EditorRevisionWatch,
         run: Run,
     ) -> CompletionAttemptOutcome
     where
@@ -85,7 +85,7 @@ impl CompletionRequest {
     pub(super) fn enqueue_attempt(
         &self,
         key: AttemptKey,
-        invalidation: DocumentRevisionWatch,
+        invalidation: EditorRevisionWatch,
         run: CompletionFuture,
     ) -> AttemptWaiter {
         SchedulerState::enqueue_attempt(&self.lease, key, invalidation, run)

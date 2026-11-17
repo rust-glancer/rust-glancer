@@ -1,16 +1,16 @@
-//! Select semantic owners before acquiring declarations at a saved source position.
+//! Select semantic owners before acquiring declarations at a source position.
 
 use rg_ir_model::{CrateRef, FileId, ItemStoreId, ItemStoreRef};
 use rg_item_tree::SourceLocations as _;
 use rg_source::QueryContext;
 
-use crate::{SavedDeclarationSourceView, complete_source_ownership, target_declarations};
+use crate::{ItemSourceView, complete_source_ownership, target_declarations};
 
 /// Choose the source surface an operation needs. A written outline and an exhaustive reference
 /// search are different: the latter must also see macros elsewhere that include this same file.
 #[derive(Debug, Clone, Copy)]
 pub enum SourceSelection {
-    /// Written containers in a file, optionally narrowed to a saved cursor position. If the file
+    /// Written containers in a file, optionally narrowed to a cursor position. If the file
     /// is only known through includes, reverse discovery supplies its enclosing owners.
     Written {
         file: FileId,
@@ -49,18 +49,17 @@ impl SourceSelection {
     }
 }
 
-/// Resolves written declaration containers in saved coordinates. Current editor positions must
-/// first pass through the current-to-saved association owned by the editor layer.
+/// Resolve written declaration containers in the source coordinates of this input view.
 ///
 /// A header in this file can select its own member store without discovering unrelated macros.
 /// A file known only through an include needs reverse ownership discovery. The complete result
 /// keeps all include owners; it never guesses one owner from the physical source identity.
-pub(crate) struct SavedSourceResolver<'db> {
+pub(crate) struct DeclarationSourceResolver<'db> {
     db: &'db QueryContext<'db>,
     krate: CrateRef,
 }
 
-impl<'db> SavedSourceResolver<'db> {
+impl<'db> DeclarationSourceResolver<'db> {
     pub(crate) fn new(db: &'db QueryContext<'db>, krate: CrateRef) -> Self {
         Self { db, krate }
     }
@@ -118,7 +117,7 @@ impl<'db> SavedSourceResolver<'db> {
             };
             // The include's offsets belong to its own file, not the enclosing owner's header.
             if source.file_id == file {
-                let locations = SavedDeclarationSourceView::new(self.db, self.krate, source)?;
+                let locations = ItemSourceView::new(self.db, self.krate, source)?;
                 if !locations
                     .location(location)
                     .is_some_and(|location| location.span.touches(offset))

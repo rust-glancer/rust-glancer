@@ -1,7 +1,7 @@
 use rg_ir_model::{BodyId, EvaluatedConstValue, UnsignedIntTy};
 use rg_workspace::TargetKind;
 
-use crate::{saved_body, testonly::BodyIrFixture};
+use crate::{body_store, testonly::BodyIrFixture};
 
 #[test]
 fn evaluates_const_and_static_initializers_with_semantic_types() {
@@ -51,7 +51,7 @@ impl usize {
             (app, "STATIC_PROJECTED", 16),
         ] {
             let key = view.body_key(target, name);
-            let saved = saved_body(semantic.db(), key).expect("fixture initializer query");
+            let saved = body_store(semantic.db(), key).expect("fixture initializer query");
             let body = saved.as_ref().expect("fixture initializer should exist");
             assert_eq!(
                 body.body(BodyId(0)).expect("root body").initializer_value(),

@@ -4,7 +4,7 @@
 mod shared;
 
 use divan::{Bencher, black_box_drop};
-use rg_body_ir::saved_body;
+use rg_body_ir::body_store;
 
 use self::shared::{BenchTarget, BenchWorkspace, bench_targets};
 
@@ -97,7 +97,7 @@ fn body_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
         })
         .bench_local_refs(|(database, owners)| {
             let bodies = database
-                .run(|db| db.parallel_map(owners, |db, &key| db.query::<saved_body>(key)))
+                .run(|db| db.parallel_map(owners, |db, &key| db.query::<body_store>(key)))
                 .expect("saved bodies should build");
             black_box_drop(bodies);
         });

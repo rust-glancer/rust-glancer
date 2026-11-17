@@ -11,6 +11,7 @@
 //! grammar-specific filters outside the general qualified-path flow.
 
 use anyhow::Context as _;
+use rg_ir_view::source::SourceCompletionView;
 
 use crate::{
     Analysis,
@@ -25,7 +26,7 @@ use crate::{
             CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
             DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
         },
-        site::{CompletionSourceAttachment, RestrictedVisibilityCompletionContext},
+        site::RestrictedVisibilityCompletionContext,
         syntax::CompletionSyntaxContext,
     },
 };
@@ -86,13 +87,14 @@ impl<'a, 'db, 'source> VisibilityCompletionResolver<'a, 'db, 'source> {
         let Some(qualifier) = context.qualifier() else {
             return Ok(completions);
         };
-        let Some(source_site) = CompletionSourceAttachment::new(
-            self.analysis,
-            self.query.crate_ref,
-            self.query.file_id,
-        )
-        .module_site_at(self.query.offset, &syntax.inline_module_path())
-        .context("find restricted visibility module")?
+        let Some(source_site) = SourceCompletionView::new(self.analysis.view_db())
+            .module_completion_site_at(
+                self.query.crate_ref,
+                self.query.file_id,
+                self.query.offset,
+                &syntax.inline_module_path(),
+            )
+            .context("find restricted visibility module")?
         else {
             return Ok(completions);
         };
@@ -113,13 +115,14 @@ impl<'a, 'db, 'source> VisibilityCompletionResolver<'a, 'db, 'source> {
         let edit = CompletionEdit {
             replace: prefix.span(),
         };
-        let Some(source_site) = CompletionSourceAttachment::new(
-            self.analysis,
-            self.query.crate_ref,
-            self.query.file_id,
-        )
-        .module_site_at(self.query.offset, &syntax.inline_module_path())
-        .context("find extern crate completion module")?
+        let Some(source_site) = SourceCompletionView::new(self.analysis.view_db())
+            .module_completion_site_at(
+                self.query.crate_ref,
+                self.query.file_id,
+                self.query.offset,
+                &syntax.inline_module_path(),
+            )
+            .context("find extern crate completion module")?
         else {
             return Ok(Vec::new());
         };

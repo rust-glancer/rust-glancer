@@ -4,14 +4,14 @@ use rg_profile::{ProfileDescriptor, declare_metrics};
 
 declare_metrics! {
     pub(crate) mod metric {
-        scope "body_ir.saved" {
+        scope "body_ir.owner" {
             /// Outer owners lowered and prepared; source-only changes can increment this.
             counter OWNERS = "owners";
             /// Prepared outer owners submitted for inference; source-only changes reuse this work.
             counter INFERRED_OWNERS = "inference_owners";
         }
         scope "body_ir.const_eval" {
-            /// Saved or current const and static bodies submitted for evaluation.
+            /// Const and static bodies submitted for evaluation.
             counter CONST_INITIALIZERS = "initializers";
             /// Submitted initializers that produced a concrete value in their body facts.
             counter CONST_KNOWN_VALUES = "known_values";

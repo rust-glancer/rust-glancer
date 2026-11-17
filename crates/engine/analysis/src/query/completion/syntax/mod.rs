@@ -1,6 +1,6 @@
 //! Request-local parsing and syntax classification for incomplete completion source.
 //!
-//! The saved syntax tree may not contain a node for what the user is still typing. This module
+//! The ordinary syntax tree may not contain a node for what the user is still typing. This module
 //! replaces the partial identifier with a known marker, reparses the request buffer, and recovers
 //! the typed prefix, replacement span, nearby punctuation, and enclosing grammar.
 //!
@@ -38,7 +38,7 @@ use crate::query::completion::site::{
 ///
 /// The marker token makes incomplete text traversable with ordinary syntax ancestry. Construction
 /// performs this marker-injected parse once and immediately stores the normalized completion
-/// domain. This is separate from the ordinary current-source parse used by Body IR. Resolvers can
+/// domain. This is separate from the ordinary source parse used by semantic lowering. Resolvers can
 /// inspect the same speculative tree for small source-shape facts, but cannot trigger another
 /// classification parse.
 pub(crate) struct CompletionSyntaxContext<'source> {
@@ -56,7 +56,7 @@ pub(crate) struct CompletionSyntaxContext<'source> {
 impl<'source> CompletionSyntaxContext<'source> {
     const MARKER: &'static str = "__rg_completion";
 
-    /// Builds syntax context from saved source or a request-local editor buffer.
+    /// Builds the completion-specific syntax context from the request's source text.
     pub(crate) fn at(source_text: Option<&'source str>, offset: u32) -> Option<Self> {
         Self::from_source(source_text?, offset)
     }

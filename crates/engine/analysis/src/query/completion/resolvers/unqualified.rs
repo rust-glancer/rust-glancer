@@ -226,12 +226,12 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
 
         if let Some(auto_import_occupied) = auto_import_occupied {
             // Exact request syntax is shared with the coordinator. Semantic-only API callers do
-            // not have that tree, so load saved source only for this source-edit policy and still
+            // not have that tree, so load the active source for this source-edit policy and still
             // build at most one syntax tree on their request path.
             let loaded_source = if syntax_context.is_none() {
                 Some(
                     self.analysis
-                        .saved_source
+                        .sources
                         .text(self.query.file_id)
                         .context("load auto-import source text")?,
                 )

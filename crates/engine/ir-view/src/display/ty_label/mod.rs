@@ -333,7 +333,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             GenericParamSource::ArgumentImplTrait(_) => {
                 // A parameter written as `impl Service` is stored as an anonymous type parameter.
                 // Show its bounds instead of an internal parameter name.
-                let bounds = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
+                let bounds = SemanticSignatureQuery::new(self.db, self.db)
                     .function_type_param_bounds(param)?;
                 output.push_str("impl ");
                 if bounds.is_empty() {
@@ -408,7 +408,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         application: Option<&TraitApplication>,
         output: &mut TypeOutput<'_>,
     ) -> anyhow::Result<bool> {
-        let bounds = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
+        let bounds = SemanticSignatureQuery::new(self.db, self.db)
             .opaque_bounds(opaque)?
             .unwrap_or_default();
         output.push_str("impl ");

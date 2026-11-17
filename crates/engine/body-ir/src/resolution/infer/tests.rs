@@ -346,7 +346,7 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
             .semantic()
             .crate_ref("cancelled_inference", rg_workspace::TargetKind::Lib);
         let key = view.body_key(target, "compute");
-        let saved = crate::saved_body(view.semantic().db(), key).expect("fixture body query");
+        let saved = crate::body_store(view.semantic().db(), key).expect("fixture body query");
         let body = &saved.as_ref().expect("fixture body exists").bodies()[0];
         let def_map = view.semantic().definitions();
         let semantic_ir = view.semantic().items();

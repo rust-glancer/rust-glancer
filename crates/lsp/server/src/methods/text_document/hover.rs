@@ -13,7 +13,7 @@ pub(crate) async fn hover(
     params: HoverParams,
 ) -> Result<Option<Hover>> {
     let position = params.text_document_position_params.position;
-    let input = ctx.global_position(position)?;
+    let input = ctx.position(position)?;
     tracing::trace!("hover request received");
     let result = ctx
         .engine_client
@@ -21,7 +21,7 @@ pub(crate) async fn hover(
             engine_client.hover(request_context, input).await
         })
         .await;
-    let hover = ctx.finish_global_operation(result)?;
+    let hover = ctx.finish_semantic_query(result)?;
     tracing::trace!(has_hover = hover.is_some(), "hover request answered");
 
     Ok(hover)

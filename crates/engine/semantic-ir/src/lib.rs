@@ -20,13 +20,13 @@ mod tests;
 
 pub use rg_source::ReadError;
 
-pub(crate) use self::source::SavedSourceResolver;
+pub(crate) use self::source::DeclarationSourceResolver;
 pub use self::{
     build::{
         AssociatedDeclarations, BodyOwnerData, ItemStoreLowerer, ItemStoreSourceReader,
         SymbolNameData, SymbolNameIndex, TargetDeclarationMetadata, TargetDeclarationReader,
-        TargetDeclarations, TargetItemData, TargetSourceFiles, associated_declarations,
-        body_owners, saved_body_owner, target_declarations,
+        TargetDeclarations, TargetItemData, TargetSourceFiles, associated_declarations, body_owner,
+        body_owners, target_declarations,
     },
     item::{
         AssociatedItemStore, AssociatedItemStoreBuilder, ConstData, ConstSignature, EnumData,
@@ -39,7 +39,7 @@ pub use self::{
     },
     reader::{CrateItemSource, ItemReader},
     source::{
-        SavedDeclarationSourceView, SourceOwnership, SourceOwnershipIndex, SourceSelection,
+        ItemSourceView, SourceOwnership, SourceOwnershipIndex, SourceSelection,
         complete_source_ownership,
     },
 };

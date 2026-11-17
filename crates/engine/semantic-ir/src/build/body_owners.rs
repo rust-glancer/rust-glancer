@@ -1,6 +1,6 @@
 use rg_def_map::{DefMap, ItemSource};
 use rg_ir_model::{
-    FileId, ItemOwner, ItemStoreRef, ModuleRef, SavedBodyOwner, SemanticItemRef, SourceId,
+    FileId, ItemOwner, ItemStoreRef, ModuleRef, OuterBodyOwner, SemanticItemRef, SourceId,
 };
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -9,7 +9,7 @@ use crate::{AssociatedItemStore, ItemStore, SemanticItemView};
 /// Where to open the source of a saved target-level body before any Body IR exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BodyOwnerData {
-    pub owner: SavedBodyOwner,
+    pub owner: OuterBodyOwner,
     pub module: ModuleRef,
     pub file: FileId,
     pub location: SourceId,
@@ -67,7 +67,7 @@ impl BodyOwnerData {
                         return None;
                     }
                     (
-                        SavedBodyOwner::from(reference),
+                        OuterBodyOwner::from(reference),
                         module_for(data.owner)?,
                         data.location,
                     )
@@ -78,14 +78,14 @@ impl BodyOwnerData {
                         return None;
                     }
                     (
-                        SavedBodyOwner::from(reference),
+                        OuterBodyOwner::from(reference),
                         module_for(data.owner)?,
                         data.location,
                     )
                 }
                 SemanticItemRef::Static(reference) => {
                     let data = item.static_data()?;
-                    (SavedBodyOwner::from(reference), data.owner, data.location)
+                    (OuterBodyOwner::from(reference), data.owner, data.location)
                 }
                 _ => return None,
             };

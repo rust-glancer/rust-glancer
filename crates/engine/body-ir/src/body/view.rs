@@ -112,11 +112,6 @@ impl<'a> BodyView<'a> {
         self.facts.initializer_value()
     }
 
-    pub fn initializer_preview(self) -> Option<&'a str> {
-        self.sources
-            .initializer_preview(self.body.expr_unchecked(self.body.root_expr()).source)
-    }
-
     pub fn function_params(self) -> &'a [FunctionParamData] {
         self.body.function_params()
     }

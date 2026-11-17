@@ -163,7 +163,10 @@ mod tests {
     };
 
     use futures::task::noop_waker_ref;
-    use rg_lsp_proto::{AnalysisConfig, InlayHintsConfig, ServiceNotification, SysrootDiscovery};
+    use rg_lsp_proto::{
+        AnalysisConfig, EditorSnapshot, InlayHintsConfig, OpenDocumentsRevision,
+        ServiceNotification, SysrootDiscovery,
+    };
 
     use super::{EngineCommand, EngineHandle};
     use crate::service::{ServiceNotificationPublisher, ServiceNotificationsSink};
@@ -268,6 +271,7 @@ pub struct Ready;
         let (resume, paused) = mpsc::channel();
         *memory.armed.lock().expect("query barrier lock") = Some((started, paused));
         let mut abandoned = Box::pin(engine.query(|respond_to| EngineCommand::WorkspaceSymbol {
+            snapshot: EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
             query: "Ready".into(),
             respond_to,
         }));
@@ -277,6 +281,7 @@ pub struct Ready;
             .recv_timeout(Duration::from_secs(5))
             .expect("request reaches running lifecycle");
         let mut next = Box::pin(engine.query(|respond_to| EngineCommand::WorkspaceSymbol {
+            snapshot: EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
             query: "Ready".into(),
             respond_to,
         }));

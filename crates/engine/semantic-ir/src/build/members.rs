@@ -18,8 +18,8 @@ use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, ItemStore, LangItemIndex,
-    SavedSourceResolver, SourceSelection, TargetDeclarationReader, target_declarations,
+    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, DeclarationSourceResolver,
+    ItemStore, LangItemIndex, SourceSelection, TargetDeclarationReader, target_declarations,
 };
 
 const OWNERS_PER_PAGE: usize = 64;
@@ -190,7 +190,7 @@ pub fn body_owners(
         .copied()
         .filter(in_selected_file)
         .collect();
-    for store in SavedSourceResolver::new(db, krate).member_stores(selection)? {
+    for store in DeclarationSourceResolver::new(db, krate).member_stores(selection)? {
         let Some(members) = associated_declarations(db, krate, store.id)? else {
             continue;
         };
@@ -207,7 +207,7 @@ pub fn body_owners(
 }
 
 /// Direct body identity already contains its member store; do not enumerate neighboring owners.
-pub fn saved_body_owner<'db>(
+pub fn body_owner<'db>(
     db: &'db QueryContext<'db>,
     key: BodyKey,
 ) -> ajika::Result<Option<&'db BodyOwnerData>> {

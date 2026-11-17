@@ -11,7 +11,7 @@ pub(crate) async fn prepare_rename(
     params: TextDocumentPositionParams,
 ) -> Result<Option<PrepareRenameResult>> {
     let position = params.position;
-    let input = ctx.global_position(position)?;
+    let input = ctx.position(position)?;
     tracing::trace!("prepare rename request received");
     let result = ctx
         .engine_client
@@ -22,7 +22,7 @@ pub(crate) async fn prepare_rename(
             },
         )
         .await;
-    let response = ctx.finish_global_operation(result)?;
+    let response = ctx.finish_semantic_query(result)?;
     tracing::trace!(
         has_result = response.is_some(),
         "prepare rename request answered"
@@ -41,18 +41,21 @@ pub(crate) async fn prepare_rename(
 pub(crate) async fn rename(
     ctx: DocumentMethodContext,
     params: RenameParams,
+    versioned_document_edits: bool,
 ) -> Result<Option<WorkspaceEdit>> {
     let position = params.text_document_position_params.position;
-    let input = ctx.global_position(position)?;
+    let input = ctx.position(position)?;
     let new_name = params.new_name;
     tracing::trace!("rename request received");
     let result = ctx
         .engine_client
         .query("rename", move |engine_client, request_context| async move {
-            engine_client.rename(request_context, input, new_name).await
+            engine_client
+                .rename(request_context, input, new_name, versioned_document_edits)
+                .await
         })
         .await;
-    let edit = ctx.finish_global_operation(result)?;
+    let edit = ctx.finish_semantic_query(result)?;
     tracing::trace!(has_edit = edit.is_some(), "rename request answered");
 
     Ok(edit)

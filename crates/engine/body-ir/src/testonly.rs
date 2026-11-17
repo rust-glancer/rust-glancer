@@ -1,7 +1,7 @@
 use rg_def_map::{CrateData, CrateDataSource, DefMap, DefMapSource};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstRef, CrateRef, DefMapRef, FunctionRef, ItemStoreRef, LocalDefRef,
-    ModuleRef, SavedBodyOwner, SemanticItemRef, StaticRef,
+    ModuleRef, OuterBodyOwner, SemanticItemRef, StaticRef,
 };
 use rg_semantic_ir::{
     AssociatedItemStore, ItemStoreQuery, SemanticItemSource, SemanticItemView, SourceSelection,
@@ -92,9 +92,9 @@ impl<'db> BodyIrView<'db> {
         let mut matching = owners.iter().filter(|owner| {
             let store = owner.store_ref();
             let item_ref = match owner.owner {
-                SavedBodyOwner::Function { id, .. } => FunctionRef::new(store, id).into(),
-                SavedBodyOwner::Const { id, .. } => ConstRef::new(store, id).into(),
-                SavedBodyOwner::Static(id) => StaticRef::new(store.origin, id).into(),
+                OuterBodyOwner::Function { id, .. } => FunctionRef::new(store, id).into(),
+                OuterBodyOwner::Const { id, .. } => ConstRef::new(store, id).into(),
+                OuterBodyOwner::Static(id) => StaticRef::new(store.origin, id).into(),
             };
             items.iter().any(|item| {
                 item.item() == item_ref

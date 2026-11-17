@@ -1,8 +1,8 @@
 //! Source scanning over semantic item signatures.
 //!
 //! Semantic item stores own signature data, while the indexed view owns the source interpretation
-//! of that data. The same scanner therefore works for retained Semantic IR and for one declaration
-//! lowered from the editor buffer. It finds fields, variants, associated functions, and nested
+//! of that data. The same scanner works for saved and edited inputs. It finds fields, variants,
+//! associated functions, and nested
 //! type paths without making source-query APIs part of either storage layer. Completion can select
 //! qualified or unqualified paths, explicit associated bindings, and a possible binding before
 //! `=`. When recovery leaves no path at all, the scanner can still return the narrowest item scope
@@ -142,19 +142,6 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         }
     }
 
-    pub(crate) fn at_origin(
-        db: &'view IndexedViewDb<'db>,
-        origin: DefMapRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Self {
-        Self {
-            db,
-            origin,
-            selection: SourceSelection::at(file_id, offset),
-        }
-    }
-
     /// Returns the narrowest signature type path that can accept completion at the offset.
     ///
     /// `fn load(_: model::Us$0)` produces a qualified site for `model`, while
@@ -279,7 +266,6 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
             let Some(context) = item_query.type_path_context_for_generic_def(generic_owner)? else {
                 continue;
             };
-            let context = db.current_signature_context(context)?;
             best.consider(
                 SignatureTypePathScope {
                     context,

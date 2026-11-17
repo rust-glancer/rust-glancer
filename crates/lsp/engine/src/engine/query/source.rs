@@ -1,4 +1,4 @@
-//! Selects one saved crate/file context and converts editor positions in that file.
+//! Selects one active crate/file context and converts editor positions in that file.
 
 use std::path::Path;
 

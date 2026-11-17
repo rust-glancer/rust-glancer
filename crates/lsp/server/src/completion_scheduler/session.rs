@@ -20,7 +20,7 @@ use super::{
     },
     request::{CompletionAttemptOutcome, CompletionFuture, CompletionRequestLease},
 };
-use crate::ingress::DocumentRevisionWatch;
+use crate::ingress::EditorRevisionWatch;
 
 /// Identity assigned to one logical completion request at ingress.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +100,7 @@ impl SchedulerState {
     pub(super) fn enqueue_attempt(
         request: &CompletionRequestLease,
         key: AttemptKey,
-        invalidation: DocumentRevisionWatch,
+        invalidation: EditorRevisionWatch,
         run: CompletionFuture,
     ) -> AttemptWaiter {
         if request.is_replaced() {

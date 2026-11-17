@@ -117,8 +117,8 @@ impl ImportContext {
     /// Find the module for an unresolved first segment such as `HashMap` in `HashMap::new()`.
     ///
     /// Every path segment before the last resolves in Rust's type namespace. This method checks
-    /// that `segment` is the root of a longer path, then maps its current inline-module syntax to
-    /// the corresponding saved module without requiring the surrounding expression to be saved.
+    /// that `segment` is the root of a longer path, then resolves its enclosing inline module
+    /// without requiring a complete surrounding expression.
     /// The caller separately checks that the name does not already resolve.
     pub(crate) fn for_qualified_root(
         db: &IndexedViewDb<'_>,

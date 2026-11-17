@@ -25,7 +25,7 @@ fn second() { let value = 3u8; let _ = value; }
 "#,
     );
     let project = fixture.build_project();
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(fixture.path("src/lib.rs"))
@@ -60,7 +60,7 @@ fn second() { let value = 3u8; let _ = value; }
         }
     });
     profile.finish().assert_counter_path_with_message(
-        "body_ir.saved.owners",
+        "body_ir.owner.owners",
         1,
         "only the binding's function needs body preparation",
     );
@@ -96,13 +96,13 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         .expect("fixture source writes");
     }
     let fixture = ProjectSourceFixture::build(&source);
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     let project = fixture.build_project();
     assert_eq!(
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         0
     );
@@ -176,19 +176,19 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         });
     };
     for expected_owners in [3, 0] {
-        let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+        let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
         query(&project);
         assert_eq!(
             profile
                 .finish()
                 .inner()
-                .counter("body_ir.saved.owners")
+                .counter("body_ir.owner.owners")
                 .unwrap_or_default(),
             expected_owners
         );
     }
 
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let analysis = snapshot.analysis();
         assert_eq!(
@@ -218,12 +218,12 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         1
     );
 
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(fixture.path("src/untouched.rs"))
@@ -241,7 +241,7 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         79
     );
@@ -263,14 +263,14 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
     query(&project);
     drop(project);
 
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     let warm = fixture.build_project();
     query(&warm);
     assert_eq!(
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         0
     );
@@ -380,7 +380,7 @@ mod other {
 "#,
     );
     let project = fixture.build_project();
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(fixture.path("src/lib.rs"))
@@ -425,7 +425,7 @@ mod other {
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         4
     );

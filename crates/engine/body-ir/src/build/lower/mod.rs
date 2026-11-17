@@ -6,7 +6,6 @@
 mod body;
 mod builder;
 mod builtin_macro;
-mod declaration;
 mod expr;
 mod macro_expansion;
 mod pat;
@@ -20,9 +19,8 @@ use rg_ir_model::BodyId;
 
 pub(super) use self::{
     builder::{LoweredBodyData, PendingBindingResolution},
-    declaration::{CurrentDeclarationBuilder, CurrentRootItems},
     macro_expansion::BodyMacroExpansion,
-    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask},
+    task::{BodyLoweringTask, BodyTaskLowering},
 };
 /// The growing owner worklist, retaining source-ambiguous bindings until preparation settles them.
 #[derive(Default)]

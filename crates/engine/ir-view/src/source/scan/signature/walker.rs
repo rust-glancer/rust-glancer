@@ -4,7 +4,6 @@
 //! does not decide what those source facts mean; the collector determines whether they become
 //! indexed occurrences or a completion site.
 
-use anyhow::Context as _;
 use rg_body_ir::DeclarationSourceView;
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
@@ -129,7 +128,7 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
 
     fn scan_struct(&mut self, ty: TypeDefRef, data: &StructData) -> anyhow::Result<()> {
         let scope = SignatureTypePathScope {
-            context: self.current_context(TypePathContext::module(data.owner))?,
+            context: TypePathContext::module(data.owner),
             generic_owner: GenericDefRef::TypeDef(ty),
         };
         self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -140,7 +139,7 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
 
     fn scan_union(&mut self, ty: TypeDefRef, data: &UnionData) -> anyhow::Result<()> {
         let scope = SignatureTypePathScope {
-            context: self.current_context(TypePathContext::module(data.owner))?,
+            context: TypePathContext::module(data.owner),
             generic_owner: GenericDefRef::TypeDef(ty),
         };
         self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -166,7 +165,7 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
     fn scan_enum(&mut self, ty: TypeDefRef, data: &EnumData) -> anyhow::Result<()> {
         let origin = ty.origin;
         let scope = SignatureTypePathScope {
-            context: self.current_context(TypePathContext::module(data.owner))?,
+            context: TypePathContext::module(data.owner),
             generic_owner: GenericDefRef::TypeDef(ty),
         };
         self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -200,7 +199,7 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
 
     fn scan_trait(&mut self, trait_ref: TraitDefRef, data: &TraitData) -> anyhow::Result<()> {
         let scope = SignatureTypePathScope {
-            context: self.current_context(TypePathContext::module(data.owner))?,
+            context: TypePathContext::module(data.owner),
             generic_owner: GenericDefRef::Trait(trait_ref),
         };
         self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -320,7 +319,7 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
         if let Some(ty) = &data.ty {
             self.push_type_ref(
                 SignatureTypePathScope {
-                    context: self.current_context(TypePathContext::module(data.owner))?,
+                    context: TypePathContext::module(data.owner),
                     generic_owner: GenericDefRef::Static(static_ref),
                 },
                 ty,
@@ -429,15 +428,6 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
     }
 
     fn owner_context(&self, owner: ItemOwner) -> anyhow::Result<Option<TypePathContext>> {
-        ItemStoreQuery::new(self.db)
-            .type_path_context_for_owner(self.origin, owner)?
-            .map(|context| self.current_context(context))
-            .transpose()
-    }
-
-    fn current_context(&self, context: TypePathContext) -> anyhow::Result<TypePathContext> {
-        self.db
-            .current_signature_context(context)
-            .context("resolve current signature context")
+        Ok(ItemStoreQuery::new(self.db).type_path_context_for_owner(self.origin, owner)?)
     }
 }

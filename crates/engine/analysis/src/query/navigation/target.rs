@@ -1,13 +1,13 @@
 //! Concrete navigation target projection.
 
 use anyhow::Context as _;
-use rg_ir_model::{DefMapRef, ModuleRef, identity::DeclarationRef};
+use rg_ir_model::{ModuleRef, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb,
     item::declaration::{Declaration, DeclarationView},
 };
 
-use crate::model::{NavigationTarget, NavigationTargetKind, NavigationTargetSource};
+use crate::model::{NavigationTarget, NavigationTargetKind};
 
 /// Converts stable IR identities into concrete editor navigation targets.
 ///
@@ -51,10 +51,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
                 else {
                     return Ok(None);
                 };
-                Ok(Some(self.navigation_target(
-                    declaration,
-                    self.source_for_declaration(declaration_ref),
-                )?))
+                Ok(Some(self.navigation_target(declaration)?))
             }
         }
     }
@@ -80,7 +77,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             // file has no name span to select, so navigation lands at the start of the file.
             return Ok(Some(NavigationTarget {
                 crate_ref: module_ref.origin.origin_crate(),
-                source: NavigationTargetSource::Saved,
+
                 kind: NavigationTargetKind::Module,
                 name,
                 file_id,
@@ -95,7 +92,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         };
         Ok(Some(NavigationTarget {
             crate_ref: declaration.crate_ref(),
-            source: self.source_for_declaration(DeclarationRef::Module(module_ref)),
+
             kind: NavigationTargetKind::from(declaration.kind()),
             name,
             file_id: declaration.file_id(),
@@ -103,33 +100,16 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         }))
     }
 
-    fn navigation_target(
-        &self,
-        declaration: Declaration,
-        source: NavigationTargetSource,
-    ) -> anyhow::Result<NavigationTarget> {
+    fn navigation_target(&self, declaration: Declaration) -> anyhow::Result<NavigationTarget> {
         let name = DeclarationView::new(self.0)
             .declaration_site_name(&declaration)?
             .to_string();
         Ok(NavigationTarget {
             crate_ref: declaration.crate_ref(),
-            source,
             kind: NavigationTargetKind::from(declaration.kind()),
             name,
             file_id: declaration.file_id(),
             span: Some(declaration.selection_span()),
         })
-    }
-
-    /// A declaration is current only when its identity belongs to this request's source overlay.
-    /// Numeric ranges cannot answer this: saved and current text may put unrelated declarations at
-    /// the same offsets.
-    fn source_for_declaration(&self, declaration: DeclarationRef) -> NavigationTargetSource {
-        match declaration.origin() {
-            origin @ DefMapRef::Body(_) if self.0.is_current_origin(origin) => {
-                NavigationTargetSource::Current
-            }
-            DefMapRef::Crate(_) | DefMapRef::Body(_) => NavigationTargetSource::Saved,
-        }
     }
 }

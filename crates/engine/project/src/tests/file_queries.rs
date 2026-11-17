@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rg_analysis::{ReferenceLocation, ReferenceQuery, RenameEdit};
-use rg_body_ir::saved_body;
+use rg_body_ir::body_store;
 use rg_ir_model::{BodyKey, PrimitiveTy, Span, UnsignedIntTy};
 use rg_semantic_ir::target_declarations;
 use rg_std::CancellationToken;
@@ -203,7 +203,7 @@ fn main() {
             .value(db)
             .expect("binary body owners");
         let body = db
-            .query::<saved_body>(BodyKey {
+            .query::<body_store>(BodyKey {
                 krate: context.crate_ref,
                 owner: owners[0].owner,
             })

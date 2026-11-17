@@ -59,17 +59,10 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
         &self,
         site: TraitImplCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let Some(source_text) = self.query.source_text else {
-            return Ok(Vec::new());
-        };
-        let members = TraitImplMemberQuery::new(
-            self.analysis,
-            self.query.crate_ref,
-            self.query.file_id,
-            source_text,
-        )
-        .missing_members_at(site.owner_start())
-        .context("collect missing trait member completions")?;
+        let members =
+            TraitImplMemberQuery::new(self.analysis, self.query.crate_ref, self.query.file_id)
+                .missing_members_at(site.owner_start())
+                .context("collect missing trait member completions")?;
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };

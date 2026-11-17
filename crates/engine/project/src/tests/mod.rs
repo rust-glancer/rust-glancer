@@ -1,8 +1,8 @@
 mod body_locations;
 mod cargo_build_outputs;
-mod current_source;
 mod declaration_locations;
 mod demand_driven;
+mod editor_analysis;
 mod editor_snapshots;
 mod file_queries;
 mod format_captures;

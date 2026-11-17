@@ -4,7 +4,7 @@ mod body_items;
 mod traits;
 
 pub(crate) use self::{
-    body_items::{BodyLocalInherentItemNames, BodyLocalItemCache, BodyLocalItemIndex},
+    body_items::{BodyLocalItemCache, BodyLocalItemIndex},
     traits::{BodyTraitLookupCache, BodyTraitSurface},
 };
 
@@ -15,7 +15,7 @@ pub(crate) use self::{
 /// stable as types gain evidence:
 ///
 /// - `traits` retains lexical trait sets and name-filtered declaration surfaces;
-/// - `body_local_items` indexes active-overlay and body-local declarations once;
+/// - `body_local_items` indexes body-local declarations once;
 /// - `solver_declarations` shares lowered source declarations between solver operations;
 ///
 /// Receiver-specific proofs stay in the body's live solver context instead.

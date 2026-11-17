@@ -8,7 +8,6 @@ use crate::{BodySourceStore, PreparedBodyStore};
 
 impl BodyStoreBuilder<'_> {
     pub(crate) fn finish(self) -> (PreparedBodyStore, Arena<BodyId, BodySourceStore>) {
-        assert_eq!(self.body_refs.len(), self.lowered_bodies.bodies().len());
         assert_eq!(
             self.body_local_items.len(),
             self.lowered_bodies.bodies().len()
@@ -23,7 +22,7 @@ impl BodyStoreBuilder<'_> {
         (
             PreparedBodyStore {
                 bodies: Arena::from_vec(bodies),
-                body_refs: self.body_refs,
+                key: self.key,
                 local_items: self.body_local_items,
             },
             Arena::from_vec(sources),

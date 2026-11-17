@@ -46,7 +46,7 @@ pub trait SemanticItemSource<'a>: Clone {
 
     /// Select declaration candidates using an explicit source surface. Written cursor/outline
     /// selection can stay local; exhaustive file scans also discover owners that reuse the file
-    /// through macros. Coordinates refer to saved source; the caller checks exact ranges.
+    /// through macros. Coordinates refer to the active source view; the caller checks exact ranges.
     fn source_items(
         &self,
         origin: DefMapRef,

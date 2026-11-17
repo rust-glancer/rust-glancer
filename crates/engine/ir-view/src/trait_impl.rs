@@ -128,8 +128,8 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         impl_ref: ImplRef,
         trait_ref: TraitDefRef,
     ) -> anyhow::Result<Vec<MissingTraitMember>> {
-        // A saved source site is accepted only when indexing resolved the same trait. This keeps
-        // cursor recovery from turning an incomplete or ambiguous saved header into an action.
+        // A source site is accepted only when indexing resolved the same trait. This keeps
+        // cursor recovery from turning an incomplete or ambiguous header into an action.
         let items = ItemStoreQuery::new(self.db);
         let Some(impl_data) = items
             .impl_data(impl_ref)
@@ -146,7 +146,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         // as a second guard before applying that substitution to member signatures.
         let Some(application) = self
             .trait_application(impl_ref)
-            .context("resolve saved trait impl application")?
+            .context("resolve trait impl application")?
         else {
             return Ok(Vec::new());
         };
@@ -155,31 +155,12 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         }
 
         self.missing_members_for_application(impl_ref, &application)
-            .context("project saved trait impl members")
+            .context("project trait impl members")
     }
 
-    /// Return missing members for the complete impl selected during current-source preparation.
-    ///
-    /// Preparation may choose saved semantics or collect current declarations. Either way, the
-    /// selected impl's header supplies the trait identity and substitution for this query.
-    pub fn missing_members_for_prepared_impl(
-        &self,
-        impl_ref: ImplRef,
-    ) -> anyhow::Result<Vec<MissingTraitMember>> {
-        let Some(application) = self
-            .trait_application(impl_ref)
-            .context("resolve prepared trait impl application")?
-        else {
-            return Ok(Vec::new());
-        };
-        self.missing_members_for_application(impl_ref, &application)
-            .context("project prepared trait impl members")
-    }
-
-    /// The database resolves current signatures in their containing scope, so saved and prepared
-    /// impls use the same header query to instantiate trait-owned `T` and `Self` references.
+    /// Instantiate trait-owned `T` and `Self` using this impl's header and containing scope.
     fn trait_application(&self, impl_ref: ImplRef) -> anyhow::Result<Option<TraitApplication>> {
-        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
+        let signatures = SemanticSignatureQuery::new(self.db, self.db);
         let Some(header) = signatures
             .impl_header(impl_ref)
             .context("lower trait impl header")?
@@ -207,7 +188,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         if impl_data.polarity == ImplPolarity::Negative {
             return Ok(Vec::new());
         }
-        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
+        let signatures = SemanticSignatureQuery::new(self.db, self.db);
         let generics = GenericsQuery::new(self.db)
             .generics(GenericDefRef::Trait(trait_ref))
             .context("read implemented trait generics")?;

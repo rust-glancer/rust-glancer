@@ -7,7 +7,6 @@
 use std::fmt::Write as _;
 
 use anyhow::Context as _;
-use rg_body_ir::BodyOwner;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ConstOrStaticRef, ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef,
@@ -134,36 +133,22 @@ impl<'a, 'db> PathView<'a, 'db> {
 
     fn initializer_path(&self, item: ConstOrStaticRef) -> anyhow::Result<Option<String>> {
         let items = ItemStoreQuery::new(self.db);
-        let (owner, name, body_owner) = match item {
+        let (owner, name) = match item {
             ConstOrStaticRef::Const(item) => {
                 let Some(data) = items.const_data(item)? else {
                     return Ok(None);
                 };
-                (data.owner, &data.name, BodyOwner::Const(item))
+                (data.owner, &data.name)
             }
             ConstOrStaticRef::Static(item) => {
                 let Some(data) = items.static_data(item)? else {
                     return Ok(None);
                 };
-                (
-                    ItemOwner::Module(data.owner),
-                    &data.name,
-                    BodyOwner::Static(item),
-                )
+                (ItemOwner::Module(data.owner), &data.name)
             }
         };
         let name = self.syntax.identifier(name);
-        let mut owner = self.path_for_owner(item.origin(), owner)?;
-        // A new or changed initializer header gets a request-local declaration. Its temporary
-        // module still represents the saved containing module for display.
-        if owner.is_none()
-            && let DefMapRef::Body(body_ref) = item.origin()
-            && self.db.is_current_body(body_ref)
-            && let Some(body) = self.db.body_ir.body(body_ref)?
-            && body.owner() == body_owner
-        {
-            owner = self.module_path(body.fallback_module())?;
-        }
+        let owner = self.path_for_owner(item.origin(), owner)?;
         Ok(owner.map(|owner| format!("{owner}::{name}")))
     }
 

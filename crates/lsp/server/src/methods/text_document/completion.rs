@@ -44,7 +44,7 @@ pub(crate) async fn completion(
         }
 
         let captured = ctx.document.captured_document().clone();
-        if captured.document_revision_watch().is_superseded() {
+        if captured.editor_revision_watch().is_superseded() {
             let (recaptured, rebased_position) =
                 captured.recapture_position(position).map_err(|error| {
                     tracing::debug!(
@@ -68,7 +68,7 @@ pub(crate) async fn completion(
         }
 
         let input = ctx.input(position)?;
-        let invalidation = captured.document_revision_watch();
+        let invalidation = captured.editor_revision_watch();
         let client_capabilities = ctx.client_capabilities;
         let engine_client = ctx.document.engine_client.clone();
         let outcome = request

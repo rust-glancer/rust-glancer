@@ -22,7 +22,7 @@ pub struct ModuleDocumentationSource {
     pub definition: Option<FileId>,
 }
 
-/// Find documentation owners by saved header position without scanning every declaration.
+/// Find documentation owners by header position without scanning every declaration.
 /// Most spans cover just a name, but tuple fields and unnamed items can cover wider syntax.
 /// Keep overlapping spans so a position with distinct owners remains ambiguous.
 pub struct DocumentationDeclarationIndex {
@@ -68,9 +68,8 @@ impl DocumentationDeclarationIndex {
     }
 }
 
-/// Read the saved declarations and module locations needed to attach source docs to a scope.
-/// The syntax being edited may have different offsets, so callers associate its declaration
-/// headers with these saved names before choosing a documentation owner.
+/// Read declarations and module locations to attach source docs to their resolution scope.
+/// Syntax and declaration ranges belong to the same input view.
 pub struct DocumentationSourceView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -80,8 +79,8 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
         Self { db }
     }
 
-    /// Index saved declaration spans for link resolution. Build this once for a file, then
-    /// look up each documented item's header after translating it into saved coordinates.
+    /// Index declaration spans for link resolution. Build this once for a file, then
+    /// look up each documented item's header in the same input view.
     ///
     /// Collecting declarations alone avoids requiring body analysis just to find doc owners.
     /// TODO: Include body-local doc owners when their declarations can be read without scanning
@@ -94,7 +93,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
         let resolution = ResolutionView::new(self.db);
         let mut declarations = Vec::new();
         for occurrence in SourceOccurrenceView::new(self.db)
-            .saved_declaration_occurrences(crate_ref, file, None)
+            .declaration_occurrences(crate_ref, file, None)
             .context("read documentation owner declarations")?
         {
             let (fact, _, _, span, role, _, _) = occurrence.into_parts();
@@ -124,7 +123,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
             .context("read documented file module")
     }
 
-    /// Locate the saved syntax that can contribute this module's outer and inner docs.
+    /// Locate the syntax that can contribute this module's outer and inner docs.
     /// Synthetic modules have no authored module syntax to inspect, so they return no source.
     pub fn module_source(
         &self,

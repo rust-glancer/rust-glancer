@@ -1,7 +1,7 @@
-//! Declaration storage shared by lexical bodies and current declaration headers.
+//! Declaration storage for items nested within lexical bodies.
 //!
-//! Both sources have item payloads and declaration scopes. Expressions and inferred facts are
-//! irrelevant to collection, so a header can use this pipeline without manufacturing a body.
+//! Collect local names before lowering signatures, so those signatures can refer to other items
+//! in the same body. Expressions and inferred facts are not needed for this step.
 
 mod def_map;
 mod item_store;
@@ -15,10 +15,9 @@ pub(crate) use self::lower::LocalItemLowering;
 use self::{def_map::LocalDefMapCollector, item_store::LocalItemStoreCollector};
 use crate::{BodyData, BodyLocalItems, BodySource, BodySourceItems, BodySourceStore, ScopeData};
 
-/// Borrow the declaration part of a lowering result for the shared collectors.
+/// Borrow the declaration part of a lowered body for name and signature collection.
 ///
-/// Bodies supply their lexical scopes; an impl-header query supplies one scope holding the
-/// impl. Collection uses the scopes' item lists and parents, without reading their bindings.
+/// Collection uses lexical scopes' item lists and parents, without reading local variable bindings.
 #[derive(Clone, Copy)]
 pub(crate) struct LocalItemSource<'a> {
     pub(crate) source: BodySource,

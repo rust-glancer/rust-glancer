@@ -5,7 +5,6 @@
 //! the storage crates do not expose editor-shaped candidate families.
 
 mod body;
-mod current_use;
 mod definition;
 mod import_completion;
 mod module_scope;
@@ -23,7 +22,6 @@ pub(super) use self::{
         RecordFieldKeySurface, UnqualifiedCompletionSiteScanner, ValueReferenceSource,
         ValueReferenceSurface,
     },
-    current_use::CurrentUsePathScanner,
     definition::{DefinitionSourceCandidate, DefinitionSourceScanner},
     import_completion::ImportPathCompletionSiteScanner,
     module_scope::{ModuleFileBase, ModuleSourceSiteScanner},
