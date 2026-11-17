@@ -29,7 +29,7 @@ use crate::{
 
 const SLOW_CRATE_EVALUATION: Duration = Duration::from_secs(1);
 
-impl BodyIrBuilder<'_, '_> {
+impl BodyIrBuilder<'_> {
     /// Evaluate saved const and static declarations without requiring function-body indexing.
     ///
     /// Initializers use ordinary body lowering and semantic type queries. Only their final values
@@ -54,7 +54,6 @@ impl BodyIrBuilder<'_, '_> {
             &semantic_ir,
             BodyIrMaterialization::DeclarationInitializers,
             &packages,
-            self.interners,
             &self.cancellation,
         )?;
         drop(lowering_timer);

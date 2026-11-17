@@ -13,8 +13,6 @@ use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
-use rg_std::Shrink;
-use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
@@ -40,7 +38,6 @@ use crate::{
 /// DefMap, Semantic IR, and Body IR must agree on that package slot's backing artifact.
 pub(super) struct BuiltPhases {
     pub(super) package_source_fingerprints: Vec<Option<Fingerprint>>,
-    pub(super) names: PackageNameInterners,
     pub(super) parse: ParseDb,
     pub(super) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,
     pub(super) def_map: DefMapDb,
@@ -81,15 +78,13 @@ pub(super) fn build(
     let memory = checkpoint_memory!(parse, build_plan);
     memory.checkpoint(sampler, metric::CACHE_PROBE_MEMORY, &build_plan);
 
-    let mut names = PackageNameInterners::new(parse.package_count());
-
     // -------------------
     // 3. Lower initial item trees
     // -------------------
     let package_indices = build_plan.source_packages.package_indices();
-    let mut item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
+    let mut item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices)
         .context("while attempting to build item tree db")?;
-    let memory = checkpoint_memory!(names, parse, build_plan, item_tree);
+    let memory = checkpoint_memory!(parse, build_plan, item_tree);
     memory.checkpoint(sampler, metric::ITEM_TREE_MEMORY, &item_tree);
 
     // -------------------------
@@ -101,7 +96,7 @@ pub(super) fn build(
     parse.evict_syntax_trees();
     parse.shrink_to_fit();
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
-    let memory = checkpoint_memory!(names, parse, build_plan, item_tree);
+    let memory = checkpoint_memory!(parse, build_plan, item_tree);
     memory.checkpoint(sampler, metric::ITEM_TREE_SYNTAX_EVICTION_MEMORY, &parse);
 
     // -------------------------------
@@ -113,7 +108,7 @@ pub(super) fn build(
     let mut source_fingerprints = cache_plan
         .source_fingerprints(workspace.workspace_root(), &parse)
         .context("while attempting to compute package cache source fingerprints")?;
-    let memory = checkpoint_memory!(names, parse, build_plan, item_tree, source_fingerprints);
+    let memory = checkpoint_memory!(parse, build_plan, item_tree, source_fingerprints);
     memory.checkpoint(
         sampler,
         metric::CACHE_SOURCE_FINGERPRINTS_MEMORY,
@@ -153,7 +148,6 @@ pub(super) fn build(
             &mut item_tree,
             build_plan.source_packages.as_slice(),
             reallocate_payloads,
-            &mut names,
             &mut macro_source_files::MacroSourceFileLoader::new(
                 &build_plan.source_packages,
                 memory_hooks,
@@ -197,7 +191,6 @@ pub(super) fn build(
         .add(changed_fingerprint_count.try_into().unwrap_or(u64::MAX));
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
     let memory = checkpoint_memory!(
-        names,
         parse,
         build_plan,
         item_tree,
@@ -224,7 +217,6 @@ pub(super) fn build(
         )
         .context("while attempting to build semantic ir db")?;
     let memory = checkpoint_memory!(
-        names,
         parse,
         build_plan,
         item_tree,
@@ -243,14 +235,7 @@ pub(super) fn build(
     // sparse stores should disappear before body lowering and cache writing.
     drop(generated_items);
     drop(item_tree);
-    let memory = checkpoint_memory!(
-        names,
-        parse,
-        build_plan,
-        source_fingerprints,
-        def_map,
-        semantic_ir,
-    );
+    let memory = checkpoint_memory!(parse, build_plan, source_fingerprints, def_map, semantic_ir);
     memory.checkpoint_without_retained(sampler, metric::ITEM_TREE_DROP_MEMORY);
 
     // ----------------
@@ -271,7 +256,6 @@ pub(super) fn build(
         &semantic_ir,
         build_plan.source_packages.as_slice(),
         reallocate_payloads,
-        &mut names,
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),
         &rebuild_subset,
@@ -285,7 +269,6 @@ pub(super) fn build(
         &semantic_ir,
         build_plan.source_packages.as_slice(),
         reallocate_payloads,
-        &mut names,
         loaders.def_map,
         loaders.semantic_ir,
         &rebuild_subset,
@@ -304,7 +287,6 @@ pub(super) fn build(
         .context("while attempting to validate captured project source generation")?;
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
     let memory = checkpoint_memory!(
-        names,
         parse,
         build_plan,
         source_fingerprints,
@@ -327,20 +309,11 @@ pub(super) fn build(
     parse.evict_syntax_trees();
     parse.evict_saved_source_text();
     parse.shrink_to_fit();
-    Shrink::shrink_to_fit(&mut names);
-    let memory = checkpoint_memory!(
-        names,
-        parse,
-        source_fingerprints,
-        def_map,
-        semantic_ir,
-        body_ir,
-    );
+    let memory = checkpoint_memory!(parse, source_fingerprints, def_map, semantic_ir, body_ir);
     memory.checkpoint(sampler, metric::PARSE_SYNTAX_EVICTION_MEMORY, &parse);
 
     Ok(BuiltPhases {
         package_source_fingerprints: source_fingerprints,
-        names,
         parse,
         macro_expansion_limit_summary,
         def_map,

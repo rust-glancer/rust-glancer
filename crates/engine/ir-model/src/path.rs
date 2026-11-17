@@ -17,7 +17,7 @@
 use std::fmt;
 
 use rg_std::{MemorySize, Shrink};
-use rg_text::{Name, NameInterner, RustEdition};
+use rg_text::{Name, RustEdition};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::CrateRef;
@@ -92,25 +92,18 @@ impl Path {
         Self::new(PathRoot::Absolute, segments)
     }
 
-    pub fn standard_prelude(
-        crate_name: &'static str,
-        edition: RustEdition,
-        interner: &mut NameInterner,
-    ) -> Self {
+    pub fn standard_prelude(crate_name: &'static str, edition: RustEdition) -> Self {
         Self::absolute(vec![
-            interner.intern(crate_name),
-            interner.intern("prelude"),
-            interner.intern(edition.prelude_module()),
+            Name::new(crate_name),
+            Name::new("prelude"),
+            Name::new(edition.prelude_module()),
         ])
     }
 
-    pub fn crate_relative_standard_prelude(
-        edition: RustEdition,
-        interner: &mut NameInterner,
-    ) -> Self {
+    pub fn crate_relative_standard_prelude(edition: RustEdition) -> Self {
         Self::relative(vec![
-            interner.intern("prelude"),
-            interner.intern(edition.prelude_module()),
+            Name::new("prelude"),
+            Name::new(edition.prelude_module()),
         ])
     }
 

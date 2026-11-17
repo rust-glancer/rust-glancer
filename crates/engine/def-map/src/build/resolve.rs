@@ -19,7 +19,6 @@ use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::MacroExpansionRuntime;
 use rg_parse::ParseDb;
 use rg_std::UniqueVec;
-use rg_text::{NameInterner, PackageNameInterners};
 use rg_workspace::{PackageOrigin, SysrootCrate};
 
 use super::{
@@ -50,7 +49,6 @@ pub(crate) fn select_prelude(
     env: &BuildResolutionEnv<'_>,
     state: &CrateBuilder,
     origin: &PackageOrigin,
-    interner: &mut NameInterner,
 ) -> anyhow::Result<Option<ModuleRef>> {
     // TODO: Parse `#![no_std]` to select core directly and omit the automatic std root.
     let prelude_paths = [
@@ -58,9 +56,9 @@ pub(crate) fn select_prelude(
             origin,
             PackageOrigin::Sysroot(SysrootCrate::Std | SysrootCrate::Core)
         )
-        .then(|| Path::crate_relative_standard_prelude(state.edition, interner)),
-        Some(Path::standard_prelude("std", state.edition, interner)),
-        Some(Path::standard_prelude("core", state.edition, interner)),
+        .then(|| Path::crate_relative_standard_prelude(state.edition)),
+        Some(Path::standard_prelude("std", state.edition)),
+        Some(Path::standard_prelude("core", state.edition)),
     ];
     let root = ModuleRef::krate(state.crate_ref, state.root_module);
     for path in prelude_paths.into_iter().flatten() {
@@ -89,7 +87,6 @@ pub(crate) fn resolve_crate(
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
     state: &mut CrateBuilder,
-    interners: &mut PackageNameInterners,
     macro_runtime: &mut MacroExpansionRuntime,
     macro_source_file_resolutions: &mut MacroSourceFileResolutions,
     remaining_report_groups: &mut usize,
@@ -165,13 +162,9 @@ pub(crate) fn resolve_crate(
                 let package = item_tree
                     .package(state.crate_ref.package.0)
                     .expect("active crate has an item-tree package");
-                let interner = interners
-                    .package_mut(state.crate_ref.package.0)
-                    .expect("active crate has a name interner");
                 apply_expansion_attempts(
                     package,
                     state,
-                    interner,
                     expansion_attempts,
                     macro_source_file_resolutions,
                 )
@@ -191,7 +184,7 @@ pub(crate) fn resolve_crate(
                 .into_vec();
             if !requests.is_empty() {
                 let resolutions = source_loader
-                    .load_files(parse, item_tree, interners, &requests)
+                    .load_files(parse, item_tree, &requests)
                     .context("load macro source files")?;
                 anyhow::ensure!(
                     resolutions.len() == requests.len(),
@@ -267,14 +260,10 @@ pub(crate) fn resolve_crate(
     let package = item_tree
         .package(state.crate_ref.package.0)
         .expect("active crate has an item-tree package");
-    let interner = interners
-        .package_mut(state.crate_ref.package.0)
-        .expect("active crate has a name interner");
     let derives = BuiltinDeriveExpansion::collect(
         &BuildResolutionEnv::new(baseline, completed, state),
         state,
         package,
-        interner,
     )
     .context("lower builtin derive impls")?;
     for derive in derives {

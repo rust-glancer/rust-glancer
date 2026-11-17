@@ -16,7 +16,7 @@ use rg_item_tree::{
     TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_std::UniqueVec;
-use rg_text::{Name, NameInterner};
+use rg_text::Name;
 
 use crate::{
     CrateResolutionEnv, GeneratedItemRef, ItemSource, ItemSourceKind, LocalDefKind, LocalImplData,
@@ -38,7 +38,6 @@ impl BuiltinDeriveExpansion {
         env: &E,
         state: &CrateBuilder,
         package: &ItemTreePackage,
-        interner: &mut NameInterner,
     ) -> anyhow::Result<Vec<Self>>
     where
         E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
@@ -85,8 +84,7 @@ impl BuiltinDeriveExpansion {
                     ItemSourceKind::Generated(_) => item.span,
                     _ => call.span,
                 };
-                let Some(impl_item) = Self::lower_impl(kind, root, item, span, cfg, interner)
-                else {
+                let Some(impl_item) = Self::lower_impl(kind, root, item, span, cfg) else {
                     continue;
                 };
                 expansions.push(Self::from_impl(
@@ -237,7 +235,6 @@ impl BuiltinDeriveExpansion {
         item: &ItemNode,
         span: Span,
         cfg: CfgEvaluator<'_>,
-        interner: &mut NameInterner,
     ) -> Option<ImplItem> {
         let name = item.name.as_ref()?;
         let (generics, attrs, fields, add_bounds) = match &item.kind {
@@ -275,7 +272,7 @@ impl BuiltinDeriveExpansion {
             }
             _ => return None,
         };
-        let trait_ty = Self::trait_type(kind, root, span, interner);
+        let trait_ty = Self::trait_type(kind, root, span);
         let bound = TypeBound::Trait {
             ty: trait_ty.clone(),
             modifier: TraitBoundModifier::None,
@@ -299,12 +296,7 @@ impl BuiltinDeriveExpansion {
         })
     }
 
-    fn trait_type(
-        kind: BuiltinDeriveKind,
-        root: &str,
-        span: Span,
-        interner: &mut NameInterner,
-    ) -> TypeRef {
+    fn trait_type(kind: BuiltinDeriveKind, root: &str, span: Span) -> TypeRef {
         // TODO: Use lang/diagnostic-item identities for this trait and its generated bounds.
         // Generated TypeRefs need to carry those identities into semantic/type lowering so the
         // impl does not depend on core's module layout or the caller's extern-prelude spelling.
@@ -319,10 +311,7 @@ impl BuiltinDeriveExpansion {
             BuiltinDeriveKind::PartialOrd => ("cmp", "PartialOrd"),
             BuiltinDeriveKind::Ord => ("cmp", "Ord"),
         };
-        let mut trait_path = Self::type_path(
-            [root, module, trait_name].map(|name| interner.intern(name)),
-            span,
-        );
+        let mut trait_path = Self::type_path([root, module, trait_name].map(Name::new), span);
         trait_path.absolute = root != "crate";
         TypeRef::Path(trait_path)
     }

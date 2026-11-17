@@ -1,6 +1,6 @@
 use rg_cfg_eval::CfgPredicate;
 use rg_syntax::{AstNode as _, TextRange, ast};
-use rg_text::{Name, NameInterner};
+use rg_text::Name;
 use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
 
 use super::{FromAst, MaybeFromAst, normalized_syntax};
@@ -21,7 +21,6 @@ pub struct MacroDefContext<'a> {
 }
 
 pub struct MacroCallContext<'a> {
-    pub interner: &'a mut NameInterner,
     pub builtin: Option<BuiltinMacroItem>,
     pub span_for_range: &'a mut dyn FnMut(TextRange) -> Span,
 }
@@ -59,16 +58,16 @@ impl FromAst<MacroDefAst> for MacroDefinitionItem {
 
 impl MaybeFromAst for MacroUseAttr {
     type AstNode = dyn ast::HasAttrs;
-    type Context<'a> = &'a mut NameInterner;
+    type Context<'a> = ();
 
-    fn maybe_from_ast(item: &Self::AstNode, interner: Self::Context<'_>) -> Option<Self> {
+    fn maybe_from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Option<Self> {
         let mut attr = Self::default();
 
         for source_attr in item.attrs().filter(|attr| attr.kind().is_outer()) {
             let Some(meta) = source_attr.meta() else {
                 continue;
             };
-            collect_macro_use_meta(&mut attr, meta, None, interner);
+            collect_macro_use_meta(&mut attr, meta, None);
         }
 
         (attr.direct.is_some() || !attr.cfg_attr_macro_use.is_empty()).then_some(attr)
@@ -86,7 +85,7 @@ impl FromAst for MacroCallItem {
                 .path()
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
-                .map(|name_ref| ctx.interner.intern(name_ref.text())),
+                .map(|name_ref| Name::new(name_ref.text())),
             args: item.token_tree().map(|token_tree| {
                 syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
             }),
@@ -162,9 +161,8 @@ fn collect_macro_use_meta(
     attr: &mut MacroUseAttr,
     meta: ast::Meta,
     predicate: Option<CfgPredicate>,
-    interner: &mut NameInterner,
 ) {
-    if let Some(selector) = macro_use_selector_from_meta(&meta, interner) {
+    if let Some(selector) = macro_use_selector_from_meta(&meta) {
         match predicate {
             Some(predicate) => attr.cfg_attr_macro_use.push(CfgAttrMacroUse {
                 predicate,
@@ -189,12 +187,12 @@ fn collect_macro_use_meta(
                 None => cfg_attr_predicate,
             };
             for nested in cfg_attr.metas() {
-                collect_macro_use_meta(attr, nested, Some(predicate.clone()), interner);
+                collect_macro_use_meta(attr, nested, Some(predicate.clone()));
             }
         }
         ast::Meta::UnsafeMeta(meta) => {
             if let Some(meta) = meta.meta() {
-                collect_macro_use_meta(attr, meta, predicate, interner);
+                collect_macro_use_meta(attr, meta, predicate);
             }
         }
         ast::Meta::CfgMeta(_)
@@ -204,10 +202,7 @@ fn collect_macro_use_meta(
     }
 }
 
-fn macro_use_selector_from_meta(
-    meta: &ast::Meta,
-    interner: &mut NameInterner,
-) -> Option<MacroUseSelector> {
+fn macro_use_selector_from_meta(meta: &ast::Meta) -> Option<MacroUseSelector> {
     if meta.as_simple_atom().as_deref() == Some("macro_use") {
         return Some(MacroUseSelector { names: None });
     }
@@ -216,17 +211,14 @@ fn macro_use_selector_from_meta(
         && name.as_str() == "macro_use"
     {
         return Some(MacroUseSelector {
-            names: Some(macro_use_names_from_token_tree(&token_tree, interner)),
+            names: Some(macro_use_names_from_token_tree(&token_tree)),
         });
     }
 
     None
 }
 
-fn macro_use_names_from_token_tree(
-    token_tree: &ast::TokenTree,
-    interner: &mut NameInterner,
-) -> Vec<Name> {
+fn macro_use_names_from_token_tree(token_tree: &ast::TokenTree) -> Vec<Name> {
     let text = token_tree.syntax().text().to_string();
     let text = text
         .strip_prefix('(')
@@ -236,7 +228,7 @@ fn macro_use_names_from_token_tree(
     text.split(',')
         .filter_map(|name| {
             let name = name.trim();
-            (!name.is_empty()).then(|| interner.intern(name))
+            (!name.is_empty()).then(|| Name::new(name))
         })
         .collect()
 }

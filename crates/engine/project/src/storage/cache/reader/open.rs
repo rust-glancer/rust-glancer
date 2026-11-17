@@ -13,7 +13,6 @@ use std::{
 };
 
 use rg_package_store::MalformedCacheError;
-use rg_text::NameInterner;
 
 use super::{PackageArtifactReader, PackageArtifactReaderInner, PackageCacheReadError};
 #[cfg(test)]
@@ -153,7 +152,6 @@ impl PackageCacheStore {
                 def_map_index: OnceLock::new(),
                 semantic_ir_index: OnceLock::new(),
                 body_index: OnceLock::new(),
-                names: Mutex::new(NameInterner::new()),
             }),
         }))
     }

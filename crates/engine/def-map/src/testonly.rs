@@ -1,7 +1,6 @@
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
 use rg_parse::{CargoTarget, Package, ParseDb};
-use rg_text::PackageNameInterners;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
@@ -63,9 +62,8 @@ impl DefMapFixture {
 
     pub fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
         let mut item_tree = ItemTreeFixture::build_from_crate(fixture, &workspace);
-        let mut names = PackageNameInterners::new(item_tree.parse_db().package_count());
         let (parse, trees) = item_tree.build_inputs_mut();
-        let output = build_source_closed_def_map(&workspace, parse, trees, &mut names);
+        let output = build_source_closed_def_map(&workspace, parse, trees);
         let (def_map, generated_items) = output.into_parts();
 
         Self {
@@ -164,7 +162,6 @@ impl MacroSourceFileLoader for SourceClosedMacroSourceFileLoader {
         &mut self,
         _parse: &mut ParseDb,
         _item_tree: &mut ItemTreeDb,
-        _names: &mut PackageNameInterners,
         requests: &[MacroSourceFileRequest],
     ) -> anyhow::Result<Vec<MacroSourceFileResolution>> {
         anyhow::bail!(
@@ -178,7 +175,6 @@ pub(crate) fn build_source_closed_def_map(
     workspace: &WorkspaceMetadata,
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
-    names: &mut PackageNameInterners,
 ) -> DefMapBuildOutput {
     let package_count = parse.package_count();
     let baseline = DefMapDb::all_offloaded(package_count);
@@ -194,7 +190,6 @@ pub(crate) fn build_source_closed_def_map(
             item_tree,
             &packages,
             true,
-            names,
             &mut SourceClosedMacroSourceFileLoader,
         )
         .expect("fixture DefMap should build")

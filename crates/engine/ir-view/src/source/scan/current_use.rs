@@ -10,7 +10,6 @@ use rg_item_tree::{FromAst as _, ImportAlias, UseItem};
 use rg_package_store::PackageStoreError;
 use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{AstNode as _, AstToken as _, SourceFile, TextSize, ast};
-use rg_text::NameInterner;
 
 use super::{DefinitionSourceCandidate, ModuleSourceSiteScanner};
 
@@ -62,8 +61,7 @@ impl<'source, 'txn, 'db> CurrentUsePathScanner<'source, 'txn, 'db> {
         // Reuse ordinary item-tree import lowering so roots, nested use trees, `self`, and aliases
         // have exactly the same semantic path shape as saved imports. Only the source tree and
         // selected module differ here.
-        let mut interner = NameInterner::new();
-        let item = UseItem::from_ast(&use_item, &mut interner);
+        let item = UseItem::from_ast(&use_item, ());
         let mut candidates = Vec::new();
         for import in item.imports {
             let Some(path) = ImportPath::from_use_path(&import.path, None) else {

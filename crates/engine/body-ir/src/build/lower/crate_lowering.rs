@@ -11,7 +11,6 @@ use rg_ir_model::{
     ConstRef, FileId, FunctionRef, ImplRef, ItemOwner, ModuleRef, Span, StaticRef, TraitDefRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
-use rg_text::NameInterner;
 
 use super::{
     BodyMacroExpansion, LoweredCrateBodies,
@@ -32,7 +31,6 @@ pub(super) struct CrateLowering<'a> {
     pub(super) statics: Vec<StaticLoweringTarget>,
     pub(super) crate_bodies: LoweredCrateBodies,
     pub(super) cfg: CfgEvaluator<'a>,
-    pub(super) interner: &'a mut NameInterner,
     pub(super) cancellation: &'a rg_std::CancellationToken,
 }
 
@@ -49,7 +47,6 @@ impl<'a> CrateLowering<'a> {
             BodyTaskSource::Saved(self.parse_package),
             &mut self.crate_bodies,
             self.cfg,
-            self.interner,
             self.cancellation,
         )
         .lower_tasks(&tasks, &mut macro_expansion)?;

@@ -5,7 +5,6 @@ use rg_parse::ParseDb;
 use rg_profile::{MemorySnapshotMetric, ProfileMemoryRecord, ProfileMemorySnapshot};
 use rg_semantic_ir::SemanticIrDb;
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
-use rg_text::PackageNameInterners;
 
 use super::plan::PackageBuildPlan;
 use crate::{
@@ -19,7 +18,6 @@ use crate::{
 /// the call sites read as a compact list of live phase state instead of repeating recorder plumbing.
 #[derive(Default)]
 pub(super) struct CheckpointMemory<'a> {
-    names: Option<&'a PackageNameInterners>,
     parse: Option<&'a ParseDb>,
     build_plan: Option<&'a PackageBuildPlan>,
     item_tree: Option<&'a ItemTreeDb>,
@@ -33,7 +31,6 @@ pub(super) struct CheckpointMemory<'a> {
 impl<'a> CheckpointMemory<'a> {
     pub(super) fn merge(self, other: Self) -> Self {
         Self {
-            names: self.names.or(other.names),
             parse: self.parse.or(other.parse),
             build_plan: self.build_plan.or(other.build_plan),
             item_tree: self.item_tree.or(other.item_tree),
@@ -103,7 +100,6 @@ impl<'a> CheckpointMemory<'a> {
 
     fn measure_retained(&self, sampler: &BuildMemorySampler) -> Option<usize> {
         sampler.sum_retained(&[
-            self.names.and_then(|value| sampler.measure_retained(value)),
             self.parse.and_then(|value| sampler.measure_retained(value)),
             self.build_plan
                 .and_then(|value| sampler.measure_retained(value)),
@@ -123,7 +119,6 @@ impl<'a> CheckpointMemory<'a> {
     }
 
     fn record(&self, recorder: &mut MemoryRecorder) {
-        Self::record_memory_value(recorder, "names", self.names);
         Self::record_memory_value(recorder, "parse", self.parse);
         Self::record_memory_value(recorder, "build_plan", self.build_plan);
         Self::record_memory_value(recorder, "item_tree", self.item_tree);
@@ -170,7 +165,6 @@ macro_rules! impl_checkpoint_memory_from {
     };
 }
 
-impl_checkpoint_memory_from!(PackageNameInterners, names);
 impl_checkpoint_memory_from!(ParseDb, parse);
 impl_checkpoint_memory_from!(PackageBuildPlan, build_plan);
 impl_checkpoint_memory_from!(ItemTreeDb, item_tree);

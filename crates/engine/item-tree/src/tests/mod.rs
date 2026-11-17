@@ -2,9 +2,8 @@ mod utils;
 
 use expect_test::expect;
 use rg_ir_model::Span;
-use rg_parse::{LineColumnSpan, LineIndex, Position};
+use rg_parse::{LineColumnSpan, Position};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
-use rg_text::NameInterner;
 
 use crate::{
     FromAst, GenericArg, GenericParams, ItemKind, TraitBoundModifier, TypeBound, TypePathAnchor,
@@ -22,9 +21,7 @@ fn preserves_relaxed_trait_bound_modifier() {
         .descendants()
         .find_map(ast::Struct::cast)
         .expect("fixture should contain a struct");
-    let line_index = LineIndex::new(source);
-    let mut interner = NameInterner::new();
-    let generics = GenericParams::from_ast(&item, (&line_index, &mut interner));
+    let generics = GenericParams::from_ast(&item, ());
     let param = generics
         .types()
         .next()
@@ -119,10 +116,8 @@ fn lower_alias_ty(source: &str) -> TypeRef {
         .find_map(ast::TypeAlias::cast)
         .expect("fixture should contain a type alias");
     let ty = alias.ty().expect("fixture type alias should have a value");
-    let line_index = LineIndex::new(source);
-    let mut interner = NameInterner::new();
 
-    TypeRef::from_ast(&ty, (&line_index, &mut interner))
+    TypeRef::from_ast(&ty, ())
 }
 
 #[test]

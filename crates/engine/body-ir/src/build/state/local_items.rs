@@ -84,37 +84,31 @@ impl CrateBodyBuildState<'_> {
             debug_assert_eq!(allocated, body);
 
             if !nested_tasks.is_empty() {
-                BodyTaskLowering::new(
-                    task_source,
-                    &mut self.crate_bodies,
-                    cfg,
-                    self.interner,
-                    &self.cancellation,
-                )
-                .lower_tasks(&nested_tasks, &mut macro_expansion)?
-                .into_iter()
-                .try_for_each(|lowered| {
-                    let body_ref = body_ref_for_nested(lowered)?;
-                    anyhow::ensure!(
-                        body_ref.crate_ref == self.crate_ref,
-                        "nested body identity belongs to a different crate",
-                    );
-                    anyhow::ensure!(
-                        !self.body_slots.contains_key(&body_ref),
-                        "nested body identity {:?} was allocated more than once",
-                        body_ref.body,
-                    );
-                    let allocated = self.body_refs.alloc(body_ref);
-                    anyhow::ensure!(
-                        allocated == lowered.body,
-                        "nested body identity worklist is not aligned with lowered bodies",
-                    );
-                    anyhow::ensure!(
-                        self.body_slots.insert(body_ref, allocated).is_none(),
-                        "nested body identity was already present in the worklist",
-                    );
-                    Ok(())
-                })?;
+                BodyTaskLowering::new(task_source, &mut self.crate_bodies, cfg, &self.cancellation)
+                    .lower_tasks(&nested_tasks, &mut macro_expansion)?
+                    .into_iter()
+                    .try_for_each(|lowered| {
+                        let body_ref = body_ref_for_nested(lowered)?;
+                        anyhow::ensure!(
+                            body_ref.crate_ref == self.crate_ref,
+                            "nested body identity belongs to a different crate",
+                        );
+                        anyhow::ensure!(
+                            !self.body_slots.contains_key(&body_ref),
+                            "nested body identity {:?} was allocated more than once",
+                            body_ref.body,
+                        );
+                        let allocated = self.body_refs.alloc(body_ref);
+                        anyhow::ensure!(
+                            allocated == lowered.body,
+                            "nested body identity worklist is not aligned with lowered bodies",
+                        );
+                        anyhow::ensure!(
+                            self.body_slots.insert(body_ref, allocated).is_none(),
+                            "nested body identity was already present in the worklist",
+                        );
+                        Ok(())
+                    })?;
             }
         }
 

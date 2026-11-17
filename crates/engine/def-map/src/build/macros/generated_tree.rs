@@ -10,19 +10,18 @@ use rg_arena::Arena;
 use rg_ir_model::{PackageSlot, Span};
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst,
-    FunctionItem, ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem,
-    MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem,
-    MacroRulesAst, MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource,
-    OuterDocs, StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem,
-    UseItem, UserFacingAttrs, VisibilityLevel,
+    FunctionItem, ImplItem, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,
+    MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst,
+    MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem,
+    StructItem, TraitItem, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::ExpansionSyntax;
-use rg_parse::{LineIndex, syntax_edition};
+use rg_parse::syntax_edition;
 use rg_syntax::{
     AstNode as _, TextRange,
     ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility},
 };
-use rg_text::{Name, NameInterner, RustEdition};
+use rg_text::{Name, RustEdition};
 use rg_tt::{
     Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
@@ -35,10 +34,8 @@ use crate::source::GeneratedSourceData;
 pub(super) struct GeneratedSourceLowering<'a> {
     package: PackageSlot,
     origin: &'a GeneratedOrigin,
-    interner: &'a mut NameInterner,
     fallback_span: TtSpan,
     span_map: ExpansionSpanMap,
-    line_index: LineIndex,
     items: Arena<ItemTreeId, ItemNode>,
 }
 
@@ -47,12 +44,9 @@ impl<'a> GeneratedSourceLowering<'a> {
         package: PackageSlot,
         origin: &'a GeneratedOrigin,
         expansion: ExpansionSyntax,
-        interner: &'a mut NameInterner,
         edition: RustEdition,
     ) -> Result<GeneratedSourceData> {
         let ExpansionSyntax { parse, span_map } = expansion;
-        let source_text = parse.syntax_node().text().to_string();
-        let line_index = LineIndex::new(&source_text);
         let file = ast::MacroItems::cast(parse.syntax_node())
             .context("while attempting to cast macro expansion syntax root")?;
         // Unmapped tokens belong to the invocation as a whole. Prepare this once so nested
@@ -69,10 +63,8 @@ impl<'a> GeneratedSourceLowering<'a> {
         let mut lowering = Self {
             package,
             origin,
-            interner,
             fallback_span,
             span_map,
-            line_index,
             items: Arena::new(),
         };
         let top_level = lowering
@@ -113,25 +105,15 @@ impl<'a> GeneratedSourceLowering<'a> {
                 item.syntax().text_range(),
             )),
             ast::Item::Const(item) => {
-                let kind = ItemKind::Const(ConstItem::from_ast(
-                    &item,
-                    (&self.line_index, &mut *self.interner),
-                ));
-                let name = self.intern_ast_name(item.name());
+                let kind = ItemKind::Const(ConstItem::from_ast(&item, ()));
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::Enum(item) => {
-                let kind = ItemKind::Enum(EnumItem::from_ast(
-                    &item,
-                    (
-                        &self.line_index,
-                        &mut *self.interner,
-                        self.origin.dollar_crate,
-                    ),
-                ));
-                let name = self.intern_ast_name(item.name());
+                let kind = ItemKind::Enum(EnumItem::from_ast(&item, self.origin.dollar_crate));
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
@@ -147,9 +129,8 @@ impl<'a> GeneratedSourceLowering<'a> {
                 ))
             }
             ast::Item::ExternCrate(item) => {
-                let kind =
-                    ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, &mut *self.interner));
-                let name = self.intern_ast_name_ref(item.name_ref());
+                let kind = ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, ()));
+                let name = Self::name_ref_from_ast(item.name_ref());
                 let name_range = item
                     .name_ref()
                     .map(|name_ref| name_ref.syntax().text_range());
@@ -157,11 +138,8 @@ impl<'a> GeneratedSourceLowering<'a> {
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::Fn(item) => {
-                let kind = ItemKind::Function(FunctionItem::from_ast(
-                    &item,
-                    (&self.line_index, &mut *self.interner),
-                ));
-                let name = self.intern_ast_name(item.name());
+                let kind = ItemKind::Function(FunctionItem::from_ast(&item, ()));
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
@@ -183,7 +161,6 @@ impl<'a> GeneratedSourceLowering<'a> {
                 let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                     &item,
                     MacroCallContext {
-                        interner: &mut *self.interner,
                         builtin: None,
                         span_for_range: &mut span_for_range,
                     },
@@ -200,7 +177,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                         span_for_range: &mut span_for_range,
                     },
                 ));
-                let name = self.intern_ast_name(item.name());
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
@@ -215,13 +192,13 @@ impl<'a> GeneratedSourceLowering<'a> {
                         span_for_range: &mut span_for_range,
                     },
                 ));
-                let name = self.intern_ast_name(item.name());
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::Module(item) => {
-                let module_name = self.intern_ast_name(item.name());
+                let module_name = Self::name_from_ast(item.name());
                 let module_name_range = item.name().map(|name| name.syntax().text_range());
                 let module_item = self
                     .lower_module_item(&item)
@@ -235,25 +212,15 @@ impl<'a> GeneratedSourceLowering<'a> {
                 ))
             }
             ast::Item::Static(item) => {
-                let kind = ItemKind::Static(StaticItem::from_ast(
-                    &item,
-                    (&self.line_index, &mut *self.interner),
-                ));
-                let name = self.intern_ast_name(item.name());
+                let kind = ItemKind::Static(StaticItem::from_ast(&item, ()));
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::Struct(item) => {
-                let kind = ItemKind::Struct(StructItem::from_ast(
-                    &item,
-                    (
-                        &self.line_index,
-                        &mut *self.interner,
-                        self.origin.dollar_crate,
-                    ),
-                ));
-                let name = self.intern_ast_name(item.name());
+                let kind = ItemKind::Struct(StructItem::from_ast(&item, self.origin.dollar_crate));
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
@@ -263,33 +230,27 @@ impl<'a> GeneratedSourceLowering<'a> {
                     .lower_trait_item(&item)
                     .context("while attempting to lower generated trait declaration")?;
                 let kind = ItemKind::Trait(trait_item);
-                let name = self.intern_ast_name(item.name());
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::TypeAlias(item) => {
-                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                    &item,
-                    (&self.line_index, &mut *self.interner),
-                ));
-                let name = self.intern_ast_name(item.name());
+                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, ()));
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::Union(item) => {
-                let kind = ItemKind::Union(UnionItem::from_ast(
-                    &item,
-                    (&self.line_index, &mut *self.interner),
-                ));
-                let name = self.intern_ast_name(item.name());
+                let kind = ItemKind::Union(UnionItem::from_ast(&item, ()));
+                let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::Use(item) => {
-                let kind = ItemKind::Use(UseItem::from_ast(&item, &mut *self.interner));
+                let kind = ItemKind::Use(UseItem::from_ast(&item, ()));
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, None, None, visibility, &item))
             }
@@ -305,31 +266,22 @@ impl<'a> GeneratedSourceLowering<'a> {
             for item in item_list.extern_items() {
                 let item = match item {
                     ast::ExternItem::Fn(item) => {
-                        let kind = ItemKind::Function(FunctionItem::from_ast(
-                            &item,
-                            (&self.line_index, &mut *self.interner),
-                        ));
-                        let name = self.intern_ast_name(item.name());
+                        let kind = ItemKind::Function(FunctionItem::from_ast(&item, ()));
+                        let name = Self::name_from_ast(item.name());
                         let name_range = item.name().map(|name| name.syntax().text_range());
                         let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                         self.alloc_documented_item(kind, name, name_range, visibility, &item)
                     }
                     ast::ExternItem::Static(item) => {
-                        let kind = ItemKind::Static(StaticItem::from_ast(
-                            &item,
-                            (&self.line_index, &mut *self.interner),
-                        ));
-                        let name = self.intern_ast_name(item.name());
+                        let kind = ItemKind::Static(StaticItem::from_ast(&item, ()));
+                        let name = Self::name_from_ast(item.name());
                         let name_range = item.name().map(|name| name.syntax().text_range());
                         let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                         self.alloc_documented_item(kind, name, name_range, visibility, &item)
                     }
                     ast::ExternItem::TypeAlias(item) => {
-                        let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                            &item,
-                            (&self.line_index, &mut *self.interner),
-                        ));
-                        let name = self.intern_ast_name(item.name());
+                        let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, ()));
+                        let name = Self::name_from_ast(item.name());
                         let name_range = item.name().map(|name| name.syntax().text_range());
                         let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                         self.alloc_documented_item(kind, name, name_range, visibility, &item)
@@ -340,7 +292,6 @@ impl<'a> GeneratedSourceLowering<'a> {
                         let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                             &item,
                             MacroCallContext {
-                                interner: &mut *self.interner,
                                 builtin: None,
                                 span_for_range: &mut span_for_range,
                             },
@@ -375,7 +326,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
             // Legacy macro-use affects the parent's textual macro scope after the generated module
             // is collected, so it must survive the late-source pause too.
-            macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+            macro_use: MacroUseAttr::maybe_from_ast(item, ()),
             path_override: rg_parse::module_path_override(item),
             source,
         })
@@ -390,14 +341,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             .collect_assoc_items(assoc_items)
             .context("while attempting to lower generated trait associated items")?;
 
-        Ok(TraitItem::from_ast(
-            item,
-            TraitItemContext {
-                items,
-                line_index: &self.line_index,
-                interner: &mut *self.interner,
-            },
-        ))
+        Ok(TraitItem::from_ast(item, items))
     }
 
     fn lower_impl_item(&mut self, item: &ast::Impl) -> Result<ImplItem> {
@@ -409,14 +353,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             .collect_assoc_items(assoc_items)
             .context("while attempting to lower generated impl associated items")?;
 
-        Ok(ImplItem::from_ast(
-            item,
-            ImplItemContext {
-                items,
-                line_index: &self.line_index,
-                interner: &mut *self.interner,
-            },
-        ))
+        Ok(ImplItem::from_ast(item, items))
     }
 
     fn collect_assoc_items(&mut self, items: Vec<ast::AssocItem>) -> Result<Vec<ItemTreeId>> {
@@ -425,21 +362,15 @@ impl<'a> GeneratedSourceLowering<'a> {
         for item in items {
             let item_id = match item {
                 ast::AssocItem::Const(item) => {
-                    let kind = ItemKind::Const(ConstItem::from_ast(
-                        &item,
-                        (&self.line_index, &mut *self.interner),
-                    ));
-                    let name = self.intern_ast_name(item.name());
+                    let kind = ItemKind::Const(ConstItem::from_ast(&item, ()));
+                    let name = Self::name_from_ast(item.name());
                     let name_range = item.name().map(|name| name.syntax().text_range());
                     let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                     Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
                 }
                 ast::AssocItem::Fn(item) => {
-                    let kind = ItemKind::Function(FunctionItem::from_ast(
-                        &item,
-                        (&self.line_index, &mut *self.interner),
-                    ));
-                    let name = self.intern_ast_name(item.name());
+                    let kind = ItemKind::Function(FunctionItem::from_ast(&item, ()));
+                    let name = Self::name_from_ast(item.name());
                     let name_range = item.name().map(|name| name.syntax().text_range());
                     let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                     Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
@@ -451,7 +382,6 @@ impl<'a> GeneratedSourceLowering<'a> {
                     let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                         &item,
                         MacroCallContext {
-                            interner: &mut *self.interner,
                             builtin: None,
                             span_for_range: &mut span_for_range,
                         },
@@ -465,11 +395,8 @@ impl<'a> GeneratedSourceLowering<'a> {
                     ))
                 }
                 ast::AssocItem::TypeAlias(item) => {
-                    let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                        &item,
-                        (&self.line_index, &mut *self.interner),
-                    ));
-                    let name = self.intern_ast_name(item.name());
+                    let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, ()));
+                    let name = Self::name_from_ast(item.name());
                     let name_range = item.name().map(|name| name.syntax().text_range());
                     let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                     Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
@@ -484,12 +411,12 @@ impl<'a> GeneratedSourceLowering<'a> {
         Ok(item_ids)
     }
 
-    fn intern_ast_name(&mut self, name: Option<ast::Name>) -> Option<Name> {
-        name.map(|name| self.interner.intern(name.text()))
+    fn name_from_ast(name: Option<ast::Name>) -> Option<Name> {
+        name.map(|name| Name::new(name.text()))
     }
 
-    fn intern_ast_name_ref(&mut self, name: Option<ast::NameRef>) -> Option<Name> {
-        name.map(|name| self.interner.intern(name.text()))
+    fn name_ref_from_ast(name: Option<ast::NameRef>) -> Option<Name> {
+        name.map(|name| Name::new(name.text()))
     }
 
     fn alloc_item(

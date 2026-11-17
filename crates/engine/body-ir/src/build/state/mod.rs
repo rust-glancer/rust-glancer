@@ -16,7 +16,6 @@ use rg_arena::Arena;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{BodyId, BodyRef, CrateRef};
 use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery, SemanticIrReadTxn};
-use rg_text::NameInterner;
 
 use super::lower::{BodyTaskSource, LoweredCrateBodies};
 use crate::{BodyFacts, BodyLocalItems, CrateBodies};
@@ -54,7 +53,6 @@ pub(super) struct CrateBodyBuildState<'crate_data> {
     body_slots: HashMap<BodyRef, BodyId>,
     body_facts: Arena<BodyId, BodyFacts>,
     body_local_items: Arena<BodyId, Option<BodyLocalItems>>,
-    interner: &'crate_data mut NameInterner,
     cancellation: rg_std::CancellationToken,
 }
 
@@ -63,7 +61,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         crate_ref: CrateRef,
         parse_package: &'crate_data rg_parse::Package,
         crate_bodies: LoweredCrateBodies,
-        interner: &'crate_data mut NameInterner,
         cancellation: rg_std::CancellationToken,
     ) -> Self {
         let mut body_refs = Arena::with_capacity(crate_bodies.bodies().len());
@@ -82,7 +79,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             body_slots,
             body_facts: Arena::new(),
             body_local_items: Arena::new(),
-            interner,
             cancellation,
         }
     }
@@ -93,7 +89,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         parse_package: &'crate_data rg_parse::Package,
         crate_bodies: LoweredCrateBodies,
         body_refs: Vec<BodyRef>,
-        interner: &'crate_data mut NameInterner,
         cancellation: rg_std::CancellationToken,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
@@ -124,7 +119,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             body_slots,
             body_facts: Arena::new(),
             body_local_items: Arena::new(),
-            interner,
             cancellation,
         })
     }

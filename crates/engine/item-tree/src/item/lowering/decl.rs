@@ -1,10 +1,9 @@
 use rg_ir_model::{CrateRef, Mutability, Span};
-use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasAttrs, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
 };
-use rg_text::{Name, NameInterner};
+use rg_text::Name;
 
 use super::{FromAst, MaybeFromAst, OuterDocs, normalized_syntax, type_bound_list_from_ast};
 use crate::item::{
@@ -15,23 +14,11 @@ use crate::item::{
     TypeParamData, TypeRef, UnionItem, UserFacingAttrs, VisibilityLevel, WherePredicate,
 };
 
-pub struct TraitItemContext<'a> {
-    pub items: Vec<ItemTreeId>,
-    pub line_index: &'a LineIndex,
-    pub interner: &'a mut NameInterner,
-}
-
-pub struct ImplItemContext<'a> {
-    pub items: Vec<ItemTreeId>,
-    pub line_index: &'a LineIndex,
-    pub interner: &'a mut NameInterner,
-}
-
 impl FromAst for GenericParams {
     type AstNode = dyn HasGenericParams;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         let mut params = Self::default();
 
         if let Some(param_list) = item.generic_param_list() {
@@ -41,11 +28,9 @@ impl FromAst for GenericParams {
                         params.push_const(ConstParamData {
                             name: param
                                 .name()
-                                .map(|name| interner.intern(name.text()))
-                                .unwrap_or_else(|| interner.intern_missing()),
-                            ty: param
-                                .ty()
-                                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+                                .map(|name| Name::new(name.text()))
+                                .unwrap_or_else(Name::missing),
+                            ty: param.ty().map(|ty| TypeRef::from_ast(&ty, ())),
                             default: param.default_val().map(|value| {
                                 ConstExpr::new(
                                     normalized_syntax(&value),
@@ -58,28 +43,19 @@ impl FromAst for GenericParams {
                         params.lifetimes.push(LifetimeParamData {
                             name: param
                                 .lifetime()
-                                .map(|lifetime| interner.intern(lifetime.text()))
-                                .unwrap_or_else(|| interner.intern_missing()),
-                            bounds: lifetime_bounds_from_ast(
-                                param.type_bound_list(),
-                                &mut *interner,
-                            ),
+                                .map(|lifetime| Name::new(lifetime.text()))
+                                .unwrap_or_else(Name::missing),
+                            bounds: lifetime_bounds_from_ast(param.type_bound_list()),
                         });
                     }
                     ast::GenericParam::TypeParam(param) => {
                         params.push_type(TypeParamData {
                             name: param
                                 .name()
-                                .map(|name| interner.intern(name.text()))
-                                .unwrap_or_else(|| interner.intern_missing()),
-                            bounds: type_bound_list_from_ast(
-                                param.type_bound_list(),
-                                line_index,
-                                &mut *interner,
-                            ),
-                            default: param
-                                .default_type()
-                                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+                                .map(|name| Name::new(name.text()))
+                                .unwrap_or_else(Name::missing),
+                            bounds: type_bound_list_from_ast(param.type_bound_list()),
+                            default: param.default_type().map(|ty| TypeRef::from_ast(&ty, ())),
                         });
                     }
                 }
@@ -89,7 +65,7 @@ impl FromAst for GenericParams {
         if let Some(where_clause) = item.where_clause() {
             params.where_predicates = where_clause
                 .predicates()
-                .map(|predicate| WherePredicate::from_ast(&predicate, (line_index, &mut *interner)))
+                .map(|predicate| WherePredicate::from_ast(&predicate, ()))
                 .collect();
         }
 
@@ -99,20 +75,20 @@ impl FromAst for GenericParams {
 
 impl FromAst for WherePredicate {
     type AstNode = ast::WherePred;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(predicate: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(predicate: &Self::AstNode, (): Self::Context<'_>) -> Self {
         if let Some(lifetime) = predicate.lifetime() {
             return Self::Lifetime {
-                lifetime: interner.intern(lifetime.text()),
-                bounds: lifetime_bounds_from_ast(predicate.type_bound_list(), interner),
+                lifetime: Name::new(lifetime.text()),
+                bounds: lifetime_bounds_from_ast(predicate.type_bound_list()),
             };
         }
 
         if let Some(ty) = predicate.ty() {
             return Self::Type {
-                ty: TypeRef::from_ast(&ty, (line_index, &mut *interner)),
-                bounds: type_bound_list_from_ast(predicate.type_bound_list(), line_index, interner),
+                ty: TypeRef::from_ast(&ty, ()),
+                bounds: type_bound_list_from_ast(predicate.type_bound_list()),
             };
         }
 
@@ -122,9 +98,9 @@ impl FromAst for WherePredicate {
 
 impl FromAst for FunctionItem {
     type AstNode = ast::Fn;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         // Proc macros are functions syntactically, but their exported name lives in the macro
         // namespace. Retain that identity here so DefMap does not need the original attribute AST.
         let mut proc_macro = None;
@@ -136,7 +112,7 @@ impl FromAst for FunctionItem {
                 Some("proc_macro") => {
                     if let Some(name) = item.name() {
                         proc_macro = Some(ProcMacroDefinition {
-                            name: interner.intern(name.text()),
+                            name: Name::new(name.text()),
                             kind: ProcMacroKind::FunctionLike,
                         });
                     }
@@ -144,7 +120,7 @@ impl FromAst for FunctionItem {
                 Some("proc_macro_attribute") => {
                     if let Some(name) = item.name() {
                         proc_macro = Some(ProcMacroDefinition {
-                            name: interner.intern(name.text()),
+                            name: Name::new(name.text()),
                             kind: ProcMacroKind::Attribute,
                         });
                     }
@@ -163,7 +139,7 @@ impl FromAst for FunctionItem {
                         continue;
                     };
                     proc_macro = Some(ProcMacroDefinition {
-                        name: interner.intern(name.text()),
+                        name: Name::new(name.text()),
                         kind: ProcMacroKind::Derive,
                     });
                 }
@@ -172,12 +148,12 @@ impl FromAst for FunctionItem {
         }
 
         Self {
-            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
-            params: param_list_from_ast(item.param_list(), line_index, &mut *interner),
+            generics: GenericParams::from_ast(item, ()),
+            params: param_list_from_ast(item.param_list()),
             ret_ty: item
                 .ret_type()
                 .and_then(|ret_ty| ret_ty.ty())
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+                .map(|ty| TypeRef::from_ast(&ty, ())),
             qualifiers: FunctionQualifiers {
                 is_async: item.async_token().is_some(),
                 is_const: item.const_token().is_some(),
@@ -207,30 +183,27 @@ impl FromAst for ExternBlockItem {
 
 impl FromAst for StructItem {
     type AstNode = ast::Struct;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner, Option<CrateRef>);
+    type Context<'a> = Option<CrateRef>;
 
-    fn from_ast(
-        item: &Self::AstNode,
-        (line_index, interner, dollar_crate): Self::Context<'_>,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, dollar_crate: Self::Context<'_>) -> Self {
         Self {
             derives: DeriveAttrs::from_struct(item, dollar_crate),
-            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
-            fields: FieldList::from_ast(&item.field_list(), (line_index, interner)),
+            generics: GenericParams::from_ast(item, ()),
+            fields: FieldList::from_ast(&item.field_list(), ()),
         }
     }
 }
 
 impl FromAst for UnionItem {
     type AstNode = ast::Union;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
+            generics: GenericParams::from_ast(item, ()),
             fields: item
                 .record_field_list()
-                .map(|fields| record_field_list_from_ast(&fields, line_index, &mut *interner))
+                .map(|fields| record_field_list_from_ast(&fields))
                 .unwrap_or_default(),
         }
     }
@@ -238,23 +211,18 @@ impl FromAst for UnionItem {
 
 impl FromAst for EnumItem {
     type AstNode = ast::Enum;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner, Option<CrateRef>);
+    type Context<'a> = Option<CrateRef>;
 
-    fn from_ast(
-        item: &Self::AstNode,
-        (line_index, interner, dollar_crate): Self::Context<'_>,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, dollar_crate: Self::Context<'_>) -> Self {
         Self {
             derives: DeriveAttrs::from_enum(item, dollar_crate),
-            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
+            generics: GenericParams::from_ast(item, ()),
             variants: item
                 .variant_list()
                 .map(|variant_list| {
                     variant_list
                         .variants()
-                        .map(|variant| {
-                            EnumVariantItem::from_ast(&variant, (line_index, &mut *interner))
-                        })
+                        .map(|variant| EnumVariantItem::from_ast(&variant, ()))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -264,9 +232,9 @@ impl FromAst for EnumItem {
 
 impl FromAst for EnumVariantItem {
     type AstNode = ast::Variant;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(variant: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(variant: &Self::AstNode, (): Self::Context<'_>) -> Self {
         let name = variant.name();
         let span = Span::from_text_range(variant.syntax().text_range());
         let name_span = name
@@ -276,28 +244,28 @@ impl FromAst for EnumVariantItem {
 
         Self {
             name: name
-                .map(|name| interner.intern(name.text()))
-                .unwrap_or_else(|| interner.intern_missing()),
+                .map(|name| Name::new(name.text()))
+                .unwrap_or_else(Name::missing),
             span,
             name_span,
             docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(variant, OuterDocs),
             user_facing_attrs: UserFacingAttrs::from_ast(variant),
-            fields: FieldList::from_ast(&variant.field_list(), (line_index, interner)),
+            fields: FieldList::from_ast(&variant.field_list(), ()),
         }
     }
 }
 
 impl FromAst for FieldList {
     type AstNode = Option<ast::FieldList>;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(field_list: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(field_list: &Self::AstNode, (): Self::Context<'_>) -> Self {
         match field_list {
             Some(ast::FieldList::RecordFieldList(fields)) => {
-                Self::Named(record_field_list_from_ast(fields, line_index, interner))
+                Self::Named(record_field_list_from_ast(fields))
             }
             Some(ast::FieldList::TupleFieldList(fields)) => {
-                Self::Tuple(tuple_field_list_from_ast(fields, line_index, interner))
+                Self::Tuple(tuple_field_list_from_ast(fields))
             }
             None => Self::Unit,
         }
@@ -306,17 +274,13 @@ impl FromAst for FieldList {
 
 impl FromAst for TraitItem {
     type AstNode = ast::Trait;
-    type Context<'a> = TraitItemContext<'a>;
+    type Context<'a> = Vec<ItemTreeId>;
 
-    fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, items: Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, (ctx.line_index, &mut *ctx.interner)),
-            super_traits: type_bound_list_from_ast(
-                item.type_bound_list(),
-                ctx.line_index,
-                ctx.interner,
-            ),
-            items: ctx.items,
+            generics: GenericParams::from_ast(item, ()),
+            super_traits: type_bound_list_from_ast(item.type_bound_list()),
+            items,
             is_unsafe: item.unsafe_token().is_some(),
             is_auto: item.auto_token().is_some(),
         }
@@ -325,16 +289,16 @@ impl FromAst for TraitItem {
 
 impl FromAst for ImplItem {
     type AstNode = ast::Impl;
-    type Context<'a> = ImplItemContext<'a>;
+    type Context<'a> = Vec<ItemTreeId>;
 
-    fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
-        let (trait_ref, self_ty) = impl_header_from_ast(item, ctx.line_index, &mut *ctx.interner);
+    fn from_ast(item: &Self::AstNode, items: Self::Context<'_>) -> Self {
+        let (trait_ref, self_ty) = impl_header_from_ast(item);
 
         Self {
-            generics: GenericParams::from_ast(item, (ctx.line_index, &mut *ctx.interner)),
+            generics: GenericParams::from_ast(item, ()),
             trait_ref,
             self_ty,
-            items: ctx.items,
+            items,
             is_unsafe: item.unsafe_token().is_some(),
             polarity: if item.excl_token().is_some() {
                 ImplPolarity::Negative
@@ -347,29 +311,25 @@ impl FromAst for ImplItem {
 
 impl FromAst for TypeAliasItem {
     type AstNode = ast::TypeAlias;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
-            bounds: type_bound_list_from_ast(item.type_bound_list(), line_index, &mut *interner),
-            aliased_ty: item
-                .ty()
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+            generics: GenericParams::from_ast(item, ()),
+            bounds: type_bound_list_from_ast(item.type_bound_list()),
+            aliased_ty: item.ty().map(|ty| TypeRef::from_ast(&ty, ())),
         }
     }
 }
 
 impl FromAst for ConstItem {
     type AstNode = ast::Const;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
-            ty: item
-                .ty()
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+            generics: GenericParams::from_ast(item, ()),
+            ty: item.ty().map(|ty| TypeRef::from_ast(&ty, ())),
             has_value: item.eq_token().is_some(),
             initializer_preview: item.body().and_then(initializer_preview),
         }
@@ -378,13 +338,11 @@ impl FromAst for ConstItem {
 
 impl FromAst for StaticItem {
     type AstNode = ast::Static;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         Self {
-            ty: item
-                .ty()
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, interner))),
+            ty: item.ty().map(|ty| TypeRef::from_ast(&ty, ())),
             mutability: Mutability::from_mut_token(item.mut_token().is_some()),
             initializer_preview: item.body().and_then(initializer_preview),
         }
@@ -403,11 +361,7 @@ fn initializer_preview(body: ast::Expr) -> Option<String> {
     (text.lines().count() <= MAX_LINES).then_some(text)
 }
 
-fn param_list_from_ast(
-    param_list: Option<ast::ParamList>,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> Vec<ParamItem> {
+fn param_list_from_ast(param_list: Option<ast::ParamList>) -> Vec<ParamItem> {
     let Some(param_list) = param_list else {
         return Vec::new();
     };
@@ -415,9 +369,7 @@ fn param_list_from_ast(
     let mut params = Vec::new();
 
     if let Some(self_param) = param_list.self_param() {
-        let ty = self_param
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)));
+        let ty = self_param.ty().map(|ty| TypeRef::from_ast(&ty, ()));
         let self_kind = if ty.is_some() {
             crate::item::SelfParamKind::Explicit
         } else if self_param.amp_token().is_some() {
@@ -442,9 +394,7 @@ fn param_list_from_ast(
                 .pat()
                 .map(|pat| normalized_syntax(&pat))
                 .unwrap_or_else(|| "<missing>".to_string()),
-            ty: param
-                .ty()
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+            ty: param.ty().map(|ty| TypeRef::from_ast(&ty, ())),
             kind: ParamKind::Normal,
         });
     }
@@ -452,11 +402,7 @@ fn param_list_from_ast(
     params
 }
 
-fn record_field_list_from_ast(
-    fields: &ast::RecordFieldList,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> Vec<FieldItem> {
+fn record_field_list_from_ast(fields: &ast::RecordFieldList) -> Vec<FieldItem> {
     fields
         .fields()
         .map(|field| {
@@ -467,11 +413,11 @@ fn record_field_list_from_ast(
                 .unwrap_or_else(|| field.syntax().text_range());
 
             FieldItem {
-                key: name.map(|name| FieldKey::Named(interner.intern(name.text()))),
+                key: name.map(|name| FieldKey::Named(Name::new(name.text()))),
                 visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
                 ty: field
                     .ty()
-                    .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+                    .map(|ty| TypeRef::from_ast(&ty, ()))
                     .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
                 span: Span::from_text_range(span),
                 docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&field, OuterDocs),
@@ -480,11 +426,7 @@ fn record_field_list_from_ast(
         .collect()
 }
 
-fn tuple_field_list_from_ast(
-    fields: &ast::TupleFieldList,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> Vec<FieldItem> {
+fn tuple_field_list_from_ast(fields: &ast::TupleFieldList) -> Vec<FieldItem> {
     fields
         .fields()
         .enumerate()
@@ -493,7 +435,7 @@ fn tuple_field_list_from_ast(
             visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
             ty: field
                 .ty()
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+                .map(|ty| TypeRef::from_ast(&ty, ()))
                 .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
             span: Span::from_text_range(field.syntax().text_range()),
             docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&field, OuterDocs),
@@ -501,11 +443,7 @@ fn tuple_field_list_from_ast(
         .collect()
 }
 
-fn impl_header_from_ast(
-    item: &ast::Impl,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> (Option<TypeRef>, TypeRef) {
+fn impl_header_from_ast(item: &ast::Impl) -> (Option<TypeRef>, TypeRef) {
     // `rg_syntax` exposes impl headers as child type nodes. The presence of `for` decides whether
     // the first type is a trait path or the inherent self type.
     let types = item
@@ -515,14 +453,11 @@ fn impl_header_from_ast(
         .collect::<Vec<_>>();
 
     if item.for_token().is_some() {
-        let trait_ref = types
-            .first()
-            .cloned()
-            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)));
+        let trait_ref = types.first().cloned().map(|ty| TypeRef::from_ast(&ty, ()));
         let self_ty = types
             .get(1)
             .cloned()
-            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+            .map(|ty| TypeRef::from_ast(&ty, ()))
             .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
         return (trait_ref, self_ty);
     }
@@ -530,22 +465,15 @@ fn impl_header_from_ast(
     let self_ty = types
         .first()
         .cloned()
-        .map(|ty| TypeRef::from_ast(&ty, (line_index, interner)))
+        .map(|ty| TypeRef::from_ast(&ty, ()))
         .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
     (None, self_ty)
 }
 
-fn lifetime_bounds_from_ast(
-    bound_list: Option<ast::TypeBoundList>,
-    interner: &mut NameInterner,
-) -> Vec<Name> {
+fn lifetime_bounds_from_ast(bound_list: Option<ast::TypeBoundList>) -> Vec<Name> {
     bound_list
         .into_iter()
         .flat_map(|bound_list| bound_list.bounds())
-        .filter_map(|bound| {
-            bound
-                .lifetime()
-                .map(|lifetime| interner.intern(lifetime.text()))
-        })
+        .filter_map(|bound| bound.lifetime().map(|lifetime| Name::new(lifetime.text())))
         .collect()
 }

@@ -4,10 +4,8 @@ use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, Span};
-use rg_parse::LineIndex;
 use rg_std::CancellationToken;
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
-use rg_text::NameInterner;
 
 use super::{
     CurrentDeclarationBuilder, CurrentRootItems,
@@ -23,8 +21,6 @@ pub(super) struct BodyLowering<'a> {
     fallback_module: ModuleRef,
     body_source: BodySource,
     pub(super) cfg: CfgEvaluator<'a>,
-    pub(super) line_index: &'a LineIndex,
-    pub(super) interner: &'a mut NameInterner,
     pub(super) builder: BodyBuilder,
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
     generated_context: Option<GeneratedBodyMacroContext>,
@@ -32,15 +28,12 @@ pub(super) struct BodyLowering<'a> {
 }
 
 impl<'a> BodyLowering<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,
         fallback_module: ModuleRef,
         body_source: BodySource,
         cfg: CfgEvaluator<'a>,
-        line_index: &'a LineIndex,
-        interner: &'a mut NameInterner,
         macro_expansion: &'a mut dyn BodyMacroExpansionContext,
         cancellation: &'a CancellationToken,
     ) -> Self {
@@ -50,8 +43,6 @@ impl<'a> BodyLowering<'a> {
             fallback_module,
             body_source,
             cfg,
-            line_index,
-            interner,
             builder: BodyBuilder::default(),
             macro_expansion,
             generated_context: None,
@@ -67,9 +58,7 @@ impl<'a> BodyLowering<'a> {
     ) -> anyhow::Result<()> {
         let declaration = CurrentDeclarationBuilder {
             file: self.body_source.file_id,
-            line_index: self.line_index,
             cfg: self.cfg,
-            interner: self.interner,
             items: &mut self.builder.source_items,
             cancellation: self.cancellation,
         }

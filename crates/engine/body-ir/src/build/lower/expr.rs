@@ -10,6 +10,7 @@ use rg_syntax::{
     },
     utils::normalized_syntax_text,
 };
+use rg_text::Name;
 
 use super::body::BodyLowering;
 use crate::body::{
@@ -530,8 +531,8 @@ impl BodyLowering<'_> {
         let name_ref = method_call.name_ref();
         let method_name = name_ref
             .clone()
-            .map(|name| self.intern_ast_name_ref(name))
-            .unwrap_or_else(|| self.interner.intern_missing());
+            .map(|name| Name::new(name.text()))
+            .unwrap_or_else(Name::missing);
         let method_name_span = name_ref
             .as_ref()
             .map(|name| self.source(name.syntax()).span);
@@ -581,7 +582,7 @@ impl BodyLowering<'_> {
             let field_key = name
                 .as_tuple_field()
                 .map(FieldKey::Tuple)
-                .unwrap_or_else(|| FieldKey::Named(self.intern_ast_name_ref(name.clone())));
+                .unwrap_or_else(|| FieldKey::Named(Name::new(name.text())));
             (Some(field_key), Some(self.source(name.syntax()).span))
         } else {
             (None, None)
@@ -640,7 +641,7 @@ impl BodyLowering<'_> {
     ) -> Option<RecordExprField> {
         let field_name = field.field_name()?;
         let key_span = self.source(field_name.syntax()).span;
-        let key = FieldKey::Named(self.intern_ast_name_ref(field_name));
+        let key = FieldKey::Named(Name::new(field_name.text()));
         let source_span = self.source(field.syntax()).span;
         let syntax = Self::record_expr_field_syntax(&field);
         let value = field.expr().map(|expr| self.lower_expr(expr, scope));

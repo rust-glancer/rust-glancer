@@ -12,7 +12,6 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodyId, FileId, ModuleRef, Span};
 use rg_parse::CurrentSource;
 use rg_syntax::{AstNode as _, SyntaxKind, ast};
-use rg_text::NameInterner;
 
 use super::{
     CurrentRootItems, LoweredCrateBodies, body::BodyLowering,
@@ -73,7 +72,6 @@ pub(crate) struct BodyTaskLowering<'a> {
     source: BodyTaskSource<'a>,
     crate_bodies: &'a mut LoweredCrateBodies,
     cfg: CfgEvaluator<'a>,
-    interner: &'a mut NameInterner,
     cancellation: &'a rg_std::CancellationToken,
 }
 
@@ -82,14 +80,12 @@ impl<'a> BodyTaskLowering<'a> {
         source: BodyTaskSource<'a>,
         crate_bodies: &'a mut LoweredCrateBodies,
         cfg: CfgEvaluator<'a>,
-        interner: &'a mut NameInterner,
         cancellation: &'a rg_std::CancellationToken,
     ) -> Self {
         Self {
             source,
             crate_bodies,
             cfg,
-            interner,
             cancellation,
         }
     }
@@ -137,7 +133,6 @@ impl<'a> BodyTaskLowering<'a> {
                 tasks,
                 lowered,
                 macro_expansion,
-                source.line_index(),
                 &syntax,
             );
         }
@@ -149,30 +144,18 @@ impl<'a> BodyTaskLowering<'a> {
             .with_context(|| {
                 format!("while attempting to fetch parsed source file {:?}", file_id)
             })?;
-        let line_index = parsed_file
-            .line_index()
-            .with_context(|| format!("while attempting to load line index for {file_id:?}"))?;
         let syntax = parsed_file.parse_syntax().with_context(|| {
             format!("while attempting to parse syntax for body lowering in {file_id:?}")
         })?;
-        self.lower_file_tasks_from_syntax(
-            file_id,
-            tasks,
-            lowered,
-            macro_expansion,
-            line_index,
-            &syntax.tree(),
-        )
+        self.lower_file_tasks_from_syntax(file_id, tasks, lowered, macro_expansion, &syntax.tree())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn lower_file_tasks_from_syntax(
         &mut self,
         file_id: FileId,
         tasks: &[BodyLoweringTask],
         lowered: &mut Vec<LoweredBodyTask>,
         macro_expansion: &mut dyn BodyMacroExpansionContext,
-        line_index: &rg_parse::LineIndex,
         syntax: &rg_syntax::SourceFile,
     ) -> anyhow::Result<()> {
         // Tasks are span-based so both top-level Semantic IR items and body-local items can use
@@ -227,8 +210,6 @@ impl<'a> BodyTaskLowering<'a> {
                         task.fallback_module,
                         source,
                         self.cfg,
-                        line_index,
-                        self.interner,
                         &mut *macro_expansion,
                         self.cancellation,
                     )
@@ -255,8 +236,6 @@ impl<'a> BodyTaskLowering<'a> {
                         task.fallback_module,
                         source,
                         self.cfg,
-                        line_index,
-                        self.interner,
                         &mut *macro_expansion,
                         self.cancellation,
                     )
@@ -283,8 +262,6 @@ impl<'a> BodyTaskLowering<'a> {
                         task.fallback_module,
                         source,
                         self.cfg,
-                        line_index,
-                        self.interner,
                         &mut *macro_expansion,
                         self.cancellation,
                     )

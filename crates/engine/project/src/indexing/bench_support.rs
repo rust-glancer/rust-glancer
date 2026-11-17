@@ -12,19 +12,15 @@ use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
-use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::macro_source_files;
 use crate::{memory::NoopProjectMemoryHooks, selection::PhasePackageSet};
 
 /// Builds ItemTree for every parsed benchmark package through the selected-package lowerer.
-pub fn build_item_tree(
-    parse: &mut ParseDb,
-    names: &mut PackageNameInterners,
-) -> anyhow::Result<ItemTreeDb> {
+pub fn build_item_tree(parse: &mut ParseDb) -> anyhow::Result<ItemTreeDb> {
     let packages = (0..parse.package_count()).collect::<Vec<_>>();
-    ItemTreeDb::build_packages(parse, &packages, names)
+    ItemTreeDb::build_packages(parse, &packages)
         .context("while attempting to build benchmark ItemTree packages")
 }
 
@@ -33,7 +29,6 @@ pub fn build_def_map(
     workspace: &WorkspaceMetadata,
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
-    names: &mut PackageNameInterners,
 ) -> anyhow::Result<DefMapBuildOutput> {
     let source_packages =
         PhasePackageSet::from_packages((0..parse.package_count()).map(PackageSlot).collect());
@@ -53,7 +48,6 @@ pub fn build_def_map(
             item_tree,
             source_packages.as_slice(),
             true,
-            names,
             &mut macro_source_files::MacroSourceFileLoader::new(
                 &source_packages,
                 &NoopProjectMemoryHooks,
@@ -91,7 +85,6 @@ pub fn build_body_ir(
     parse: &ParseDb,
     def_map: &DefMapDb,
     semantic_ir: &SemanticIrDb,
-    names: &mut PackageNameInterners,
 ) -> anyhow::Result<BodyIrDb> {
     let package_count = parse.package_count();
     let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
@@ -109,7 +102,6 @@ pub fn build_body_ir(
         semantic_ir,
         &packages,
         true,
-        names,
         DefMapLoader::resident_only("all-source benchmark DefMap"),
         SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),
         &subset,

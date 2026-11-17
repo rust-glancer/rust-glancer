@@ -26,7 +26,6 @@ use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, PackageSlot, StaticRef};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
-use rg_text::{NameInterner, PackageNameInterners};
 
 use self::crate_lowering::CrateLowering;
 pub(super) use self::{
@@ -82,17 +81,14 @@ impl LoweredCrateBodies {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_selected_packages(
     parse: &ParseDb,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     scope: BodyIrMaterialization<'_>,
     package_slots: &[PackageSlot],
-    interners: &mut PackageNameInterners,
     cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
-    validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
     validate_selected_crates(parse.package_count(), &scope)?;
 
@@ -108,7 +104,6 @@ pub(super) fn build_selected_packages(
         def_map,
         semantic_ir,
         scope,
-        interners,
         &selected,
         &mut packages,
         cancellation,
@@ -121,13 +116,11 @@ pub(super) fn build_selected_packages(
         .collect())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_package_outputs(
     parse: &ParseDb,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     scope: BodyIrMaterialization<'_>,
-    interners: &mut PackageNameInterners,
     selected: &[bool],
     packages: &mut [Option<LoweredPackageBodies>],
     cancellation: &rg_std::CancellationToken,
@@ -141,30 +134,28 @@ fn build_package_outputs(
 
     let thread_pool = local_thread_pool("rg-body-lower")?;
 
-    // Body lowering is package-local: each worker receives one parse package, one name interner,
-    // and one output slot. Non-selected rebuild slots stay absent from this temporary output.
+    // Each worker reads one parse package and owns its output slot. Non-selected rebuild
+    // slots stay absent from this temporary output.
     thread_pool.install(|| {
         parse
             .packages()
             .par_iter()
-            .zip(interners.packages_mut().par_iter_mut())
             .zip(selected.par_iter())
             .zip(packages.par_iter_mut())
             .enumerate()
             .try_for_each(
-                |(package_idx, (((parse_package, interner), selected), output))| -> anyhow::Result<()> {
+                |(package_idx, ((parse_package, selected), output))| -> anyhow::Result<()> {
                     if !*selected {
                         return Ok(());
                     }
 
                     let package = PackageSlot(package_idx);
-                    *output = Some(build_package_with_interner(
+                    *output = Some(build_package(
                         parse_package,
                         def_map,
                         semantic_ir,
                         scope,
                         package,
-                        interner,
                         cancellation,
                     )?);
                     Ok(())
@@ -173,13 +164,12 @@ fn build_package_outputs(
     })
 }
 
-fn build_package_with_interner(
+fn build_package(
     parse_package: &rg_parse::Package,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     scope: BodyIrMaterialization<'_>,
     package: PackageSlot,
-    interner: &mut NameInterner,
     cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<LoweredPackageBodies> {
     let span = tracing::debug_span!(
@@ -280,7 +270,6 @@ fn build_package_with_interner(
             statics,
             crate_bodies: LoweredCrateBodies::with_coverage(coverage),
             cfg,
-            interner,
             cancellation,
         }
         .lower()
@@ -310,27 +299,6 @@ fn build_package_with_interner(
     }
 
     Ok(crates)
-}
-
-fn validate_package_inputs(
-    parse: &ParseDb,
-    package_count: usize,
-    interners: &PackageNameInterners,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        parse.package_count() == package_count,
-        "parse package count {} does not match body IR package count {}",
-        parse.package_count(),
-        package_count,
-    );
-    anyhow::ensure!(
-        interners.package_count() == package_count,
-        "name interner count {} does not match body IR package count {}",
-        interners.package_count(),
-        package_count,
-    );
-
-    Ok(())
 }
 
 fn validate_selected_packages(

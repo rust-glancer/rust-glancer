@@ -17,7 +17,6 @@ use rg_parse::{CurrentSource, DeclarationAssociationIndex, enclosing_inline_modu
 use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast};
-use rg_text::NameInterner;
 
 use self::body::CurrentBodyBuilder;
 pub use self::types::{
@@ -246,12 +245,9 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             Self::allocate_body(&mut next_body_id, self.saved_bodies, crate_ref)
                                 .context("allocate current impl identity")?;
                         let mut items = BodySourceItems::default();
-                        let mut interner = NameInterner::new();
                         let root = CurrentDeclarationBuilder {
                             file,
-                            line_index: self.source.line_index(),
                             cfg,
-                            interner: &mut interner,
                             items: &mut items,
                             cancellation: &self.cancellation,
                         }

@@ -3,9 +3,9 @@
 use rg_ir_model::{ExprId, Mutability, ScopeId, Span, StmtId};
 use rg_item_tree::{
     Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst as _, FunctionItem,
-    ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroCallItem,
-    MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, SelfParamKind, StaticItem,
-    StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    ImplItem, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroCallItem, MacroUseAttr, MaybeFromAst,
+    ModuleItem, ModuleSource, OuterDocs, SelfParamKind, StaticItem, StructItem, TraitItem,
+    TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 use rg_syntax::{
     AstNode as _,
@@ -69,7 +69,7 @@ impl BodyLowering<'_> {
                 .or(Some(source.span)),
             scope,
             kind: BindingKind::SelfParam(self_kind),
-            name: Some(self.interner.intern("self")),
+            name: Some(Name::new("self")),
             annotation: annotation.clone(),
         });
 
@@ -402,10 +402,7 @@ impl BodyLowering<'_> {
             ast::Item::Const(_) => self.lower_source_declaration(item),
             ast::Item::Enum(item) => {
                 let dollar_crate = self.dollar_crate();
-                let kind = ItemKind::Enum(EnumItem::from_ast(
-                    item,
-                    (self.line_index, &mut *self.interner, dollar_crate),
-                ));
+                let kind = ItemKind::Enum(EnumItem::from_ast(item, dollar_crate));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
@@ -426,8 +423,7 @@ impl BodyLowering<'_> {
             }
             ast::Item::ExternCrate(item) => {
                 let (name, name_span) = self.source_name_ref(item.name_ref());
-                let kind =
-                    ItemKind::ExternCrate(ExternCrateItem::from_ast(item, &mut *self.interner));
+                let kind = ItemKind::ExternCrate(ExternCrateItem::from_ast(item, ()));
                 Some(Self::source_item_node(
                     kind,
                     name,
@@ -440,14 +436,7 @@ impl BodyLowering<'_> {
             ast::Item::Fn(_) => self.lower_source_declaration(item),
             ast::Item::Impl(item) => {
                 let items = self.lower_source_assoc_items(item.assoc_item_list());
-                let kind = ItemKind::Impl(ImplItem::from_ast(
-                    item,
-                    ImplItemContext {
-                        items,
-                        line_index: self.line_index,
-                        interner: &mut *self.interner,
-                    },
-                ));
+                let kind = ItemKind::Impl(ImplItem::from_ast(item, items));
                 Some(self.named_source_item_node(
                     kind,
                     None,
@@ -469,10 +458,7 @@ impl BodyLowering<'_> {
             ast::Item::Static(_) => self.lower_source_declaration(item),
             ast::Item::Struct(item) => {
                 let dollar_crate = self.dollar_crate();
-                let kind = ItemKind::Struct(StructItem::from_ast(
-                    item,
-                    (self.line_index, &mut *self.interner, dollar_crate),
-                ));
+                let kind = ItemKind::Struct(StructItem::from_ast(item, dollar_crate));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
@@ -483,14 +469,7 @@ impl BodyLowering<'_> {
             }
             ast::Item::Trait(item) => {
                 let items = self.lower_source_assoc_items(item.assoc_item_list());
-                let kind = ItemKind::Trait(TraitItem::from_ast(
-                    item,
-                    TraitItemContext {
-                        items,
-                        line_index: self.line_index,
-                        interner: &mut *self.interner,
-                    },
-                ));
+                let kind = ItemKind::Trait(TraitItem::from_ast(item, items));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
@@ -501,10 +480,7 @@ impl BodyLowering<'_> {
             }
             ast::Item::TypeAlias(_) => self.lower_source_declaration(item),
             ast::Item::Union(item) => {
-                let kind = ItemKind::Union(UnionItem::from_ast(
-                    item,
-                    (self.line_index, &mut *self.interner),
-                ));
+                let kind = ItemKind::Union(UnionItem::from_ast(item, ()));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
@@ -514,7 +490,7 @@ impl BodyLowering<'_> {
                 ))
             }
             ast::Item::Use(item) => {
-                let kind = ItemKind::Use(UseItem::from_ast(item, &mut *self.interner));
+                let kind = ItemKind::Use(UseItem::from_ast(item, ()));
                 Some(self.named_source_item_node(
                     kind,
                     None,
@@ -545,10 +521,7 @@ impl BodyLowering<'_> {
                 let source = self.source(item.syntax());
                 let node = match item {
                     ast::ExternItem::Fn(item) => {
-                        let kind = ItemKind::Function(FunctionItem::from_ast(
-                            &item,
-                            (self.line_index, &mut *self.interner),
-                        ));
+                        let kind = ItemKind::Function(FunctionItem::from_ast(&item, ()));
                         self.named_source_item_node(
                             kind,
                             item.name(),
@@ -560,10 +533,7 @@ impl BodyLowering<'_> {
                         )
                     }
                     ast::ExternItem::Static(item) => {
-                        let kind = ItemKind::Static(StaticItem::from_ast(
-                            &item,
-                            (self.line_index, &mut *self.interner),
-                        ));
+                        let kind = ItemKind::Static(StaticItem::from_ast(&item, ()));
                         self.named_source_item_node(
                             kind,
                             item.name(),
@@ -575,10 +545,7 @@ impl BodyLowering<'_> {
                         )
                     }
                     ast::ExternItem::TypeAlias(item) => {
-                        let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                            &item,
-                            (self.line_index, &mut *self.interner),
-                        ));
+                        let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, ()));
                         self.named_source_item_node(
                             kind,
                             item.name(),
@@ -597,7 +564,7 @@ impl BodyLowering<'_> {
                             .path()
                             .and_then(|path| path.segment())
                             .and_then(|segment| segment.name_ref())
-                            .map(|name_ref| self.interner.intern(name_ref.text()));
+                            .map(|name_ref| Name::new(name_ref.text()));
                         Self::source_item_node(
                             ItemKind::MacroCall(MacroCallItem {
                                 path,
@@ -634,7 +601,7 @@ impl BodyLowering<'_> {
 
         ModuleItem {
             inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
-            macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+            macro_use: MacroUseAttr::maybe_from_ast(item, ()),
             path_override: rg_parse::module_path_override(item),
             source,
         }
@@ -687,7 +654,7 @@ impl BodyLowering<'_> {
         let source = self.source(item.syntax());
         let name_span =
             LocalItemLowering::name_syntax(item).map(|name| self.source(name.syntax()).span);
-        LocalItemLowering::declaration(item, self.line_index, self.interner, source, name_span)
+        LocalItemLowering::declaration(item, source, name_span)
     }
 
     pub(super) fn named_source_item_node(
@@ -727,7 +694,7 @@ impl BodyLowering<'_> {
         };
 
         let span = self.source(name.syntax()).span;
-        (Some(self.intern_ast_name(name)), Some(span))
+        (Some(Name::new(name.text())), Some(span))
     }
 
     fn source_name_ref(&mut self, name_ref: Option<ast::NameRef>) -> (Option<Name>, Option<Span>) {
@@ -736,6 +703,6 @@ impl BodyLowering<'_> {
         };
 
         let span = self.source(name_ref.syntax()).span;
-        (Some(self.intern_ast_name_ref(name_ref)), Some(span))
+        (Some(Name::new(name_ref.text())), Some(span))
     }
 }

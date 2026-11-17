@@ -4,7 +4,6 @@ use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::PackageStoreError;
 use rg_parse::ParseDb;
-use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
 
@@ -138,13 +137,9 @@ impl RebuildFixture {
     fn build(fixture: &str, clean_package: &str) -> Self {
         let fixture = fixture_crate(fixture);
         let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
-        let (mut parse, mut item_tree, mut names) = Self::build_item_tree(&workspace);
-        let output = crate::testonly::build_source_closed_def_map(
-            &workspace,
-            &mut parse,
-            &mut item_tree,
-            &mut names,
-        );
+        let (mut parse, mut item_tree) = Self::build_item_tree(&workspace);
+        let output =
+            crate::testonly::build_source_closed_def_map(&workspace, &mut parse, &mut item_tree);
         let (mut old, _) = output.into_parts();
         let clean_package = package_slot(&parse, clean_package);
         let clean_payload = Arc::new(
@@ -167,7 +162,7 @@ impl RebuildFixture {
     fn rebuild_package_after_edit(&self, edit: &str, package_name: &str) -> RebuiltDefMaps {
         self.fixture.write_fixture_files(edit);
 
-        let (mut parse, mut item_tree, mut names) = Self::build_item_tree(&self.workspace);
+        let (mut parse, mut item_tree) = Self::build_item_tree(&self.workspace);
         let package = package_slot(&parse, package_name);
         let old_read = self.old.read_txn(DefMapLoader::new(ExpectedPackageLoader {
             package: self.clean_package,
@@ -183,7 +178,6 @@ impl RebuildFixture {
                 &mut item_tree,
                 &packages,
                 true,
-                &mut names,
                 &mut crate::testonly::SourceClosedMacroSourceFileLoader,
             )
             .expect("fixture DefMap package should rebuild")
@@ -193,16 +187,13 @@ impl RebuildFixture {
         RebuiltDefMaps { parse, def_map }
     }
 
-    fn build_item_tree(
-        workspace: &WorkspaceMetadata,
-    ) -> (ParseDb, ItemTreeDb, PackageNameInterners) {
+    fn build_item_tree(workspace: &WorkspaceMetadata) -> (ParseDb, ItemTreeDb) {
         let mut parse = ParseDb::build(workspace).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
         let packages = (0..parse.package_count()).collect::<Vec<_>>();
-        let item_tree = ItemTreeDb::build_packages(&mut parse, &packages, &mut names)
+        let item_tree = ItemTreeDb::build_packages(&mut parse, &packages)
             .expect("fixture item-tree db should build");
 
-        (parse, item_tree, names)
+        (parse, item_tree)
     }
 }
 

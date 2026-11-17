@@ -32,9 +32,7 @@ use rg_ir_model::{
     identity::{ExprRef, LexicalScopeRef},
 };
 use rg_item_tree::{FromAst as _, TypePath, TypeRef};
-use rg_parse::LineIndex;
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
-use rg_text::NameInterner;
 
 use super::{
     occurrence::IndexedSignatureTypeScope,
@@ -721,9 +719,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
             return None;
         };
         let path = path_type.path()?;
-        let line_index = LineIndex::new(&source);
-        let mut interner = NameInterner::new();
-        let path = TypePath::from_ast(&path, (&line_index, &mut interner));
+        let path = TypePath::from_ast(&path, ());
         let module_qualifier = path.as_def_map_path();
         Some((
             module_qualifier,

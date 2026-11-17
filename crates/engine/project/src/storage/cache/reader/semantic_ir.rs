@@ -40,10 +40,7 @@ impl PackageArtifactReader {
         let bytes =
             self.read_nested_range("semantic_ir.items", self.inner.layout.semantic_ir, range)?;
         let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| {
-                PackageCacheCodec::decode_semantic_ir_items(&bytes, manifest, crate_id)
-            })
+        let decoded = PackageCacheCodec::decode_semantic_ir_items(&bytes, manifest, crate_id)
             .map_err(|error| self.decode_error(error));
         metric::CACHE_SECTION_DECODE.record("semantic_ir.items", started.elapsed());
         decoded
@@ -62,11 +59,9 @@ impl PackageArtifactReader {
             range,
         )?;
         let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| {
-                PackageCacheCodec::decode_semantic_ir_lookup_index(&bytes, manifest, crate_id)
-            })
-            .map_err(|error| self.decode_error(error));
+        let decoded =
+            PackageCacheCodec::decode_semantic_ir_lookup_index(&bytes, manifest, crate_id)
+                .map_err(|error| self.decode_error(error));
         metric::CACHE_SECTION_DECODE.record("semantic_ir.lookup_index", started.elapsed());
         decoded
     }

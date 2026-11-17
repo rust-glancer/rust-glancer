@@ -13,7 +13,7 @@ use std::{collections::HashMap, mem};
 use anyhow::Context as _;
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, PackageSlot};
 use rg_parse::Package;
-use rg_text::{Name, PackageNameInterners};
+use rg_text::Name;
 use rg_workspace::{SysrootCrate, WorkspaceMetadata};
 
 type CrateImplicitRoots = HashMap<Name, ModuleRef>;
@@ -37,9 +37,8 @@ impl CrateBuildPlan {
         workspace: &WorkspaceMetadata,
         packages: &[Package],
         selected: &[PackageSlot],
-        interners: &mut PackageNameInterners,
     ) -> anyhow::Result<Self> {
-        let mut roots = Self::implicit_roots(workspace, packages, interners)?;
+        let mut roots = Self::implicit_roots(workspace, packages)?;
         let mut visits = roots
             .iter()
             .map(|roots| vec![Visit::Pending; roots.len()])
@@ -115,7 +114,6 @@ impl CrateBuildPlan {
     fn implicit_roots(
         workspace: &WorkspaceMetadata,
         packages: &[Package],
-        interners: &mut PackageNameInterners,
     ) -> anyhow::Result<Vec<PackageCrateImplicitRoots>> {
         let lib_targets = packages
             .iter()
@@ -145,10 +143,7 @@ impl CrateBuildPlan {
             .map(|(crate_ref, _)| *crate_ref);
         let mut roots = Vec::with_capacity(packages.len());
 
-        for (package_slot, package) in packages.iter().enumerate() {
-            let interner = interners.package_mut(package_slot).with_context(|| {
-                format!("while attempting to fetch name interner for package {package_slot}")
-            })?;
+        for package in packages {
             let mut package_roots = Vec::with_capacity(package.targets().len());
             let workspace_package = workspace.package(package.id()).with_context(|| {
                 format!(
@@ -172,7 +167,7 @@ impl CrateBuildPlan {
                         .name
                         .clone();
                     crate_roots.insert(
-                        interner.intern(lib_name),
+                        Name::new(lib_name),
                         ModuleRef {
                             origin: DefMapRef::Crate(lib_crate),
                             module: ModuleId(0),
@@ -187,7 +182,7 @@ impl CrateBuildPlan {
                     && let Some(proc_macro_root) = proc_macro_root
                 {
                     crate_roots.insert(
-                        interner.intern(SysrootCrate::ProcMacro.name()),
+                        Name::new(SysrootCrate::ProcMacro.name()),
                         ModuleRef {
                             origin: DefMapRef::Crate(proc_macro_root),
                             module: ModuleId(0),
@@ -205,7 +200,7 @@ impl CrateBuildPlan {
                     };
 
                     crate_roots.insert(
-                        interner.intern(dependency.name()),
+                        Name::new(dependency.name()),
                         ModuleRef {
                             origin: DefMapRef::Crate(lib_crate),
                             module: ModuleId(0),

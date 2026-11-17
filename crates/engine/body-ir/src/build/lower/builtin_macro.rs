@@ -5,6 +5,7 @@ use rg_syntax::{
     AstNode as _, TextRange,
     ast::{self, AstToken as _, FormatStringPartKind, HasName as _},
 };
+use rg_text::Name;
 
 use super::body::BodyLowering;
 use crate::body::{BodyPath, BodySource, ExprKind};
@@ -27,7 +28,7 @@ impl BodyLowering<'_> {
         let named = syntax
             .args()
             .filter_map(|arg| arg.name())
-            .map(|name| self.interner.intern(name.text()))
+            .map(|name| Name::new(name.text()))
             .collect::<Vec<_>>();
         let mut args = Vec::new();
         for arg in syntax
@@ -73,7 +74,7 @@ impl BodyLowering<'_> {
     ) -> ExprId {
         let span = self.source_span(range);
         source.span = span;
-        let name = self.interner.intern(name);
+        let name = Name::new(name);
         let path = BodyPath::unqualified_name(name, span);
         // Treat `{user}` like a `user` expression here. Normal name lookup then finds
         // the right local, and hover and navigation can use the same path.

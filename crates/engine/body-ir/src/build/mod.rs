@@ -22,7 +22,6 @@ use rg_package_store::PackageSubset;
 use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_std::{Shrink, UniqueVec};
-use rg_text::PackageNameInterners;
 
 use self::materialization::BodyIrMaterializationPlan;
 pub use self::{
@@ -44,13 +43,12 @@ use crate::CrateBodies;
 ///
 /// `evaluate_initializers` returns saved declaration values even for targets excluded by body policy. The
 /// caller installs these in Semantic IR separately from the body products.
-pub struct BodyIrBuilder<'db, 'names> {
+pub struct BodyIrBuilder<'db> {
     parse: &'db ParseDb,
     def_map: &'db DefMapDb,
     semantic_ir: &'db SemanticIrDb,
     materialization: Option<BodyIrMaterializationPlan>,
     packages: &'db [PackageSlot],
-    interners: &'names mut PackageNameInterners,
     def_map_loader: DefMapLoader<'db>,
     semantic_ir_loader: SemanticIrLoader<'db>,
     subset: &'db PackageSubset,
@@ -58,13 +56,13 @@ pub struct BodyIrBuilder<'db, 'names> {
     reallocate_payloads: bool,
 }
 
-impl rg_std::Cancelable for BodyIrBuilder<'_, '_> {
+impl rg_std::Cancelable for BodyIrBuilder<'_> {
     fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
         rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
     }
 }
 
-impl<'db, 'names> BodyIrBuilder<'db, 'names> {
+impl<'db> BodyIrBuilder<'db> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         parse: &'db ParseDb,
@@ -72,7 +70,6 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
         semantic_ir: &'db SemanticIrDb,
         packages: &'db [PackageSlot],
         reallocate_payloads: bool,
-        interners: &'names mut PackageNameInterners,
         def_map_loader: DefMapLoader<'db>,
         semantic_ir_loader: SemanticIrLoader<'db>,
         subset: &'db PackageSubset,
@@ -84,7 +81,6 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
             materialization: None,
             packages,
             reallocate_payloads,
-            interners,
             def_map_loader,
             semantic_ir_loader,
             subset,
@@ -133,13 +129,11 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
             &semantic_ir,
             materialization,
             &packages,
-            self.interners,
             &self.cancellation,
         )?;
         let mut products = resolve::resolve_selected_packages(
             lowered,
             self.parse,
-            self.interners,
             &def_map,
             &semantic_ir,
             &self.cancellation,

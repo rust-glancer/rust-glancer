@@ -7,7 +7,6 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::{
     ItemStore, ItemStoreSource, SemanticIrDb, SemanticIrLoader, testonly::SemanticIrFixture,
 };
-use rg_text::PackageNameInterners;
 
 use crate::{BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb, BodyView, PackageBodiesCoverage};
 
@@ -48,7 +47,6 @@ impl BodyIrFixture {
         let package_count = semantic_ir.parse_db().package_count();
         let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
         let subset = PackageSubset::all(package_count);
-        let mut names = PackageNameInterners::new(package_count);
         let mut body_ir = BodyIrDb::from_package_store(PackageStore::from_entries(
             (0..package_count)
                 .map(|_| {
@@ -63,7 +61,6 @@ impl BodyIrFixture {
             semantic_ir.semantic_ir_db(),
             &packages,
             true,
-            &mut names,
             DefMapLoader::resident_only("fixture DefMap"),
             SemanticIrLoader::resident_only("fixture Semantic IR"),
             &subset,
@@ -82,7 +79,6 @@ impl BodyIrFixture {
             semantic_ir.semantic_ir_db(),
             &packages,
             true,
-            &mut names,
             DefMapLoader::resident_only("fixture DefMap"),
             SemanticIrLoader::resident_only("fixture Semantic IR"),
             &subset,

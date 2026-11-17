@@ -11,7 +11,6 @@ use rg_ir_model::{CrateRef, FileId, ModuleId, Span};
 use rg_item_tree::{ItemTreeRef, Package as ItemTreePackage};
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
-use rg_text::NameInterner;
 
 use super::{
     ItemOrder, MacroCallOrigin, MacroCallPlacement, generated_tree::GeneratedSourceLowering,
@@ -49,7 +48,6 @@ impl GeneratedOrigin {
     pub(super) fn collect_syntax(
         self,
         state: &mut CrateBuilder,
-        interner: &mut NameInterner,
         package: &ItemTreePackage,
         resolutions: &MacroSourceFileResolutions,
         expansion: ExpansionSyntax,
@@ -72,7 +70,6 @@ impl GeneratedOrigin {
             state.crate_ref.package,
             &self,
             expansion,
-            interner,
             state.edition,
         )
         .context("lower macro expansion declarations")?;

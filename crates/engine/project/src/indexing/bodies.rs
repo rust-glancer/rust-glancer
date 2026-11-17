@@ -5,7 +5,6 @@ use rg_body_ir::{BodyIrBuilder, CrateBodiesCoverage, PackageBodiesCoverage};
 use rg_ir_model::CrateRef;
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
-use rg_text::PackageNameInterners;
 
 use crate::{
     Project,
@@ -46,14 +45,12 @@ impl Project {
         let packages = PhasePackageSet::from_crates(crates.as_slice());
         let subset = packages.visible_dependency_subset(&state.workspace);
         let loaders = PackageReadLoaders::new(state);
-        let mut names = PackageNameInterners::new(state.parse.package_count());
         let products = BodyIrBuilder::new(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
             packages.as_slice(),
             !state.package_residency_policy.is_offloadable(),
-            &mut names,
             loaders.def_map,
             loaders.semantic_ir,
             &subset,

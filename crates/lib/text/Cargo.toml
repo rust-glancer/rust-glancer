@@ -9,8 +9,13 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
+string_cache.workspace = true
 wincode.workspace = true
 rg_std.workspace = true
+
+[[test]]
+name = "reclamation"
+path = "tests/reclamation/mod.rs"
 
 [lints]
 workspace = true

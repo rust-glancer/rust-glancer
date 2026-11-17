@@ -1,17 +1,17 @@
 //! Reading one immutable package artifact revision.
 //!
 //! Opening the artifact reads only its fixed directory and probe. Later phase loaders share the
-//! same file handle, parsed directory, and package-local name interner. The phase modules add their
+//! same file handle and parsed directory. The phase modules add their
 //! nested directories; [`open`] binds a filesystem path to this reader; [`error`] translates
 //! storage failures into the package-store boundary.
 //!
 //! After opening, an ordinary phase read has three steps:
 //!
 //! 1. Use the phase directory to select one validated nested byte range.
-//! 2. Decode those bytes while reusing the package-local `NameInterner`.
+//! 2. Decode those bytes; names share their storage automatically.
 //! 3. Validate the decoded phase against the already-decoded probe.
 //!
-//! The file and interner use mutexes because DefMap, Semantic IR, and Body IR loaders may share
+//! The file cursor uses a mutex because DefMap, Semantic IR, and Body IR loaders may share
 //! cloned reader handles. Holding one open file handle also pins the request to one artifact
 //! revision even if an atomic cache update later replaces the path.
 
@@ -30,7 +30,6 @@ use std::{
 };
 
 use rg_package_store::MalformedCacheError;
-use rg_text::NameInterner;
 
 pub(crate) use self::error::PackageCacheReadError;
 use super::{
@@ -44,7 +43,7 @@ use crate::profile::metric;
 
 /// One open package artifact revision shared by phase loaders in a read transaction.
 ///
-/// Clones share the file handle, parsed layout, lazy phase indexes, probe, and name interner. They do
+/// Clones share the file handle, parsed layout, lazy phase indexes, and probe. They do
 /// not reopen the path and do not retain decoded DefMap or Semantic IR values after returning them;
 /// those values are owned by the phase-specific read transaction.
 #[derive(Debug, Clone)]
@@ -233,26 +232,6 @@ impl PackageArtifactReader {
         Ok(bytes)
     }
 
-    /// Decode one independent section using the names accumulated by earlier sections.
-    ///
-    /// Wincode sections are framed independently, but their decoded engine values should reuse one
-    /// package-local name table. Temporarily installing this interner gives each decoder the same
-    /// context and then stores the expanded table back for the next section.
-    fn decode_with_names<T>(
-        &self,
-        decode: impl FnOnce() -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let mut names = self
-            .inner
-            .names
-            .lock()
-            .expect("package decode name interner mutex should not be poisoned");
-        let interner = std::mem::take(&mut *names);
-        let (interner, decoded) = rg_text::with_decode_name_interner(interner, decode);
-        *names = interner;
-        decoded
-    }
-
     /// Attach the artifact path and preserve the decoder's complete context chain.
     fn decode_error(&self, error: anyhow::Error) -> PackageCacheReadError {
         PackageCacheReadError::Malformed {
@@ -290,6 +269,4 @@ struct PackageArtifactReaderInner {
     semantic_ir_index: OnceLock<PackageSemanticIrCacheIndex>,
     /// Nested Body IR directory, decoded only when a Body IR query needs it.
     body_index: OnceLock<PackageBodyCacheIndex>,
-    /// Package-local names shared by all independently decoded sections in this request.
-    names: Mutex<NameInterner>,
 }

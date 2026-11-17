@@ -3,7 +3,7 @@ use rg_syntax::{
     AstNode as _, SyntaxKind, algo,
     ast::{self, HasName},
 };
-use rg_text::NameInterner;
+use rg_text::Name;
 
 use super::{FromAst, MaybeFromAst as _};
 use crate::item::{
@@ -13,43 +13,36 @@ use crate::item::{
 
 impl FromAst for ExternCrateItem {
     type AstNode = ast::ExternCrate;
-    type Context<'a> = &'a mut NameInterner;
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, interner: Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         Self {
-            name: item
-                .name_ref()
-                .map(|name_ref| interner.intern(name_ref.text())),
-            alias: import_alias_from_rename(item.rename(), interner),
-            macro_use: MacroUseAttr::maybe_from_ast(item, interner),
+            name: item.name_ref().map(|name_ref| Name::new(name_ref.text())),
+            alias: import_alias_from_rename(item.rename()),
+            macro_use: MacroUseAttr::maybe_from_ast(item, ()),
         }
     }
 }
 
 impl FromAst for UseItem {
     type AstNode = ast::Use;
-    type Context<'a> = &'a mut NameInterner;
+    type Context<'a> = ();
 
-    fn from_ast(item: &Self::AstNode, interner: Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
         let mut imports = Vec::new();
 
         if let Some(use_tree) = item.use_tree() {
-            lower_use_tree(&mut imports, &UsePath::empty(), use_tree, interner);
+            lower_use_tree(&mut imports, &UsePath::empty(), use_tree);
         }
 
         Self { imports }
     }
 }
 
-fn lower_use_tree(
-    imports: &mut Vec<UseImport>,
-    prefix: &UsePath,
-    use_tree: ast::UseTree,
-    interner: &mut NameInterner,
-) {
+fn lower_use_tree(imports: &mut Vec<UseImport>, prefix: &UsePath, use_tree: ast::UseTree) {
     let path = match use_tree.path() {
         Some(path) => {
-            let Some(path) = use_path_from_ast(&path, &use_tree, interner) else {
+            let Some(path) = use_path_from_ast(&path, &use_tree) else {
                 return;
             };
             prefix.joined(&path)
@@ -59,7 +52,7 @@ fn lower_use_tree(
 
     if let Some(use_tree_list) = use_tree.use_tree_list() {
         for child_use_tree in use_tree_list.use_trees() {
-            lower_use_tree(imports, &path, child_use_tree, interner);
+            lower_use_tree(imports, &path, child_use_tree);
         }
         return;
     }
@@ -75,14 +68,11 @@ fn lower_use_tree(
     imports.push(UseImport {
         kind,
         path,
-        alias: import_alias_from_rename(use_tree.rename(), interner),
+        alias: import_alias_from_rename(use_tree.rename()),
     });
 }
 
-fn import_alias_from_rename(
-    rename: Option<ast::Rename>,
-    interner: &mut NameInterner,
-) -> ImportAlias {
+fn import_alias_from_rename(rename: Option<ast::Rename>) -> ImportAlias {
     let Some(rename) = rename else {
         return ImportAlias::Inferred;
     };
@@ -95,16 +85,12 @@ fn import_alias_from_rename(
         .name()
         .map(|name| ImportAlias::Explicit {
             span: Span::from_text_range(name.syntax().text_range()),
-            name: interner.intern(name.text()),
+            name: Name::new(name.text()),
         })
         .unwrap_or(ImportAlias::Inferred)
 }
 
-fn use_path_from_ast(
-    path: &ast::Path,
-    use_tree: &ast::UseTree,
-    interner: &mut NameInterner,
-) -> Option<UsePath> {
+fn use_path_from_ast(path: &ast::Path, use_tree: &ast::UseTree) -> Option<UsePath> {
     let mut segments = Vec::new();
 
     for segment in path.segments() {
@@ -126,7 +112,7 @@ fn use_path_from_ast(
         };
         let lowered_segment = match kind {
             ast::PathSegmentKind::Name(name_ref) => UsePathSegment {
-                kind: UsePathSegmentKind::Name(interner.intern(name_ref.text())),
+                kind: UsePathSegmentKind::Name(Name::new(name_ref.text())),
                 span: Span::from_text_range(name_ref.syntax().text_range()),
             },
             ast::PathSegmentKind::SelfKw => UsePathSegment {

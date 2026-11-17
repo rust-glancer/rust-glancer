@@ -109,7 +109,6 @@ pub(crate) fn build_state(
         body_ir_policy,
         package_residency_policy,
         memory_hooks,
-        names: phases.names,
         parse: Arc::new(phases.parse),
         macro_expansion_limit_summary: phases.macro_expansion_limit_summary,
         def_map: phases.def_map,

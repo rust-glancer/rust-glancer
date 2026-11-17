@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use rg_ir_model::PackageSlot;
-use rg_std::{MemorySize, Shrink};
+use rg_std::MemorySize;
 
 use super::artifacts::{PackageArtifactPhases, PackageArtifactWriter};
 use crate::{
@@ -224,14 +224,9 @@ impl<'a> ResidencyApplication<'a> {
             .context("while attempting to commit package cache artifact update")
     }
 
-    /// Drop unused names and line indexes after package payloads have been offloaded.
+    /// Drop line indexes after package payloads have been offloaded.
     fn finish_offloading(&mut self, offloaded_packages: &PhasePackageSet) {
         if !offloaded_packages.is_empty() {
-            // Offloading drops many strong `Name` handles from phase payloads. Prune the interner
-            // immediately so dead weak entries and their Arc control blocks are not carried into
-            // the project reallocation before going idle.
-            Shrink::shrink_to_fit(&mut self.project.names);
-
             // File ids and paths remain resident as the source inventory. Line indexes are larger
             // and can be reconstructed from saved source text when a query needs LSP coordinates.
             let offloaded_package_indices = offloaded_packages.package_indices();

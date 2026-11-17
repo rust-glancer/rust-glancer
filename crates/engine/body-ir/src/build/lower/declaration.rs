@@ -6,15 +6,14 @@
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{FileId, Span};
 use rg_item_tree::{
-    Documentation, FromAst as _, ImplItem, ImplItemContext, ItemKind, ItemNode, ItemTreeId,
-    MaybeFromAst, OuterDocs, TraitItem, TraitItemContext, VisibilityLevel,
+    Documentation, FromAst as _, ImplItem, ItemKind, ItemNode, ItemTreeId, MaybeFromAst, OuterDocs,
+    TraitItem, VisibilityLevel,
 };
-use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _, HasVisibility as _},
 };
-use rg_text::NameInterner;
+use rg_text::Name;
 
 use crate::{BodySource, BodySourceItems, build::local_items::LocalItemLowering};
 
@@ -37,9 +36,7 @@ pub(crate) enum CurrentRootItems {
 /// member signatures, without copying their expression bodies.
 pub(crate) struct CurrentDeclarationBuilder<'a> {
     pub(crate) file: FileId,
-    pub(crate) line_index: &'a LineIndex,
     pub(crate) cfg: CfgEvaluator<'a>,
-    pub(crate) interner: &'a mut NameInterner,
     pub(crate) items: &'a mut BodySourceItems,
     pub(crate) cancellation: &'a rg_std::CancellationToken,
 }
@@ -80,19 +77,12 @@ impl CurrentDeclarationBuilder<'_> {
             return Ok(None);
         };
         if let Some(trait_) = owner.and_then(ast::Trait::cast) {
-            let kind = ItemKind::Trait(TraitItem::from_ast(
-                &trait_,
-                TraitItemContext {
-                    items: vec![member],
-                    line_index: self.line_index,
-                    interner: &mut *self.interner,
-                },
-            ));
+            let kind = ItemKind::Trait(TraitItem::from_ast(&trait_, vec![member]));
             let name = trait_.name();
             let name_span = name
                 .as_ref()
                 .map(|name| Span::from_text_range(name.syntax().text_range()));
-            let name = name.map(|name| self.interner.intern(name.text()));
+            let name = name.map(|name| Name::new(name.text()));
             let source = self.source(trait_.syntax());
             let node = ItemNode::source(
                 kind,
@@ -148,14 +138,7 @@ impl CurrentDeclarationBuilder<'_> {
         }
         // TODO: Relate this temporary impl to the saved impl it shadows. Removed or renamed
         // members can still arrive from saved lookup; current same-name members take precedence.
-        let kind = ItemKind::Impl(ImplItem::from_ast(
-            impl_,
-            ImplItemContext {
-                items: members,
-                line_index: self.line_index,
-                interner: &mut *self.interner,
-            },
-        ));
+        let kind = ItemKind::Impl(ImplItem::from_ast(impl_, members));
         let source = self.source(impl_.syntax());
         let node = ItemNode::source(
             kind,
@@ -173,13 +156,7 @@ impl CurrentDeclarationBuilder<'_> {
         let source = self.source(item.syntax());
         let name_span =
             LocalItemLowering::name_syntax(item).map(|name| self.source(name.syntax()).span);
-        let node = LocalItemLowering::declaration(
-            item,
-            self.line_index,
-            self.interner,
-            source,
-            name_span,
-        )?;
+        let node = LocalItemLowering::declaration(item, source, name_span)?;
         Some(self.items.alloc(node, source))
     }
 
