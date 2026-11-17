@@ -1,8 +1,8 @@
 use expect_test::expect;
 
 use super::utils::{
-    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
-    check_analysis_with_fake_sysroot,
+    AnalysisQuery, ReferenceQuery, check_analysis_queries,
+    check_analysis_queries_with_fake_sysroot, check_analysis_with_fake_sysroot,
 };
 
 const FIXTURE: &str = r#"
@@ -44,6 +44,54 @@ impl Second { pub fn run(&self) -> u32 { 2 } }
 macro_rules! both { ($member:ident) => { (First.$member(), Second.$member()) }; }
 pub fn repeated_meanings() { let _ = both!($ambiguous$run); }
 "#;
+
+#[test]
+fn cfg_select_macro_arguments_keep_original_locations() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:cfg_select_locations
+macro_rules! make { ($name:ident) => { pub struct $name; }; }
+macro_rules! forward { ($name:ident) => { make!($name); }; }
+macro_rules! template { () => { pub struct Template; }; }
+cfg_select! {
+    true => {
+        make!(Copied);
+        cfg_select! {
+            true => { forward!(Nested); }
+        }
+        template!();
+    }
+}
+pub fn demo(_: Co$copied$pied, _: Ne$nested$sted, _: Temp$template$late) {}
+"#,
+        &[
+            AnalysisQuery::goto("copied name", "copied").in_lib("cfg_select_locations"),
+            AnalysisQuery::references("copied name references", "copied", ReferenceQuery::all())
+                .in_lib("cfg_select_locations"),
+            AnalysisQuery::goto("nested arm and expansion", "nested")
+                .in_lib("cfg_select_locations"),
+            AnalysisQuery::references("nested name references", "nested", ReferenceQuery::all())
+                .in_lib("cfg_select_locations"),
+            AnalysisQuery::goto("template name fallback", "template")
+                .in_lib("cfg_select_locations"),
+        ],
+        expect![[r#"
+            struct Copied @ 6:15-6:21 // copied name
+
+            // copied name references
+            `Copied` @ cfg_select_locations/src/lib.rs:6:15-6:21
+            `Copied` @ cfg_select_locations/src/lib.rs:13:16-13:22
+
+            struct Nested @ 8:32-8:38 // nested arm and expansion
+
+            // nested name references
+            `Nested` @ cfg_select_locations/src/lib.rs:8:32-8:38
+            `Nested` @ cfg_select_locations/src/lib.rs:13:27-13:33
+
+            struct Template @ 10:9-10:21 // template name fallback
+        "#]],
+    );
+}
 
 #[test]
 fn macro_argument_hover_uses_expansion_provenance() {

@@ -12,7 +12,10 @@ use rg_ir_model::{
     TypeDefRef,
 };
 use rg_semantic_ir::{BodyOwnerData, ItemStoreQuery};
-use rg_syntax::SyntaxKind;
+use rg_syntax::{
+    SyntaxKind,
+    ast::{self, AstToken as _, FormatStringPartKind},
+};
 
 use crate::IndexedViewDb;
 
@@ -80,7 +83,12 @@ impl ReferenceSourceSelection {
         // Keep generated owners even when the text lacks a label. `include!` also prevents this
         // shortcut: the included file may contain references absent from the invocation's text.
         let text = parsed.source_text()?;
-        if !labels.iter().any(|label| text.contains(label.as_str())) && !text.contains("include") {
+        // A capture such as `caf\u{e9}` need not contain its decoded name in the file text.
+        // Escapes require the syntax pass below before we can rule out its references.
+        if !labels.iter().any(|label| text.contains(label.as_str()))
+            && !text.contains("include")
+            && !text.contains('\\')
+        {
             return Ok(owners
                 .clone()
                 .filter(|owner| owner.source.as_item_tree().is_none())
@@ -90,8 +98,8 @@ impl ReferenceSourceSelection {
         let syntax = db.saved_syntax(krate, file)?;
         let mut tokens: HashMap<String, Vec<Span>> = HashMap::new();
         let mut macro_arguments: HashMap<String, Vec<Span>> = HashMap::new();
-        // Token equality ignores comments and strings while retaining identifiers inside macro
-        // arguments. Their eventual expansion may use the argument in several semantic roles.
+        // Token equality ignores comments and ordinary string text while retaining identifiers
+        // inside macro arguments. Their expansion may use the argument in several semantic roles.
         // Also record `impl`, `mod`, and `include`: they can introduce a new scope or more source,
         // so finding them below may prevent us from ruling out an owner by its enclosing scope.
         for token in syntax
@@ -100,6 +108,24 @@ impl ReferenceSourceSelection {
             .filter_map(|element| element.into_token())
         {
             rg_std::check_cancel!(db, "reference source selection");
+            // A literal may become a format template after macro expansion. Recognize names with
+            // the same parser as body lowering, including raw strings, escapes, width and precision.
+            // This can keep extra owners; semantic scanning decides whether they are actual captures.
+            if let Some(string) = ast::String::cast(token.clone()) {
+                string.format_parts(|part| {
+                    let FormatStringPartKind::Name(name) = part.kind else {
+                        return;
+                    };
+                    if labels.iter().any(|label| label.as_str() == name) {
+                        let span = Span::from_text_range(part.range + token.text_range().start());
+                        tokens.entry(name.to_owned()).or_default().push(span);
+                        macro_arguments
+                            .entry(name.to_owned())
+                            .or_default()
+                            .push(span);
+                    }
+                });
+            }
             let text = token.text();
             // Raw identifiers such as `r#type` must match the label `type` too.
             let text = text.strip_prefix("r#").unwrap_or(text);

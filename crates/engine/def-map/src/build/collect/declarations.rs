@@ -19,17 +19,15 @@ use rg_item_tree::{
     ItemTreeId, ItemTreeRef, ItemTrees, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
     ModuleItem, ModuleSource, UseImport, UseItem, VisibilityLevel,
 };
-use rg_parse::{ModuleFileContext, syntax_edition};
+use rg_parse::ModuleFileContext;
 use rg_text::Name;
-use rg_tt::{TokenOwner, syntax_bridge::SpanFactory};
 use rg_workspace::TargetKind;
 
 use crate::{
-    GeneratedItemRef, GeneratedLocations, GeneratedSourceId, ImportBinding, ImportData, ImportKind,
-    ImportPath, ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData,
-    MacroDefinitionData, MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation,
-    ModuleFileSelection, ModuleOrigin, NameBinding, NameBindingProvenance, Namespace, NamespaceSet,
-    Visibility,
+    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
+    ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
+    MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
+    NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
         crates::CrateBuilder,
@@ -387,29 +385,8 @@ impl<'a> DeclarationCollector<'a> {
         placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) {
-        let call_site = match source.kind {
-            ItemSourceKind::ItemTree(_) => SpanFactory::new(
-                u32::try_from(self.state.crate_ref.package.0).expect("package fits token origin"),
-                item.file_id.as_raw(),
-                TokenOwner::Declaration(item.location.owner),
-                syntax_edition(self.state.edition),
-            )
-            .span_for(item.location.local),
-            ItemSourceKind::Generated(generated) => {
-                let data = self
-                    .state
-                    .def_map_builder
-                    .generated_source(generated.source)
-                    .expect("generated call source exists");
-                let GeneratedLocations::Expansion(locations) = &data.locations else {
-                    unreachable!("synthetic derives contain no macro calls");
-                };
-                locations
-                    .get(item.location)
-                    .expect("generated call occurrence exists")
-                    .origin
-            }
-            _ => unreachable!("crate macro calls have declaration sources"),
+        let Some(input) = &call.input else {
+            return;
         };
         let (source, dollar_crate) = match source.kind {
             ItemSourceKind::Generated(generated) => (
@@ -429,11 +406,11 @@ impl<'a> DeclarationCollector<'a> {
                 source,
                 path: call.path.clone(),
                 callee: call.callee.clone(),
-                args: call.args.clone(),
+                args: input.args.clone(),
                 builtin: call.builtin.clone(),
                 dollar_crate,
                 file_id: item.file_id,
-                call_site,
+                call_site: input.call_site,
                 order,
                 placement,
                 module_file_context: context,

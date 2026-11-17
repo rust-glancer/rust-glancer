@@ -458,7 +458,7 @@ impl BodyLowering<'_> {
                             .and_then(|path| path.segment())
                             .and_then(|segment| segment.name_ref())
                             .map(|name| Name::new(name.text())),
-                        args: None,
+                        input: None,
                         builtin: None,
                     })
                 }

@@ -20,7 +20,7 @@ use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 pub use rg_ir_view::SymbolKind;
 use rg_ir_view::{
     IndexedViewDb,
-    source::{IndexedModuleFileBase, IndexedSourceSurface},
+    source::{IndexedModuleFileBase, IndexedSourceProvenance},
     ty::IndexedType,
 };
 use rg_parse::{
@@ -414,12 +414,19 @@ impl<'a> Analysis<'a> {
         else {
             return symbols;
         };
-        if !matches!(selected.surface(), IndexedSourceSurface::MacroArgument) {
+        if !matches!(
+            selected.provenance(),
+            IndexedSourceProvenance::MacroArgument { .. }
+        ) {
             return vec![symbols.swap_remove(selected_index)];
         }
         let span = selected.span();
         symbols.retain(|symbol| {
-            symbol.span() == span && matches!(symbol.surface(), IndexedSourceSurface::MacroArgument)
+            symbol.span() == span
+                && matches!(
+                    symbol.provenance(),
+                    IndexedSourceProvenance::MacroArgument { .. }
+                )
         });
         symbols
     }

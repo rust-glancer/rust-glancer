@@ -30,8 +30,8 @@ use crate::{IndexedViewDb, source::ReferenceSourceSelection};
 
 /// Scans one crate for every written body-local source candidate used by whole-project queries.
 ///
-/// Generated expansion internals are deliberately skipped. Their written macro invocation is
-/// emitted instead, so project-wide references point at source the user can edit.
+/// Format captures retain their exact written name ranges even though their path expressions are
+/// lowered during expansion. Other generated expressions are represented by the written macro call.
 pub(crate) struct BodySourceScanner<'txn, 'db> {
     db: &'txn IndexedViewDb<'db>,
     crate_ref: CrateRef,
@@ -321,10 +321,16 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         let record_shorthand_values = BodyScanSites::new(body).record_expr_shorthand_value_ids();
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
             rg_std::check_cancel!(self.db, "body occurrence candidates");
-            if !expr.source.is_written_in_selected_file(self.file_id) {
+            let expr_id = ExprId(expr_idx);
+            if self.file_id.is_some_and(|file| expr.source.file_id != file)
+                || !expr.source.is_written()
+                    && !body
+                        .source_map()
+                        .is_format_capture(expr_id, expr.source.span)
+            {
                 continue;
             }
-            if record_shorthand_values.contains(&ExprId(expr_idx)) {
+            if record_shorthand_values.contains(&expr_id) {
                 continue;
             }
 
@@ -351,7 +357,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
             candidates.push(BodySourceCandidate::Expr {
                 body: body_ref,
-                expr: ExprId(expr_idx),
+                expr: expr_id,
                 span,
             });
         }

@@ -3,6 +3,7 @@ mod current_source;
 mod declaration_locations;
 mod demand_driven;
 mod file_queries;
+mod format_captures;
 mod generated_modules;
 mod utils;
 

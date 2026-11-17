@@ -186,6 +186,9 @@ impl<'a> GeneratedSourceLowering<'a> {
                     &item,
                     MacroCallContext {
                         builtin: None,
+                        // A generated call can mix template and input tokens. Its navigation
+                        // fallback remains the written invocation that produced this expansion.
+                        call_site: self.fallback_span,
                         span_for_range: &mut span_for_range,
                     },
                 ));

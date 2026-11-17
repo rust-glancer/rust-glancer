@@ -287,7 +287,11 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 }
             }
             ItemKind::MacroCall(macro_call) => {
-                if let Some(args) = &macro_call.args {
+                if let Some(args) = macro_call
+                    .input
+                    .as_ref()
+                    .and_then(|input| input.args.as_ref())
+                {
                     writeln!(dump, "{indent}  - args {args}")
                         .expect("string writes should not fail");
                 }

@@ -27,7 +27,7 @@ use rg_ir_view::{
         name::{GenericScopeNameKind, NameLookupView, NameNamespace, ValueOrTypeNamespace},
         resolution::ResolutionView,
     },
-    source::{IndexedQualifiedPathScope, IndexedSourceSurface},
+    source::{IndexedQualifiedPathScope, IndexedSourceProvenance, IndexedSourceSurface},
     ty::locals::{BodyLexicalName, BodyNameScope, BodyView},
 };
 use rg_syntax::{AstNode as _, ast};
@@ -227,6 +227,7 @@ impl<'analysis, 'db, 'source> QualifiedPathCodeActionProvider<'analysis, 'db, 's
             return Ok(None);
         };
         if symbol.role() != SourceSymbolRole::Reference
+            || symbol.provenance() != IndexedSourceProvenance::Direct
             || symbol.surface() != &IndexedSourceSurface::Plain
             || !symbol.span().touches(leaf_span.start)
         {

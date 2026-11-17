@@ -226,6 +226,12 @@ impl FileLowering<'_> {
                 ))
             }
             ast::Item::MacroCall(item) => {
+                let call_site = self.tt_span_for_range(
+                    builder,
+                    item.syntax().text_range(),
+                    macro_edition,
+                    source,
+                );
                 let mut span_for_range =
                     |range| self.tt_span_for_range(builder, range, macro_edition, source);
                 Some(builder.alloc_documented_item(
@@ -233,6 +239,7 @@ impl FileLowering<'_> {
                         &item,
                         MacroCallContext {
                             builtin: None,
+                            call_site,
                             span_for_range: &mut span_for_range,
                         },
                     )),
@@ -402,7 +409,7 @@ impl FileLowering<'_> {
         let ItemKind::MacroCall(call) = &builder.items[id].kind else {
             return None;
         };
-        let select = CfgSelect::parse(call.args.as_ref()?)?;
+        let select = CfgSelect::parse(call.input.as_ref()?.args.as_ref()?)?;
         let arms = select
             .arms()
             .iter()

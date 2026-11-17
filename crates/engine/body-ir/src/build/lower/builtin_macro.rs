@@ -2,7 +2,7 @@
 
 use rg_ir_model::{BuiltinMacroExprKind, ExprId, ScopeId};
 use rg_syntax::{
-    AstNode as _, TextRange,
+    AstNode as _,
     ast::{self, AstToken as _, FormatStringPartKind, HasName as _},
 };
 use rg_text::Name;
@@ -57,25 +57,25 @@ impl BodyLowering<'_> {
             };
             // In `format!("{user}", user = expr)`, `user` refers to `expr`, not a local.
             // That argument is already in `args`; only implicit captures need another path.
-            if !named.iter().any(|explicit| explicit.as_str() == name) {
-                let range = part.range + string.syntax().text_range().start();
-                args.push(self.lower_format_capture(name, range, source, scope));
+            if named.iter().any(|explicit| explicit.as_str() == name) {
+                return;
+            }
+            let range = part.range + string.syntax().text_range().start();
+            let written_span = self.written_source_span(range);
+            let mut source = source;
+            source.span = written_span.unwrap_or(source.span);
+            let expr = self.lower_format_capture(name, source, scope);
+            args.push(expr);
+            if let Some(span) = written_span {
+                self.builder.source_map.record_format_capture(expr, span);
             }
         });
         args
     }
 
-    fn lower_format_capture(
-        &mut self,
-        name: &str,
-        range: TextRange,
-        mut source: BodySource,
-        scope: ScopeId,
-    ) -> ExprId {
-        let span = self.source_span(range);
-        source.span = span;
+    fn lower_format_capture(&mut self, name: &str, source: BodySource, scope: ScopeId) -> ExprId {
         let name = Name::new(name);
-        let path = BodyPath::unqualified_name(name, span);
+        let path = BodyPath::unqualified_name(name, source.span);
         // Treat `{user}` like a `user` expression here. Normal name lookup then finds
         // the right local, and hover and navigation can use the same path.
         // TODO: Require width and precision captures to have type `usize` during inference.

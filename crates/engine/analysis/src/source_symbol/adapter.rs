@@ -2,7 +2,9 @@
 
 use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
 pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
-use rg_ir_view::source::{IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface};
+use rg_ir_view::source::{
+    IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceProvenance, IndexedSourceSurface,
+};
 
 use crate::model::SymbolAt;
 
@@ -15,6 +17,7 @@ pub(crate) struct SourceSymbol {
     span: Span,
     role: SourceSymbolRole,
     surface: IndexedSourceSurface,
+    provenance: IndexedSourceProvenance,
 }
 
 impl SourceSymbol {
@@ -46,6 +49,10 @@ impl SourceSymbol {
         &self.surface
     }
 
+    pub(crate) fn provenance(&self) -> IndexedSourceProvenance {
+        self.provenance
+    }
+
     /// Keep saved semantic identity, but report the token range proven in current source.
     pub(crate) fn for_associated_header(mut self, current_span: Span) -> Option<Self> {
         match &mut self.symbol {
@@ -73,11 +80,12 @@ impl SourceSymbol {
             span,
             role: SourceSymbolRole::Declaration,
             surface: IndexedSourceSurface::Plain,
+            provenance: IndexedSourceProvenance::Direct,
         }
     }
 
     pub(super) fn from_occurrence(occurrence: IndexedSourceOccurrence) -> Self {
-        let (fact, crate_ref, file_id, span, role, surface) = occurrence.into_parts();
+        let (fact, crate_ref, file_id, span, role, surface, provenance) = occurrence.into_parts();
         let symbol = match fact {
             IndexedSourceFact::Declaration(declaration) => {
                 SymbolAt::Declaration { declaration, span }
@@ -103,6 +111,7 @@ impl SourceSymbol {
             span,
             role,
             surface,
+            provenance,
         }
     }
 }
