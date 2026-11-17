@@ -34,7 +34,7 @@ impl LookupKeys {
                     shard
                         .inherent_impls_by_type
                         .keys()
-                        .chain(shard.inherent_function_owners_by_type_and_name.keys())
+                        .chain(shard.inherent_item_owners_by_type_and_name.keys())
                         .chain(shard.trait_impls_by_type.keys())
                         .copied()
                 })
@@ -53,7 +53,7 @@ impl LookupKeys {
                 .iter()
                 .flat_map(|shard| {
                     shard
-                        .structural_function_owners_by_name
+                        .structural_item_owners_by_name
                         .keys()
                         .chain(shard.traits_by_item_name.keys())
                         .cloned()

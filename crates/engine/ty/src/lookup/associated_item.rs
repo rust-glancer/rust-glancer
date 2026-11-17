@@ -2,6 +2,8 @@
 //!
 //! A caller that has not selected the final path segment asks the permissive question: "what can
 //! follow `Widget::`?"
+//! A complete path such as `Widget::new` carries its name into the same lookup, selecting
+//! candidate owners before proving impls and opening their member stores.
 //!
 //! ```text
 //! trait Parent {
@@ -37,7 +39,7 @@ use rg_ir_model::{
     AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ItemStoreRef, TraitApplicability,
     TraitDefRef, TypeAliasRef, TypeDefId,
 };
-use rg_semantic_ir::SemanticItemSource;
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 
 use crate::{
@@ -117,12 +119,16 @@ where
     pub fn candidates_for_ty(
         &self,
         receiver_ty: &Ty,
+        filter: AssociatedItemFilter<'_>,
     ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
-        let traits = self.context.item_lookup().traits_with_associated_items()?;
+        let traits = self
+            .context
+            .item_lookup()
+            .traits_with_associated_items(filter)?;
         let matches = self
             .impls
-            .matches_for_receiver_with_traits(receiver_ty, traits)?;
-        self.candidates_for_matches(receiver_ty, &matches)
+            .matches_for_receiver_with_traits(receiver_ty, traits, filter)?;
+        self.candidates_for_matches(receiver_ty, &matches, filter)
     }
 
     /// Expand already-matched impls into stable associated-item declarations.
@@ -133,6 +139,7 @@ where
         &self,
         receiver_ty: &Ty,
         matches: &ReceiverImplMatches,
+        filter: AssociatedItemFilter<'_>,
     ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let mut candidates = Vec::new();
 
@@ -140,7 +147,7 @@ where
             if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
-            self.push_enum_variants(&mut candidates, nominal_ty)?;
+            self.push_enum_variants(&mut candidates, nominal_ty, filter)?;
         }
 
         for impl_match in matches.inherent() {
@@ -151,6 +158,7 @@ where
                 &mut candidates,
                 impl_match.impl_ref().member_store(),
                 impl_match.applicability(),
+                filter,
             )?;
         }
 
@@ -162,6 +170,7 @@ where
                 &mut candidates,
                 selection.trait_impl.trait_ref,
                 selection.applicability,
+                filter,
                 &mut Vec::new(),
             )?;
         }
@@ -194,6 +203,7 @@ where
         &self,
         applications: impl IntoIterator<Item = TraitApplication>,
         applicability: TraitApplicability,
+        filter: AssociatedItemFilter<'_>,
     ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let mut candidates = Vec::new();
         for application in applications {
@@ -204,6 +214,7 @@ where
                 &mut candidates,
                 application.def,
                 applicability,
+                filter,
                 &mut Vec::new(),
             )?;
         }
@@ -215,6 +226,7 @@ where
         &self,
         candidates: &mut Vec<AssociatedItemCandidateRef>,
         receiver_ty: &AdtTy,
+        filter: AssociatedItemFilter<'_>,
     ) -> Result<(), ReadError> {
         let TypeDefId::Enum(enum_id) = receiver_ty.def.id else {
             return Ok(());
@@ -227,9 +239,12 @@ where
         else {
             return Ok(());
         };
-        for index in 0..data.variants.len() {
+        for (index, variant) in data.variants.iter().enumerate() {
             if self.context.cancellation().is_cancelled() {
                 return Ok(());
+            }
+            if !filter.matches(variant.name.as_str()) {
+                continue;
             }
             Self::push_candidate(
                 candidates,
@@ -250,6 +265,7 @@ where
         candidates: &mut Vec<AssociatedItemCandidateRef>,
         trait_ref: TraitDefRef,
         applicability: TraitApplicability,
+        filter: AssociatedItemFilter<'_>,
         lineage: &mut Vec<TraitDefRef>,
     ) -> Result<(), ReadError> {
         if lineage.contains(&trait_ref) {
@@ -257,7 +273,23 @@ where
         }
         lineage.push(trait_ref);
 
-        self.push_assoc_items(candidates, trait_ref.member_store(), applicability)?;
+        // `T: Child` can expose `Parent::Output` even when Child declares no Output itself.
+        // Skip Child's member store when its name hints rule it out, but still read its header
+        // below to reach Parent. Body-local declarations are not in the crate name index.
+        let read_members = match filter {
+            AssociatedItemFilter::All => true,
+            AssociatedItemFilter::Named(_) => {
+                trait_ref.origin.as_crate_ref().is_none()
+                    || self
+                        .context
+                        .item_lookup()
+                        .traits_with_associated_items(filter)?
+                        .contains(&trait_ref)
+            }
+        };
+        if read_members {
+            self.push_assoc_items(candidates, trait_ref.member_store(), applicability, filter)?;
+        }
 
         // The canonical trait header has already lowered `Self: Super` predicates. Filtering on
         // the trait's own `Self` excludes unrelated bounds on its other generic parameters.
@@ -274,7 +306,13 @@ where
                 if application.def == trait_ref || application.self_ty() != Some(&header.self_ty) {
                     continue;
                 }
-                self.push_trait_hierarchy(candidates, application.def, applicability, lineage)?;
+                self.push_trait_hierarchy(
+                    candidates,
+                    application.def,
+                    applicability,
+                    filter,
+                    lineage,
+                )?;
             }
         }
 
@@ -287,8 +325,14 @@ where
         candidates: &mut Vec<AssociatedItemCandidateRef>,
         store: ItemStoreRef,
         applicability: TraitApplicability,
+        filter: AssociatedItemFilter<'_>,
     ) -> Result<(), ReadError> {
-        for item in self.context.item_paths().items().associated_items(store)? {
+        for item in self
+            .context
+            .item_paths()
+            .items()
+            .associated_items(store, filter)?
+        {
             if self.context.cancellation().is_cancelled() {
                 return Ok(());
             }

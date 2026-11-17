@@ -9,6 +9,7 @@ use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
+use super::associated::AssociatedItemKind;
 use crate::TraitImplSelfHead;
 
 /// Candidate tables selected by a receiver, trait, or name key. A shard contains only part of
@@ -18,10 +19,10 @@ pub struct ItemLookupShard {
     // Inherent lookup starts from a receiver type. These maps jump directly to impls whose
     // already-resolved `Self` type mentions that receiver.
     pub(crate) inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
-    pub(crate) inherent_function_owners_by_type_and_name:
-        HashMap<TypeDefRef, HashMap<Name, UniqueVec<ImplRef>>>,
+    pub(crate) inherent_item_owners_by_type_and_name:
+        HashMap<TypeDefRef, HashMap<Name, AssociatedItemOwners<ImplRef>>>,
     pub(crate) structural_inherent_impls: UniqueVec<ImplRef>,
-    pub(crate) structural_function_owners_by_name: HashMap<Name, UniqueVec<ImplRef>>,
+    pub(crate) structural_item_owners_by_name: HashMap<Name, AssociatedItemOwners<ImplRef>>,
     // Implementation navigation and qualified paths still ask which impls mention one nominal
     // type. Trait-item lookup uses the trait-keyed map below instead.
     pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
@@ -31,7 +32,7 @@ pub struct ItemLookupShard {
     // are conservative candidates. Only a request for members opens the selected store.
     pub(crate) traits_with_functions: UniqueVec<TraitDefRef>,
     pub(crate) traits_with_associated_items: UniqueVec<TraitDefRef>,
-    pub(crate) traits_by_item_name: HashMap<Name, TraitItemTraitRefs>,
+    pub(crate) traits_by_item_name: HashMap<Name, AssociatedItemOwners<TraitDefRef>>,
     // Include empty traits: no functions in a known trait differs from an unavailable owner.
     pub(crate) declared_traits: UniqueVec<TraitDefRef>,
     pub(crate) traits_with_macros: UniqueVec<TraitDefRef>,
@@ -48,16 +49,16 @@ impl ItemLookupShard {
             .map(UniqueVec::len)
             .sum::<usize>()
             + self
-                .inherent_function_owners_by_type_and_name
+                .inherent_item_owners_by_type_and_name
                 .values()
                 .flat_map(HashMap::values)
-                .map(UniqueVec::len)
+                .map(AssociatedItemOwners::entry_count)
                 .sum::<usize>()
             + self.structural_inherent_impls.len()
             + self
-                .structural_function_owners_by_name
+                .structural_item_owners_by_name
                 .values()
-                .map(UniqueVec::len)
+                .map(AssociatedItemOwners::entry_count)
                 .sum::<usize>()
             + self
                 .trait_impls_by_type
@@ -74,7 +75,7 @@ impl ItemLookupShard {
             + self
                 .traits_by_item_name
                 .values()
-                .map(TraitItemTraitRefs::entry_count)
+                .map(AssociatedItemOwners::entry_count)
                 .sum::<usize>()
             + self.declared_traits.len()
             + self.traits_with_macros.len()
@@ -173,21 +174,48 @@ impl IndexedTraitImpls {
     }
 }
 
-/// Declaring traits partitioned by the kind of one shared associated-item name.
+/// Owners partitioned by the kind of one shared associated-item name.
 ///
-/// Rust allows different traits to use the same spelling for different associated-item kinds.
+/// Rust allows different owners to use the same spelling for different associated-item kinds.
 /// Keeping the lanes together gives name-first lookup one persisted map without making a method
 /// query consider an unrelated associated const.
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(crate) struct TraitItemTraitRefs {
-    pub(crate) functions: UniqueVec<TraitDefRef>,
-    pub(crate) consts: UniqueVec<TraitDefRef>,
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub(crate) struct AssociatedItemOwners<T: PartialEq> {
+    pub(crate) functions: UniqueVec<T>,
+    pub(crate) consts: UniqueVec<T>,
+    pub(crate) types: UniqueVec<T>,
 }
 
-impl TraitItemTraitRefs {
+impl<T: PartialEq> Default for AssociatedItemOwners<T> {
+    fn default() -> Self {
+        Self {
+            functions: UniqueVec::new(),
+            consts: UniqueVec::new(),
+            types: UniqueVec::new(),
+        }
+    }
+}
+
+impl<T: PartialEq> AssociatedItemOwners<T> {
+    pub(crate) fn push(&mut self, kind: AssociatedItemKind, owner: T) {
+        match kind {
+            AssociatedItemKind::Function => &mut self.functions,
+            AssociatedItemKind::Const => &mut self.consts,
+            AssociatedItemKind::TypeAlias => &mut self.types,
+        }
+        .push(owner);
+    }
+
+    pub(crate) fn all(&self) -> impl Iterator<Item = &T> {
+        self.functions
+            .iter()
+            .chain(self.consts.iter())
+            .chain(self.types.iter())
+    }
+
     #[cfg(test)]
     fn entry_count(&self) -> usize {
-        self.functions.len() + self.consts.len()
+        self.functions.len() + self.consts.len() + self.types.len()
     }
 }
 

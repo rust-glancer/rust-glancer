@@ -10,7 +10,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ScopeId, TraitDefRef};
-use rg_semantic_ir::SemanticItemSource;
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{Ty, lookup::ReceiverImplMatches};
@@ -122,7 +122,11 @@ where
         )?;
 
         // Local impls supplement the crate index.
-        matches.extend(impl_query.matches_for_receiver_with_traits(&receiver_ty, trait_refs)?);
+        matches.extend(impl_query.matches_for_receiver_with_traits(
+            &receiver_ty,
+            trait_refs,
+            AssociatedItemFilter::All,
+        )?);
         Ok(BodyReceiverImplMatches {
             receiver_ty,
             matches,

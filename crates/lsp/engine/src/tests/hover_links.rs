@@ -296,6 +296,90 @@ async fn hover_self_links_preserve_their_owner_identity() {
 }
 
 #[tokio::test]
+async fn hover_links_resolve_named_members_through_bounds_and_macros() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "hover_named_members"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        macro_rules! method {
+            ($name:ident) => { fn $name() {} };
+        }
+        pub trait Parent {
+            type Output;
+            const LIMIT: usize;
+            fn inherited() {}
+        }
+        pub trait Generated { method!(trait_generated); }
+        pub trait Child: Parent { fn other() {} }
+        pub struct Factory;
+        impl Parent for Factory {
+            type Output = u8;
+            const LIMIT: usize = 8;
+        }
+        impl Generated for Factory {}
+        impl Child for Factory {}
+        impl Factory {
+            method!(generated);
+        }
+        impl Factory {
+            pub const VERSION: usize = 1;
+        }
+        pub type Alias = Factory;
+
+        /// [`Child::Output`], [`Child::LIMIT`], and [`Child::inherited`].
+        pub fn hi$0erarchy() {} // hover("members inherited by a trait")
+        /// [`T::Output`], [`T::LIMIT`], and [`T::inherited`].
+        pub fn ge$0neric<T: Child>() {} // hover("members supplied by a generic bound")
+        /// [`Factory::Output`], [`Factory::LIMIT`], [`Factory::inherited`],
+        /// [`Factory::trait_generated`], [`Alias::generated`], and [`Alias::VERSION`].
+        pub fn co$0ncrete() {} // hover("named inherent and implemented trait members")
+        "#,
+    )
+    .await;
+    fixture.check(expect![[r#"
+        // members inherited by a trait
+        range: /src/lib.rs:26:7-26:16
+        markdown:
+          ```rust
+          hover_named_members::hierarchy
+
+          pub fn hierarchy()
+          ```
+
+          [`Child::Output`](<file://$ROOT/src/lib.rs#L5,10>), [`Child::LIMIT`](<file://$ROOT/src/lib.rs#L6,11>), and [`Child::inherited`](<file://$ROOT/src/lib.rs#L7,8>).
+
+        // members supplied by a generic bound
+        range: /src/lib.rs:28:7-28:14
+        markdown:
+          ```rust
+          hover_named_members::generic
+
+          pub fn generic<T: Child>()
+          ```
+
+          [`T::Output`](<file://$ROOT/src/lib.rs#L5,10>), [`T::LIMIT`](<file://$ROOT/src/lib.rs#L6,11>), and [`T::inherited`](<file://$ROOT/src/lib.rs#L7,8>).
+
+        // named inherent and implemented trait members
+        range: /src/lib.rs:31:7-31:15
+        markdown:
+          ```rust
+          hover_named_members::concrete
+
+          pub fn concrete()
+          ```
+
+          [`Factory::Output`](<file://$ROOT/src/lib.rs#L5,10>), [`Factory::LIMIT`](<file://$ROOT/src/lib.rs#L6,11>), [`Factory::inherited`](<file://$ROOT/src/lib.rs#L7,8>),
+          [`Factory::trait_generated`](<file://$ROOT/src/lib.rs#L9,31>), [`Alias::generated`](<file://$ROOT/src/lib.rs#L19,13>), and [`Alias::VERSION`](<file://$ROOT/src/lib.rs#L22,15>).
+    "#]]).await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn hover_links_use_unsaved_destination_positions() {
     let fixture = LspEngineFixture::initialized(
         r#"

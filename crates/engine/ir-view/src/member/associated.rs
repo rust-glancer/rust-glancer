@@ -7,7 +7,7 @@ use rg_ir_model::{
     TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::{Documentation, TypeRef};
-use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
+use rg_semantic_ir::{AssociatedItemFilter, ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_ty::{
     AdtTy, GenericArgs, TraitApplication, Ty, TyContext,
     lookup::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ItemPathQuery},
@@ -85,6 +85,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &self,
         scope: IndexedSignatureTypeScope,
         qualifier: &IndexedAssociatedPathQualifier,
+        filter: AssociatedItemFilter<'_>,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
         let use_site = scope.context().module.origin.origin_crate();
         let item_lookup_query = self
@@ -132,7 +133,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 // The impl matcher owns whether a candidate came from a keyed or fallback index.
                 candidates.extend(
                     query
-                        .candidates_for_ty(&prefix_ty)
+                        .candidates_for_ty(&prefix_ty, filter)
                         .context("resolve associated item candidates")?,
                 );
 
@@ -140,7 +141,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 // owning declaration, such as `T: Factory`, supply its associated-item surface.
                 candidates.extend(
                     query
-                        .candidates_for_trait_applications(owner_traits, TraitApplicability::Yes)
+                        .candidates_for_trait_applications(
+                            owner_traits,
+                            TraitApplicability::Yes,
+                            filter,
+                        )
                         .context("resolve owner trait associated item candidates")?,
                 );
 
@@ -152,6 +157,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                             .candidates_for_trait_applications(
                                 [direct_trait.application],
                                 TraitApplicability::Yes,
+                                filter,
                             )
                             .context("resolve direct trait associated item candidates")?,
                     );
@@ -173,6 +179,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                             .candidates_for_trait_applications(
                                 [trait_ref.application],
                                 TraitApplicability::Yes,
+                                filter,
                             )
                             .context("resolve qualified trait associated item candidates")?,
                     );
@@ -195,6 +202,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         module: ModuleRef,
         qualifier: &Path,
         qualifier_ty: &IndexedType,
+        filter: AssociatedItemFilter<'_>,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
         let use_site = module.origin.origin_crate();
         let context = TyContext::new(
@@ -207,7 +215,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         );
         let query = AssociatedItemQuery::new(context);
         let mut candidates = query
-            .candidates_for_ty(qualifier_ty.raw())
+            .candidates_for_ty(qualifier_ty.raw(), filter)
             .context("resolve module associated item candidates")?;
         // If the path names a trait, its own items and supertrait items are available even
         // when there was no receiver type from which to collect impl candidates.
@@ -224,6 +232,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                                 args: GenericArgs::empty(),
                             }],
                             TraitApplicability::Yes,
+                            filter,
                         )
                         .context("resolve module trait associated item candidates")?,
                 );
@@ -273,7 +282,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
         Ok(Self::project_associated_candidates(
             query
-                .candidates_for_trait_applications([trait_ref.application], TraitApplicability::Yes)
+                .candidates_for_trait_applications(
+                    [trait_ref.application],
+                    TraitApplicability::Yes,
+                    AssociatedItemFilter::All,
+                )
                 .context("resolve trait binding associated item candidates")?,
         ))
     }

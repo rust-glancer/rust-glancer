@@ -102,7 +102,9 @@ impl ItemLookupIndex {
                         AssocItemId::Const(id) => hints
                             .consts
                             .extend(members.const_data(*id).map(|data| data.name.clone())),
-                        AssocItemId::TypeAlias(_) => hints.has_types = true,
+                        AssocItemId::TypeAlias(id) => hints
+                            .types
+                            .extend(members.type_alias_data(*id).map(|data| data.name.clone())),
                     }
                 }
             }
@@ -136,7 +138,7 @@ impl ItemLookupIndex {
         for (trait_ref, _) in store.traits_with_refs() {
             let hints = hints_for(trait_ref.member_store());
             if hints.has_macros
-                || hints.has_types
+                || !hints.types.is_empty()
                 || !hints.consts.is_empty()
                 || !hints.functions.is_empty()
             {
@@ -154,21 +156,12 @@ impl ItemLookupIndex {
                 .trait_impls_by_trait
                 .entry(trait_ref)
                 .or_default();
-            for name in hints.functions {
+            for (kind, name) in hints.names() {
                 shards[Self::shard_for(&name)]
                     .traits_by_item_name
                     .entry(name)
                     .or_default()
-                    .functions
-                    .push(trait_ref);
-            }
-            for name in hints.consts {
-                shards[Self::shard_for(&name)]
-                    .traits_by_item_name
-                    .entry(name)
-                    .or_default()
-                    .consts
-                    .push(trait_ref);
+                    .push(kind, trait_ref);
             }
         }
 
@@ -187,7 +180,7 @@ impl ItemLookupIndex {
                         .or_default()
                         .push(impl_ref);
                     shard
-                        .inherent_function_owners_by_type_and_name
+                        .inherent_item_owners_by_type_and_name
                         .entry(self_ty)
                         .or_default();
                 } else if impl_data.resolved_self_ty.is_empty() {
@@ -213,16 +206,16 @@ impl ItemLookupIndex {
                         shards[0].structural_macro_impls.push(impl_ref);
                     }
                 }
-                for name in hints.functions {
+                for (kind, name) in hints.names() {
                     let owners = if let Some(self_ty) = self_ty {
                         shards[Self::shard_for(&self_ty)]
-                            .inherent_function_owners_by_type_and_name
+                            .inherent_item_owners_by_type_and_name
                             .entry(self_ty)
                             .or_default()
                     } else {
-                        &mut shards[Self::shard_for(&name)].structural_function_owners_by_name
+                        &mut shards[Self::shard_for(&name)].structural_item_owners_by_name
                     };
-                    owners.entry(name).or_default().push(impl_ref);
+                    owners.entry(name).or_default().push(kind, impl_ref);
                 }
             } else {
                 let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {

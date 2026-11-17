@@ -7,7 +7,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ScopeId, TraitApplicability, TraitDefRef};
-use rg_semantic_ir::SemanticItemSource;
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{
@@ -114,7 +114,9 @@ where
                             functions = lookup.structural_inherent_functions_by_name(name)?;
                         }
                         None => {
-                            for impl_ref in lookup.structural_inherent_impls()? {
+                            for impl_ref in
+                                lookup.structural_inherent_impls(AssociatedItemFilter::All)?
+                            {
                                 functions
                                     .extend(items.associated_functions(impl_ref.member_store())?);
                             }

@@ -17,7 +17,7 @@ use rg_ir_model::{
     TraitDefRef, TraitImplRef,
 };
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::SemanticItemSource;
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
@@ -58,7 +58,7 @@ where
                 let (body_traits, saved_traits) = match surface {
                     BodyTraitSurface::AssociatedItems => (
                         body_items.traits_with_associated_items()?,
-                        item_lookup.traits_with_associated_items()?,
+                        item_lookup.traits_with_associated_items(AssociatedItemFilter::All)?,
                     ),
                     BodyTraitSurface::Functions => (
                         body_items.traits_with_functions()?,

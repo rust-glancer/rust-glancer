@@ -226,7 +226,7 @@ impl TargetItemData {
                 match &item.kind {
                     ItemKind::Function(_) => hints.functions.extend(item.name.clone()),
                     ItemKind::Const(_) => hints.consts.extend(item.name.clone()),
-                    ItemKind::TypeAlias(_) => hints.has_types = true,
+                    ItemKind::TypeAlias(_) => hints.types.extend(item.name.clone()),
                     ItemKind::MacroCall(_) => {
                         hints.has_macros = true;
                         continue;

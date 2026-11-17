@@ -16,7 +16,9 @@ pub enum LookupQuestion {
     InherentFunctions(TypeDefRef, Name),
     StructuralFunctions(Name),
     StructuralImpls,
+    StructuralImplsWithItemName(Name),
     InherentImpls(TypeDefRef),
+    InherentImplsWithItemName(TypeDefRef, Name),
     ImplsForType(TypeDefRef),
     ImplsForTrait(TraitDefRef),
     TraitImplsForType(TypeDefRef),
@@ -24,6 +26,7 @@ pub enum LookupQuestion {
     TraitImplsForHead(TraitDefRef, Option<TraitImplSelfHead>),
     TraitsWithFunctions,
     TraitsWithAssociatedItems,
+    TraitsWithItemName(Name),
     TraitsWithFunctionName(Name),
     TraitsWithConstName(Name),
     TraitFunctions(TraitDefRef),
@@ -35,6 +38,7 @@ impl LookupQuestion {
         let (present, shard) = match self {
             Self::InherentFunctions(ty, _)
             | Self::InherentImpls(ty)
+            | Self::InherentImplsWithItemName(ty, _)
             | Self::ImplsForType(ty)
             | Self::TraitImplsForType(ty) => {
                 (keys.types.contains(ty), ItemLookupIndex::shard_for(ty))
@@ -48,6 +52,8 @@ impl LookupQuestion {
                 ItemLookupIndex::shard_for(trait_ref),
             ),
             Self::StructuralFunctions(name)
+            | Self::StructuralImplsWithItemName(name)
+            | Self::TraitsWithItemName(name)
             | Self::TraitsWithFunctionName(name)
             | Self::TraitsWithConstName(name) => {
                 (keys.names.contains(name), ItemLookupIndex::shard_for(name))
@@ -63,10 +69,16 @@ impl LookupQuestion {
         // A missing written name does not rule out a macro-generated member. Include the broad
         // macro-owner shard too, so `methods!()` can supply a name absent from the written index.
         match self {
-            Self::StructuralFunctions(_) if keys.structural_macros => {
+            Self::StructuralFunctions(_) | Self::StructuralImplsWithItemName(_)
+                if keys.structural_macros =>
+            {
                 shards.push(0);
             }
-            Self::TraitsWithFunctionName(_) | Self::TraitsWithConstName(_) if keys.trait_macros => {
+            Self::TraitsWithFunctionName(_)
+            | Self::TraitsWithConstName(_)
+            | Self::TraitsWithItemName(_)
+                if keys.trait_macros =>
+            {
                 shards.push(0);
             }
             _ => {}
@@ -102,11 +114,11 @@ impl LookupQuestion {
                 Self::InherentFunctions(ty, name) => {
                     function_owners.extend(
                         shard
-                            .inherent_function_owners_by_type_and_name
+                            .inherent_item_owners_by_type_and_name
                             .get(ty)
                             .and_then(|names| names.get(name))
                             .into_iter()
-                            .flatten()
+                            .flat_map(|owners| owners.functions.iter())
                             .chain(
                                 shard
                                     .inherent_macro_impls_by_type
@@ -120,10 +132,10 @@ impl LookupQuestion {
                 Self::StructuralFunctions(name) => {
                     function_owners.extend(
                         shard
-                            .structural_function_owners_by_name
+                            .structural_item_owners_by_name
                             .get(name)
                             .into_iter()
-                            .flatten()
+                            .flat_map(|owners| owners.functions.iter())
                             .chain(shard.structural_macro_impls.iter())
                             .map(|owner| owner.member_store()),
                     );
@@ -131,6 +143,31 @@ impl LookupQuestion {
                 Self::StructuralImpls => {
                     impls.extend(shard.structural_inherent_impls.iter().copied())
                 }
+                Self::StructuralImplsWithItemName(name) => impls.extend(
+                    shard
+                        .structural_item_owners_by_name
+                        .get(name)
+                        .into_iter()
+                        .flat_map(|owners| owners.all())
+                        .chain(shard.structural_macro_impls.iter())
+                        .copied(),
+                ),
+                Self::InherentImplsWithItemName(ty, name) => impls.extend(
+                    shard
+                        .inherent_item_owners_by_type_and_name
+                        .get(ty)
+                        .and_then(|names| names.get(name))
+                        .into_iter()
+                        .flat_map(|owners| owners.all())
+                        .chain(
+                            shard
+                                .inherent_macro_impls_by_type
+                                .get(ty)
+                                .into_iter()
+                                .flatten(),
+                        )
+                        .copied(),
+                ),
                 Self::InherentImpls(ty) => impls.extend(
                     shard
                         .inherent_impls_by_type
@@ -217,6 +254,15 @@ impl LookupQuestion {
                 Self::TraitsWithAssociatedItems => {
                     traits.extend(shard.traits_with_associated_items.iter().copied())
                 }
+                Self::TraitsWithItemName(name) => traits.extend(
+                    shard
+                        .traits_by_item_name
+                        .get(name)
+                        .into_iter()
+                        .flat_map(|owners| owners.all())
+                        .chain(shard.traits_with_macros.iter())
+                        .copied(),
+                ),
                 Self::TraitsWithFunctionName(name) => traits.extend(
                     shard
                         .traits_by_item_name
@@ -272,7 +318,9 @@ impl LookupQuestion {
                 LookupAnswer::Functions(known.then_some(functions))
             }
             Self::StructuralImpls
+            | Self::StructuralImplsWithItemName(..)
             | Self::InherentImpls(..)
+            | Self::InherentImplsWithItemName(..)
             | Self::ImplsForType(..)
             | Self::ImplsForTrait(..) => LookupAnswer::Impls(impls),
             Self::TraitImplsForType(..) => LookupAnswer::TraitImpls(Some(trait_impls)),

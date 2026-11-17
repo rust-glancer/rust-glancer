@@ -17,7 +17,7 @@ use rg_ir_model::{
     TraitDefRef, TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::ImplPolarity;
-use rg_semantic_ir::{SemanticItemSource, TypePathContext};
+use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource, TypePathContext};
 use rg_source::ReadError;
 use rg_std::Cancelable;
 use rustc_type_ir::{
@@ -294,8 +294,7 @@ where
                     is_auto: data.is_auto,
                     is_unsafe: data.is_unsafe,
                     associated_types: items
-                        .associated_items(id.member_store())?
-                        .iter()
+                        .associated_items(id.member_store(), AssociatedItemFilter::All)?
                         .filter_map(|item| match item {
                             AssocItemId::TypeAlias(alias) => Some(DefId::TypeAlias(
                                 TypeAliasRef::new(id.member_store(), *alias),
@@ -325,7 +324,7 @@ where
                     return Ok(None);
                 };
                 let mut associated_types = Vec::new();
-                for item in items.associated_items(id.member_store())? {
+                for item in items.associated_items(id.member_store(), AssociatedItemFilter::All)? {
                     if let AssocItemId::TypeAlias(alias) = item {
                         let alias = TypeAliasRef::new(id.member_store(), *alias);
                         let Some(data) = items.type_alias_data(alias)? else {

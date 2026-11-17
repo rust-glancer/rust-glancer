@@ -8,7 +8,10 @@ use rg_ir_model::{
     CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey, FileId, ModuleId,
     ModuleRef, SemanticItemRef, Span, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_semantic_ir::{ItemStoreQuery, SemanticItemSource as _, SemanticItemView, SourceSelection};
+use rg_semantic_ir::{
+    AssociatedItemFilter, ItemStoreQuery, SemanticItemSource as _, SemanticItemView,
+    SourceSelection,
+};
 use rg_source::ReadError;
 
 use crate::{
@@ -245,8 +248,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
             _ => return Ok(Some(IndexedItem::leaf(declaration))),
         };
         let children = ItemStoreQuery::new(self.db)
-            .associated_items(members)?
-            .iter()
+            .associated_items(members, AssociatedItemFilter::All)?
             .map(|item| {
                 IndexedItemChild::Declaration(IndexedItem::leaf(DeclarationRef::from(
                     item.semantic_ref(members),
