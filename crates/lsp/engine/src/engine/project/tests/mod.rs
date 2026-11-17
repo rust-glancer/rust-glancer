@@ -1,25 +1,15 @@
-use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc,
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    mpsc,
 };
 
-use rg_lsp_proto::{
-    AnalysisConfig, DeferredIndexingOutcome, IndexingPerformancePreference, ServiceNotification,
-    SysrootDiscovery,
-};
+use rg_lsp_proto::{AnalysisConfig, SysrootDiscovery};
 use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange};
 use test_fixture::fixture_crate;
 
 use super::{MAX_STALE_SOURCE_RETRIES, ProjectConfiguration, ProjectCoordinator};
-use crate::{
-    engine::{QueuedEngineCommand, command::EngineCommand},
-    memory::MemoryControl,
-    service::{ServiceNotificationPublisher, ServiceNotificationsSink},
-};
+use crate::memory::MemoryControl;
 
 #[derive(Debug)]
 struct SourceMutations {
@@ -43,7 +33,7 @@ impl ProjectMemoryHooks for SourceMutations {
         };
         std::fs::write(
             &self.path,
-            format!("pub struct Concurrent{previous};\npub fn deferred_body() {{}}\n"),
+            format!("pub struct Concurrent{previous};\npub fn saved_body() {{}}\n"),
         )
         .expect("source mutation hook should replace fixture source");
     }
@@ -69,115 +59,6 @@ impl ProjectMemoryHooks for SourceBurst {
         for (path, replacement) in &self.replacements {
             std::fs::write(path, replacement)
                 .expect("source burst hook should replace fixture source");
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct RecordingMemoryHooks {
-    points: Mutex<Vec<ProjectMemoryPurgePoint>>,
-}
-
-impl RecordingMemoryHooks {
-    fn take(&self) -> Vec<ProjectMemoryPurgePoint> {
-        std::mem::take(
-            &mut *self
-                .points
-                .lock()
-                .expect("recorded memory hook points should not be poisoned"),
-        )
-    }
-}
-
-impl ProjectMemoryHooks for RecordingMemoryHooks {
-    fn purge(&self, point: ProjectMemoryPurgePoint) {
-        self.points
-            .lock()
-            .expect("recorded memory hook points should not be poisoned")
-            .push(point);
-    }
-}
-
-#[derive(Debug)]
-struct NoopNotifications;
-
-impl ServiceNotificationPublisher for NoopNotifications {
-    fn send(&self, _notification: ServiceNotification) {}
-}
-
-#[derive(Clone, Debug, Default)]
-struct RecordingNotifications {
-    notifications: Arc<Mutex<Vec<ServiceNotification>>>,
-}
-
-impl RecordingNotifications {
-    fn take(&self) -> Vec<ServiceNotification> {
-        std::mem::take(
-            &mut *self
-                .notifications
-                .lock()
-                .expect("recorded notifications should not be poisoned"),
-        )
-    }
-}
-
-impl ServiceNotificationPublisher for RecordingNotifications {
-    fn send(&self, notification: ServiceNotification) {
-        self.notifications
-            .lock()
-            .expect("recorded notifications should not be poisoned")
-            .push(notification);
-    }
-}
-
-/// Apply coalesced background progress the same way the real dispatcher does, then return the next
-/// command whose behavior the test is actually exercising.
-fn receive_non_progress_command(
-    project: &mut ProjectCoordinator,
-    receiver: &mpsc::Receiver<QueuedEngineCommand>,
-) -> EngineCommand {
-    loop {
-        let queued = receiver
-            .recv_timeout(Duration::from_secs(5))
-            .expect("deferred indexing should return an engine command");
-        match queued.command {
-            EngineCommand::DeferredIndexingProgress {
-                generation,
-                progress,
-            } => project.deferred_indexing_progress(generation, progress),
-            command => return command,
-        }
-    }
-}
-
-fn assert_progress_then_finished(notifications: &[ServiceNotification]) {
-    assert!(
-        notifications.iter().any(|notification| matches!(
-            notification,
-            ServiceNotification::DeferredIndexingProgress { .. }
-        )),
-        "deferred indexing should publish at least one package progress snapshot",
-    );
-    assert!(matches!(
-        notifications.last(),
-        Some(ServiceNotification::DeferredIndexingFinished {
-            outcome: DeferredIndexingOutcome::Succeeded,
-            ..
-        })
-    ));
-}
-
-/// Drain transferred products as the real writer lane does before observing terminal completion.
-fn receive_completion(
-    project: &mut ProjectCoordinator,
-    receiver: &mpsc::Receiver<QueuedEngineCommand>,
-) -> EngineCommand {
-    loop {
-        match receive_non_progress_command(project, receiver) {
-            EngineCommand::DeferredIndexingProducts { products } => {
-                project.deferred_indexing_products(*products)
-            }
-            command => return command,
         }
     }
 }
@@ -209,17 +90,17 @@ fn assert_saved_body_type(project: &ProjectCoordinator, path: &std::path::Path) 
 }
 
 #[test]
-fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
+fn eager_startup_and_reindex_have_body_analysis() {
     let fixture = fixture_crate(
         r#"
             //- /Cargo.toml
             [package]
-            name = "completed_batch_fixture"
+            name = "eager_indexing_fixture"
             version = "0.1.0"
             edition = "2024"
 
             //- /src/lib.rs
-            pub fn completed_in_batch() -> usize {
+            pub fn indexed_body() -> usize {
                 let value = 1usize;
                 value
             }
@@ -227,46 +108,35 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
     );
     let (sender, receiver) = mpsc::channel();
     let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let recorded = RecordingNotifications::default();
-    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    let initialization = project
+    let mut project = ProjectCoordinator::new(sender, memory_control);
+    project
         .initialize(
             fixture.path(""),
             ProjectConfiguration::from(AnalysisConfig {
-                indexing_preference: IndexingPerformancePreference::LowerPeakMemory,
                 sysroot_discovery: SysrootDiscovery::Disabled,
                 ..AnalysisConfig::default()
             }),
         )
-        .expect("lower-memory fixture project should initialize");
+        .expect("eager fixture project should initialize");
 
-    assert!(!initialization.has_deferred_indexing);
-    assert!(
-        recorded.take().is_empty(),
-        "completed package batches should not announce deferred work",
-    );
     assert!(
         matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
-        "completed package batches should not spawn a deferred worker",
+        "initialization finishes synchronously",
     );
     assert_saved_body_type(&project, &fixture.path("src/lib.rs"));
 
     project
         .reindex_workspace()
-        .expect("lower-memory workspace reindex should succeed");
-    assert!(
-        recorded.take().is_empty(),
-        "completed workspace reindex should not announce deferred indexing",
-    );
+        .expect("eager workspace reindex should succeed");
+    assert_saved_body_type(&project, &fixture.path("src/lib.rs"));
     assert!(
         matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
-        "completed workspace reindex should not spawn a deferred worker",
+        "reindex finishes synchronously",
     );
 }
 
 #[test]
-fn cached_startup_reports_idle_without_deferred_work_events() {
+fn cached_startup_has_body_analysis() {
     let fixture = fixture_crate(
         r#"
             //- /Cargo.toml
@@ -276,349 +146,28 @@ fn cached_startup_reports_idle_without_deferred_work_events() {
             edition = "2024"
 
             //- /src/lib.rs
-            pub fn cached_body() -> usize { 1 }
+            pub fn cached_body() -> usize { let value = 1usize; value }
             "#,
     );
     let configuration = ProjectConfiguration::from(AnalysisConfig {
         sysroot_discovery: SysrootDiscovery::Disabled,
         ..AnalysisConfig::default()
     });
-    let (sender, receiver) = mpsc::channel();
+    let (sender, _receiver) = mpsc::channel();
     let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    let initialization = project
+    let mut project = ProjectCoordinator::new(sender, memory_control);
+    project
         .initialize(fixture.path(""), configuration.clone())
         .expect("cold fixture project should initialize");
-    assert!(initialization.has_deferred_indexing);
-
-    // Complete the first run so the next startup can reuse its saved body indexes.
-    let EngineCommand::DeferredIndexingFinished { generation, result } =
-        receive_completion(&mut project, &receiver)
-    else {
-        panic!("cold startup should finish deferred indexing");
-    };
-    project.deferred_indexing_finished(generation, result);
     drop(project);
 
     let (sender, _receiver) = mpsc::channel();
     let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let recorded = RecordingNotifications::default();
-    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    let initialization = project
+    let mut project = ProjectCoordinator::new(sender, memory_control);
+    project
         .initialize(fixture.path(""), configuration)
         .expect("cached fixture project should initialize");
-    assert!(!initialization.has_deferred_indexing);
-    assert!(
-        recorded.take().is_empty(),
-        "cached startup should have no deferred work events"
-    );
-}
-
-#[test]
-fn completed_successor_terminates_superseded_deferred_lifecycle() {
-    let fixture = fixture_crate(
-        r#"
-            //- /Cargo.toml
-            [package]
-            name = "superseded_deferred_fixture"
-            version = "0.1.0"
-            edition = "2024"
-
-            //- /src/lib.rs
-            pub fn deferred_body() {}
-            "#,
-    );
-    let source = fixture.path("src/lib.rs");
-    let (sender, receiver) = mpsc::channel();
-    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let recorded = RecordingNotifications::default();
-    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project
-        .initialize(
-            fixture.path(""),
-            ProjectConfiguration::from(AnalysisConfig {
-                sysroot_discovery: SysrootDiscovery::Disabled,
-                ..AnalysisConfig::default()
-            }),
-        )
-        .expect("early-start fixture project should initialize");
-    let superseded_generation = match recorded.take().as_slice() {
-        [ServiceNotification::DeferredIndexingStarted { generation, .. }] => *generation,
-        notifications => {
-            panic!("initial project should announce deferred indexing: {notifications:?}")
-        }
-    };
-
-    // Leave the worker result in the engine queue while publishing a bodyless generation. Its
-    // Body IR is already complete, so this generation must not announce or start another worker.
-    std::fs::write(&source, "pub struct CompleteGeneration;\n")
-        .expect("fixture source should become bodyless");
-    project
-        .saved_project_changes(vec![SavedFileChange::fs_path(source)])
-        .expect("bodyless successor generation should publish");
-    assert_ne!(project.project.generation(), superseded_generation);
-    assert!(
-        recorded.take().is_empty(),
-        "the complete successor should not announce replacement work",
-    );
-
-    let stale = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, result } = stale else {
-        panic!("superseded worker should return its terminal command");
-    };
-    assert_eq!(generation, superseded_generation);
-    project.deferred_indexing_finished(generation, result);
-
-    assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingFinished {
-            generation,
-            outcome: DeferredIndexingOutcome::Succeeded,
-            ..
-        }] if *generation == superseded_generation
-    ));
-    assert!(
-        matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
-        "reconciling the stale worker should not spawn a replacement",
-    );
-}
-
-#[test]
-fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
-    let fixture = fixture_crate(
-        r#"
-            //- /Cargo.toml
-            [package]
-            name = "deferred_lifecycle_fixture"
-            version = "0.1.0"
-            edition = "2024"
-
-            //- /src/lib.rs
-            pub fn published() -> usize {
-                let value = 1usize;
-                value
-            }
-            "#,
-    );
-    let source = fixture.path("src/lib.rs");
-    let (sender, receiver) = mpsc::channel();
-    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let recorded = RecordingNotifications::default();
-    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    let memory_hooks = Arc::new(RecordingMemoryHooks::default());
-    project.memory_hooks = memory_hooks.clone();
-    project
-        .initialize(
-            fixture.path(""),
-            ProjectConfiguration::from(AnalysisConfig {
-                sysroot_discovery: SysrootDiscovery::Disabled,
-                ..AnalysisConfig::default()
-            }),
-        )
-        .expect("fixture project should initialize");
-    assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingStarted { .. }]
-    ));
-
-    let initial = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial else {
-        panic!("initial background command should finish deferred indexing");
-    };
-    let _ = memory_hooks.take();
-    project.deferred_indexing_finished(generation, result);
-    assert_eq!(
-        memory_hooks.take().last(),
-        Some(&ProjectMemoryPurgePoint::AfterDeferredIndexingFinish),
-        "worker completion should end with the deferred-indexing purge",
-    );
-    assert_progress_then_finished(&recorded.take());
-
-    project
-        .saved_project_changes(vec![SavedFileChange::fs_path(source.clone())])
-        .expect("an unchanged watcher replay should be accepted");
-    assert!(
-        recorded.take().is_empty(),
-        "an unchanged foreground cycle should not invent deferred work",
-    );
-
-    std::fs::write(
-        &source,
-        "pub fn updated() -> usize { let value = 2usize; value }\n",
-    )
-    .expect("fixture source should be replaced");
-    project
-        .saved_project_changes(vec![SavedFileChange::fs_path(source)])
-        .expect("saved source change should be applied");
-    assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingStarted { .. }]
-    ));
-    let foreground_stats = project
-        .saved_snapshot()
-        .expect("updated saved project should be available")
-        .stats()
-        .body_ir;
-    assert_eq!(foreground_stats.complete_crate_count, 0);
-    assert_eq!(foreground_stats.missing_crate_count, 1);
-    assert_eq!(foreground_stats.body_count, 0);
-
-    let updated = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, result } = updated else {
-        panic!("updated background command should finish deferred indexing");
-    };
-    project.deferred_indexing_finished(generation, result);
-    assert_progress_then_finished(&recorded.take());
-    assert!(!project.project.has_unfinished_split_indexing());
     assert_saved_body_type(&project, &fixture.path("src/lib.rs"));
-}
-
-#[test]
-fn current_deferred_failure_is_published_without_discarding_the_queryable_project() {
-    let fixture = fixture_crate(
-        r#"
-            //- /Cargo.toml
-            [package]
-            name = "deferred_failure_fixture"
-            version = "0.1.0"
-            edition = "2024"
-
-            //- /src/lib.rs
-            pub fn still_queryable() {}
-            "#,
-    );
-    let (sender, receiver) = mpsc::channel();
-    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let recorded = RecordingNotifications::default();
-    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project
-        .initialize(
-            fixture.path(""),
-            ProjectConfiguration::from(AnalysisConfig {
-                sysroot_discovery: SysrootDiscovery::Disabled,
-                ..AnalysisConfig::default()
-            }),
-        )
-        .expect("fixture project should initialize");
-    assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingStarted { .. }]
-    ));
-
-    let finished = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, .. } = finished else {
-        panic!("background command should reach its terminal result");
-    };
-    project.deferred_indexing_finished(
-        generation,
-        Err(anyhow::anyhow!("synthetic body indexing failure")),
-    );
-
-    project
-        .saved_snapshot()
-        .expect("early-start project should remain queryable after deferred failure");
-    assert!(matches!(
-        recorded.take().last(),
-        Some(ServiceNotification::DeferredIndexingFinished {
-            outcome: DeferredIndexingOutcome::Failed { message },
-            ..
-        }) if message == "synthetic body indexing failure"
-    ));
-}
-
-#[test]
-fn open_document_package_is_published_before_full_deferred_result() {
-    let fixture = fixture_crate(
-        r#"
-            //- /Cargo.toml
-            [workspace]
-            members = ["app", "helper"]
-            resolver = "2"
-
-            //- /app/Cargo.toml
-            [package]
-            name = "deferred_priority_app"
-            version = "0.1.0"
-            edition = "2024"
-
-            //- /app/src/lib.rs
-            pub fn app() -> usize { let value = 1usize; value }
-
-            //- /helper/Cargo.toml
-            [package]
-            name = "deferred_priority_helper"
-            version = "0.1.0"
-            edition = "2024"
-
-            //- /helper/src/lib.rs
-            pub fn first() -> usize { 1 }
-            pub fn second() -> usize { 2 }
-            pub fn third() -> usize { let value = 3usize; value }
-            "#,
-    );
-    let (sender, receiver) = mpsc::channel();
-    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let recorded = RecordingNotifications::default();
-    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project
-        .initialize(
-            fixture.path(""),
-            ProjectConfiguration::from(AnalysisConfig {
-                sysroot_discovery: SysrootDiscovery::Disabled,
-                ..AnalysisConfig::default()
-            }),
-        )
-        .expect("fixture project should initialize");
-    assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingStarted { .. }]
-    ));
-
-    // The worker is already live when this didOpen-derived hint reaches its package queue.
-    project.set_deferred_indexing_priority(fixture.path("helper/src/lib.rs"), true);
-    let first = receive_non_progress_command(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingProducts { products } = first else {
-        panic!("body products should arrive before terminal completion");
-    };
-    project.deferred_indexing_products(*products);
-
-    assert_eq!(
-        project
-            .project
-            .saved_body_build_inputs()
-            .expect("unfinished package selection should be available")
-            .packages()
-            .len(),
-        1,
-        "one package should remain unfinished after the first publication",
-    );
-    assert!(
-        recorded.take().iter().all(|notification| !matches!(
-            notification,
-            ServiceNotification::DeferredIndexingFinished { .. }
-        )),
-        "an intermediate package publication must not end deferred indexing",
-    );
-
-    let final_command = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, result } = final_command else {
-        panic!("the final package result should complete deferred indexing");
-    };
-    project.deferred_indexing_finished(generation, result);
-
-    assert!(!project.project.has_unfinished_split_indexing());
-    assert_saved_body_type(&project, &fixture.path("app/src/lib.rs"));
-    assert_saved_body_type(&project, &fixture.path("helper/src/lib.rs"));
-    assert!(matches!(
-        recorded.take().last(),
-        Some(ServiceNotification::DeferredIndexingFinished { .. })
-    ));
 }
 
 #[test]
@@ -633,7 +182,7 @@ fn saved_project_change_exhausts_source_retries_without_publishing() {
 
             //- /src/lib.rs
             pub struct Published;
-            pub fn deferred_body() {}
+            pub fn saved_body() {}
             "#,
     );
     let source = fixture.path("src/lib.rs");
@@ -643,8 +192,7 @@ fn saved_project_change_exhausts_source_retries_without_publishing() {
     });
     let (sender, receiver) = mpsc::channel();
     let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    let mut project = ProjectCoordinator::new(sender, memory_control);
     project.memory_hooks = hooks.clone();
     project
         .initialize(
@@ -656,20 +204,13 @@ fn saved_project_change_exhausts_source_retries_without_publishing() {
         )
         .expect("fixture project should initialize");
 
-    // Reconcile initial deferred indexing so any command observed below belongs to the update.
-    let initial = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial else {
-        panic!("initial background command should finish deferred indexing");
-    };
-    project.deferred_indexing_finished(generation, result);
-
     // A continuously rewritten source must eventually return control to the dispatcher. Every
     // failed attempt leaves the published generation untouched, so the next watcher batch can
     // safely retry after this command reports the race.
     let published_generation = project.project.generation();
     std::fs::write(
         &source,
-        "pub struct NeverSettles;\npub fn deferred_body() {}\n",
+        "pub struct NeverSettles;\npub fn saved_body() {}\n",
     )
     .expect("unsettled fixture source should be written");
     hooks
@@ -690,7 +231,7 @@ fn saved_project_change_exhausts_source_retries_without_publishing() {
     );
     assert!(
         receiver.try_recv().is_err(),
-        "rejected candidates must not schedule deferred indexing"
+        "rejected candidates enqueue no work"
     );
 }
 
@@ -708,7 +249,7 @@ fn saved_project_retry_collects_the_settled_source_burst() {
             mod account;
             mod user;
             pub struct Published;
-            pub fn deferred_body() {}
+            pub fn saved_body() {}
 
             //- /src/account.rs
             pub struct Account;
@@ -728,8 +269,7 @@ fn saved_project_retry_collects_the_settled_source_burst() {
     });
     let (sender, receiver) = mpsc::channel();
     let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    let mut project = ProjectCoordinator::new(sender, memory_control);
     project.memory_hooks = hooks.clone();
     project
         .initialize(
@@ -740,12 +280,6 @@ fn saved_project_retry_collects_the_settled_source_burst() {
             }),
         )
         .expect("fixture project should initialize");
-
-    let initial = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial else {
-        panic!("initial background command should finish deferred indexing");
-    };
-    project.deferred_indexing_finished(generation, result);
 
     let published_generation = project.project.generation();
     project
@@ -758,14 +292,14 @@ fn saved_project_retry_collects_the_settled_source_burst() {
     );
     assert!(
         receiver.try_recv().is_err(),
-        "an unchanged watcher replay should not schedule deferred indexing",
+        "an unchanged watcher replay enqueues no work",
     );
 
     hooks.attempts.store(0, Ordering::Release);
     hooks.armed.store(true, Ordering::Release);
     std::fs::write(
         &root,
-        "mod account;\nmod user;\npub struct Candidate;\npub fn deferred_body() {}\n",
+        "mod account;\nmod user;\npub struct Candidate;\npub fn saved_body() {}\n",
     )
     .expect("candidate fixture source should be written");
     project

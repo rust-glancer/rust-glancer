@@ -45,7 +45,7 @@ impl BodyIrBuilder<'_, '_> {
         let def_map = self
             .def_map
             .read_txn_for_subset(self.def_map_loader, self.subset);
-        // Keep initializer inputs transient even when function-body analysis is deferred.
+        // Keep initializer inputs transient independently of function-body selection.
         // TODO: Reuse this worklist when ordinary body indexing immediately follows.
         let lowering_timer = metric::SAVED_CONST_LOWERING.start_timer();
         let lowered = lower::build_selected_packages(
@@ -55,8 +55,6 @@ impl BodyIrBuilder<'_, '_> {
             BodyIrMaterialization::DeclarationInitializers,
             &packages,
             self.interners,
-            self.worker_limit,
-            None,
             &self.cancellation,
         )?;
         drop(lowering_timer);

@@ -7,14 +7,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use rg_ir_model::PackageSlot;
 use rg_std::MemorySize;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, ProjectBuilder,
-    ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedBodyBuildInputs, SplitIndexing,
-    indexing, selection::PhasePackageSet, state::ProjectState,
+    PackageResidencyPolicy, ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats,
+    indexing, state::ProjectState,
 };
 
 /// Mutable owner for the current analysis state.
@@ -47,24 +45,9 @@ impl Project {
         self.state.workspace()
     }
 
-    /// Return package slots whose parsed source inventory contains this path.
-    pub fn package_slots_for_path(&self, path: &Path) -> anyhow::Result<Vec<PackageSlot>> {
-        PhasePackageSet::from_path(&self.state.parse, path).map(PhasePackageSet::into_vec)
-    }
-
     /// Returns the internal package storage choice.
     pub fn package_residency_policy(&self) -> PackageResidencyPolicy {
         self.state.package_residency_policy
-    }
-
-    /// Returns the indexing speed/memory trade-off used by this project.
-    pub fn indexing_preference(&self) -> IndexingPerformancePreference {
-        self.state.indexing_preference
-    }
-
-    /// Returns the package batch size configured for lower-memory indexing.
-    pub fn package_batch_size(&self) -> PackageBatchSize {
-        self.state.package_batch_size
     }
 
     /// Returns coarse status counters without exposing raw phase databases.
@@ -153,29 +136,5 @@ impl Project {
                 "while attempting to recover analysis project after package cache load failed",
             )
         })
-    }
-
-    /// Get a [`SplitIndexing`] handle to build missing body analysis and install its results.
-    pub fn split_indexing(&mut self) -> SplitIndexing<'_> {
-        SplitIndexing::new(self)
-    }
-
-    /// Whether any crate still has missing or partial body analysis to finish.
-    ///
-    /// This determines whether [`Self::deferred_body_build`] has background work to do. Targets
-    /// left untouched by the build policy do not count. Once a query has partially analyzed a
-    /// skipped target, its remaining files count as unfinished too.
-    pub fn has_unfinished_split_indexing(&self) -> bool {
-        self.state.unfinished_crates().next().is_some()
-    }
-
-    /// Capture inputs for the missing or partial body analysis reported by
-    /// [`Self::has_unfinished_split_indexing`].
-    ///
-    /// Move the returned [`SavedBodyBuildInputs`] to a worker and build them there. Submit its
-    /// results through [`SplitIndexing::publish`], which checks that this saved project version
-    /// is still current before installing them.
-    pub fn deferred_body_build(&self) -> SavedBodyBuildInputs {
-        SavedBodyBuildInputs::deferred(&self.state)
     }
 }

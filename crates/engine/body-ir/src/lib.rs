@@ -17,9 +17,8 @@ pub use rg_ir_model::FieldKey;
 pub(crate) use self::store::CurrentBody;
 pub use self::{
     build::{
-        BodyIrBuildPolicy, BodyIrBuildProgress, BodyIrBuildStage, BodyIrBuilder, BodyIrFile,
-        CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
-        CurrentSourceSelection, CurrentSourceUnavailable,
+        BodyIrBuildPolicy, BodyIrBuilder, CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary,
+        CurrentSourceBuilder, CurrentSourceSelection, CurrentSourceUnavailable,
     },
     profile::profile_descriptors,
 };

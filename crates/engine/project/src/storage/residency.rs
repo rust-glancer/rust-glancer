@@ -20,7 +20,7 @@ use crate::{
 /// Internal storage choice for project construction and diagnostics.
 ///
 /// The LSP uses offloading. Tests and diagnostics can retain decoded payloads without serializing
-/// them. In either mode, incomplete deferred analysis stays resident until it can be persisted.
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 #[memsize(leaf)]
 pub enum PackageResidencyPolicy {
@@ -74,7 +74,7 @@ impl<'a> ResidencyApplication<'a> {
     ///
     /// Rebuilt packages have fresh phase data and stale source fingerprints. In offloading mode,
     /// they need replacement artifacts before releasing their payloads. Cleanup also drops
-    /// reloadable metadata for unchanged cached packages; unfinished deferred packages stay decoded.
+    /// reloadable metadata for unchanged cached packages.
     pub(crate) fn restore(project: &'a mut ProjectState, rebuilt_packages: &[PackageSlot]) -> Self {
         let rebuilt_packages = PhasePackageSet::from_slice(rebuilt_packages);
         let packages_to_write = if project.package_residency_policy.is_offloadable() {
@@ -168,8 +168,7 @@ impl<'a> ResidencyApplication<'a> {
         record_build_checkpoint(label, project_bytes, project_bytes, process_memory);
     }
 
-    /// Release only packages whose resident phases have coherent durable backing. Early-start
-    /// and file-local analysis can leave unfinished packages resident even in offloading mode.
+    /// Release packages whose resident phases have coherent durable backing.
     fn finished_packages(project: &ProjectState) -> PhasePackageSet {
         if !project.package_residency_policy.is_offloadable() {
             return PhasePackageSet::default();
@@ -186,11 +185,9 @@ impl<'a> ResidencyApplication<'a> {
     ///
     /// Full-phase residency writes three resident phases from one saved source generation.
     fn package_artifact_is_writable(project: &ProjectState, package: PackageSlot) -> bool {
-        if !project.package_deferred_payload_is_durable(package) {
-            return false;
-        }
         project.def_map.resident_package(package).is_some()
             && project.semantic_ir.resident_package(package).is_some()
+            && project.body_ir.resident_package(package).is_some()
     }
 
     /// Returns whether dropping this package would leave every resident value durably backed.

@@ -16,41 +16,17 @@ use rg_tt::{Span as TtSpan, TopSubtree};
 
 use super::cache::MacroExpansionCacheKey;
 
-const LOWER_PEAK_MEMORY_MACRO_EXPANSION_THREAD_LIMIT: usize = 2;
-
-/// Build-time speed/memory preference for macro expansion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MacroExpansionPerformancePreference {
-    /// Use unconstrained macro-expansion behavior.
-    #[default]
-    FasterBuilds,
-    /// Bound bursty macro-expansion parallelism to reduce peak resident memory.
-    LowerPeakMemory,
-}
-
 /// Dedicated pool for declarative macro expansion jobs.
 pub(crate) struct MacroExpansionExecutor {
     thread_pool: rayon::ThreadPool,
 }
 
 impl MacroExpansionExecutor {
-    pub(crate) fn new(preference: MacroExpansionPerformancePreference) -> anyhow::Result<Self> {
-        // Macro expansion can allocate large parser and token-tree temporaries per worker. Keep
-        // this pool optionally narrower than the global CPU pool so a few large expansions do not
-        // multiply peak resident memory for the whole index build.
-        let mut builder = rayon::ThreadPoolBuilder::new()
-            .thread_name(|index| format!("rg-macro-runtime-expand-{index}"));
-        if let Some(thread_limit) = Self::thread_limit(preference) {
-            let worker_count = std::thread::available_parallelism()
-                .map(usize::from)
-                .unwrap_or(thread_limit)
-                .min(thread_limit);
-            builder = builder.num_threads(worker_count);
-        }
-        let thread_pool = builder
+    pub(crate) fn new() -> anyhow::Result<Self> {
+        let thread_pool = rayon::ThreadPoolBuilder::new()
+            .thread_name(|index| format!("rg-macro-runtime-expand-{index}"))
             .build()
             .context("while attempting to create macro expansion thread pool")?;
-
         Ok(Self { thread_pool })
     }
 
@@ -60,15 +36,6 @@ impl MacroExpansionExecutor {
                 .map(MacroExpansionJob::expand)
                 .collect::<Vec<_>>()
         })
-    }
-
-    fn thread_limit(preference: MacroExpansionPerformancePreference) -> Option<usize> {
-        match preference {
-            MacroExpansionPerformancePreference::FasterBuilds => None,
-            MacroExpansionPerformancePreference::LowerPeakMemory => {
-                Some(LOWER_PEAK_MEMORY_MACRO_EXPANSION_THREAD_LIMIT)
-            }
-        }
     }
 }
 

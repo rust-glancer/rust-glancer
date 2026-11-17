@@ -1,12 +1,7 @@
-//! Produces saved analysis from source and completes missing body coverage.
-//!
-//! Initial construction and package rebuilds run the same semantic phases with different input
-//! sets. Batch indexing bounds how many packages are in flight; split indexing lets body analysis
-//! finish after declarations are available. These choices have separate scheduling and publication
-//! rules, while sharing package selection, source discovery, and storage.
+//! Builds saved analysis eagerly and completes policy-excluded targets on request.
 
-mod batch;
 pub mod bench_support;
+mod bodies;
 mod builder;
 mod cache_probe;
 mod checkpoint_memory;
@@ -17,16 +12,6 @@ mod phases;
 mod plan;
 mod rebuild;
 mod recovery;
-mod split;
 
-pub use self::{
-    builder::ProjectBuilder,
-    config::{
-        IndexingPerformancePreference, PackageBatchSize, SplitIndexingMode, StartupCacheLoad,
-    },
-    split::{
-        AnalysisSurface, BodyPublication, BodyPublicationOutcome, SavedBodyBuildInputs,
-        SavedBodyProducts, SplitIndexing, SplitIndexingProgress, SplitIndexingStage,
-    },
-};
+pub use self::{builder::ProjectBuilder, config::StartupCacheLoad};
 pub(crate) use self::{rebuild::rebuild_packages, recovery::recover_from_cache_load_failure};

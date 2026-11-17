@@ -45,11 +45,7 @@ pub use rg_def_map::{MacroExpansionLimitGroup, MacroExpansionLimitReport};
 pub use self::indexing::bench_support;
 pub use self::{
     change::{AnalysisChangeSummary, ChangedFile, SavedFileChange},
-    indexing::{
-        AnalysisSurface, BodyPublication, BodyPublicationOutcome, IndexingPerformancePreference,
-        PackageBatchSize, ProjectBuilder, SavedBodyBuildInputs, SavedBodyProducts, SplitIndexing,
-        SplitIndexingMode, SplitIndexingProgress, SplitIndexingStage, StartupCacheLoad,
-    },
+    indexing::{ProjectBuilder, StartupCacheLoad},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::Project,

@@ -1,10 +1,5 @@
 //! Messages crossing from async RPC tasks onto the synchronous analysis lane.
 //!
-//! Editor requests carry a one-shot response endpoint with the command. Deferred indexing is the
-//! exception: its background thread sends internal progress and completion commands back through
-//! the same queue, so project generation checks still happen in FIFO order with every other
-//! mutation.
-
 use std::path::PathBuf;
 
 use rg_lsp_proto::{
@@ -12,7 +7,7 @@ use rg_lsp_proto::{
     DocumentRangeSnapshot, EditorDocumentSnapshot, FoldingClientCapabilities,
     GlobalPositionSnapshot, InlayHintsConfig, ProjectInitialization, QueryError, QueryValue,
 };
-use rg_project::{SavedBodyProducts, SavedFileChange, SplitIndexingProgress};
+use rg_project::SavedFileChange;
 use tokio::sync::oneshot;
 
 use super::ProjectConfiguration;
@@ -21,8 +16,6 @@ use super::ProjectConfiguration;
 pub(crate) type EngineResponder<T> = oneshot::Sender<anyhow::Result<T>>;
 /// Response endpoint for a semantic request that may finish without a publishable feature value.
 pub(crate) type QueryResponder<T> = oneshot::Sender<Result<QueryValue<T>, QueryError>>;
-/// Completion status after the body worker's jobs have drained. Products arrive in separate commands.
-pub(crate) type DeferredIndexingResult = anyhow::Result<()>;
 
 /// Work accepted by the one analysis thread.
 ///
@@ -117,26 +110,6 @@ pub(crate) enum EngineCommand {
     },
     ReindexWorkspace {
         respond_to: EngineResponder<()>,
-    },
-    /// Update the editor-derived package priority used by deferred background indexing.
-    SetDeferredIndexingPriority {
-        path: PathBuf,
-        prioritized: bool,
-        respond_to: EngineResponder<()>,
-    },
-    /// Transfer completed body products while construction continues in the background.
-    DeferredIndexingProducts {
-        products: Box<SavedBodyProducts>,
-    },
-    /// Publish one coalesced progress snapshot from the body worker.
-    DeferredIndexingProgress {
-        generation: u64,
-        progress: SplitIndexingProgress,
-    },
-    /// End the worker lifecycle after every completed product batch has been enqueued.
-    DeferredIndexingFinished {
-        generation: u64,
-        result: DeferredIndexingResult,
     },
     Shutdown(EngineResponder<()>),
 }

@@ -1,9 +1,8 @@
 //! Keeps package cache artifacts coherent across their phase databases.
 //!
-//! One package artifact stores Parse metadata, DefMap, Semantic IR, and Body IR together. A caller
-//! may write that artifact during a normal residency change or while batch indexing is still
-//! assembling the project. In both cases, all artifact-backed phase payloads must be written before
-//! they are offloaded, and all three phase databases must be offloaded as one lifecycle step.
+//! One package artifact stores Parse metadata, DefMap, Semantic IR, and Body IR together. All
+//! artifact-backed phase payloads must be written before they are offloaded, and all three phase
+//! databases must be offloaded as one lifecycle step.
 
 use anyhow::Context as _;
 use rayon::prelude::*;
@@ -30,22 +29,10 @@ pub(crate) struct PackageArtifactPhases<'a> {
 
 impl<'a> PackageArtifactPhases<'a> {
     pub(crate) fn for_project(project: &'a mut ProjectState) -> Self {
-        Self::new(
-            &mut project.def_map,
-            &mut project.semantic_ir,
-            &mut project.body_ir,
-        )
-    }
-
-    pub(crate) fn new(
-        def_map: &'a mut DefMapDb,
-        semantic_ir: &'a mut SemanticIrDb,
-        body_ir: &'a mut BodyIrDb,
-    ) -> Self {
         Self {
-            def_map,
-            semantic_ir,
-            body_ir,
+            def_map: &mut project.def_map,
+            semantic_ir: &mut project.semantic_ir,
+            body_ir: &mut project.body_ir,
         }
     }
 
@@ -72,10 +59,8 @@ impl<'a> PackageArtifactPhases<'a> {
 
 /// Encodes coherent package artifacts from a borrowed set of resident phase databases.
 ///
-/// Ordinary residency owns a complete [`ProjectState`], while batch indexing needs to persist one
-/// finished package group before that state has been assembled. This view keeps both lifecycle
-/// paths on the same artifact-writing protocol: all three phases and the parse snapshot are borrowed
-/// from one generation and written through a caller-owned cache transaction.
+/// All three phases and the parse snapshot are borrowed from one generation and written through
+/// a caller-owned cache transaction.
 pub(crate) struct PackageArtifactWriter<'a> {
     cache_plan: &'a WorkspaceCachePlan,
     package_source_fingerprints: &'a [Option<Fingerprint>],
@@ -87,39 +72,20 @@ pub(crate) struct PackageArtifactWriter<'a> {
 
 impl<'a> PackageArtifactWriter<'a> {
     pub(crate) fn for_project(project: &'a ProjectState) -> Self {
-        Self::new(
-            &project.cache_plan,
-            &project.package_source_fingerprints,
-            &project.parse,
-            &project.def_map,
-            &project.semantic_ir,
-            &project.body_ir,
-        )
-    }
-
-    pub(crate) fn new(
-        cache_plan: &'a WorkspaceCachePlan,
-        package_source_fingerprints: &'a [Option<Fingerprint>],
-        parse: &'a ParseDb,
-        def_map: &'a DefMapDb,
-        semantic_ir: &'a SemanticIrDb,
-        body_ir: &'a BodyIrDb,
-    ) -> Self {
         Self {
-            cache_plan,
-            package_source_fingerprints,
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
+            cache_plan: &project.cache_plan,
+            package_source_fingerprints: &project.package_source_fingerprints,
+            parse: &project.parse,
+            def_map: &project.def_map,
+            semantic_ir: &project.semantic_ir,
+            body_ir: &project.body_ir,
         }
     }
 
     /// Writes package-local artifacts without committing the surrounding package-set update.
     ///
-    /// Batch indexing deliberately keeps one transaction open while later batches read artifacts
-    /// written by earlier batches. The owner commits only after every selected package succeeds,
-    /// so a failed build still leaves the cache's incomplete-update marker intact.
+    /// The owner commits only after every selected package succeeds, so a failed write leaves
+    /// the cache's incomplete-update marker intact.
     pub(crate) fn write_packages(
         &self,
         update: &PackageCacheUpdate<'_>,

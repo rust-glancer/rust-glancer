@@ -6,8 +6,8 @@ use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, Workspac
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
-    DefMap, DefMapBuildOutput, DefMapDb, GeneratedItemStores, MacroExpansionPerformancePreference,
-    MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
+    DefMap, DefMapBuildOutput, DefMapDb, GeneratedItemStores, MacroSourceFileLoader,
+    MacroSourceFileRequest, MacroSourceFileResolution,
 };
 
 /// End-to-end fixture for tests that need name resolution data.
@@ -195,7 +195,6 @@ pub(crate) fn build_source_closed_def_map(
             &packages,
             true,
             names,
-            MacroExpansionPerformancePreference::default(),
             &mut SourceClosedMacroSourceFileLoader,
         )
         .expect("fixture DefMap should build")

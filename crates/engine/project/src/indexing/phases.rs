@@ -23,8 +23,7 @@ use super::{
     plan::PackageBuildPlan,
 };
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, SplitIndexingMode,
-    StartupCacheLoad,
+    PackageResidencyPolicy, StartupCacheLoad,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
     stats::MacroExpansionLimitBuildSummary,
@@ -53,33 +52,13 @@ pub(super) struct BuiltPhases {
 pub(super) fn build(
     workspace: &WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,
-    indexing_preference: IndexingPerformancePreference,
-    package_batch_size: PackageBatchSize,
     package_residency_policy: PackageResidencyPolicy,
     cache_plan: &WorkspaceCachePlan,
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
-    split_indexing_mode: SplitIndexingMode,
     memory_hooks: &dyn ProjectMemoryHooks,
     sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<BuiltPhases> {
-    if indexing_preference == IndexingPerformancePreference::LowerPeakMemory {
-        return super::batch::build(
-            workspace,
-            body_ir_policy,
-            indexing_preference,
-            package_residency_policy,
-            cache_plan,
-            cache_store,
-            startup_cache_load,
-            split_indexing_mode,
-            memory_hooks,
-            sampler,
-            package_batch_size,
-        )
-        .context("while attempting to build project in package batches");
-    }
-
     // ---------------------
     // 1. Parse all packages
     // ---------------------
@@ -151,8 +130,8 @@ pub(super) fn build(
         .source_packages
         .visible_dependency_subset(workspace);
     // Reallocation copies payloads out of allocator pages shared with build temporaries. Only pay
-    // for that copy when retaining decoded data: resident mode or unfinished early-start builds.
-    let reallocate_payloads = split_indexing_mode.reallocate_payloads(package_residency_policy);
+    // for that copy when retaining decoded data: resident mode.
+    let reallocate_payloads = !package_residency_policy.is_offloadable();
 
     // ----------------
     // 6. Build def-map
@@ -175,7 +154,6 @@ pub(super) fn build(
             build_plan.source_packages.as_slice(),
             reallocate_payloads,
             &mut names,
-            indexing_preference.macro_expansion_preference(),
             &mut macro_source_files::MacroSourceFileLoader::new(
                 &build_plan.source_packages,
                 memory_hooks,
@@ -298,7 +276,6 @@ pub(super) fn build(
         loaders.semantic_ir.clone(),
         &rebuild_subset,
     )
-    .worker_limit(indexing_preference.body_ir_worker_limit())
     .evaluate_initializers()?;
     semantic_ir.apply_initializer_values(initializer_values);
 
@@ -312,29 +289,14 @@ pub(super) fn build(
         loaders.def_map,
         loaders.semantic_ir,
         &rebuild_subset,
-    )
-    .worker_limit(indexing_preference.body_ir_worker_limit());
-    match split_indexing_mode {
-        SplitIndexingMode::Full => {
-            let products = body_builder
-                .configured_bodies(body_ir_policy)
-                .build()
-                .context("build body products")?;
-            body_ir
-                .replace_built_packages(products)
-                .context("assemble body packages")?;
-        }
-        SplitIndexingMode::EarlyStart => {
-            for (package, coverage) in body_builder
-                .prepare_coverage(body_ir_policy)
-                .context("prepare body coverage")?
-            {
-                body_ir
-                    .replace_package(package, coverage)
-                    .context("initialize body package directory")?;
-            }
-        }
-    }
+    );
+    let products = body_builder
+        .configured_bodies(body_ir_policy)
+        .build()
+        .context("build body products")?;
+    body_ir
+        .replace_built_packages(products)
+        .context("assemble body packages")?;
     // This validation covers both captured late files and the missing-path probes that answered
     // macro source-file requests, so a concurrent source change rejects the whole candidate.
     parse

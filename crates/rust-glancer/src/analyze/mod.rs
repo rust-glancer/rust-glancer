@@ -6,10 +6,7 @@ use std::{
 use anyhow::Context as _;
 use rg_lsp_engine::MemoryControl;
 use rg_profile::ProfileRun;
-use rg_project::{
-    BuildProcessMemory, IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy,
-    Project, SplitIndexingMode, StartupCacheLoad,
-};
+use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project, StartupCacheLoad};
 use rg_workspace::{
     CargoMetadataConfig, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
 };
@@ -20,7 +17,7 @@ mod output;
 mod profile;
 
 pub(crate) use self::{
-    config::{CliIndexingPreference, CliPackageResidencyPolicy, OutputFormat},
+    config::{CliPackageResidencyPolicy, OutputFormat},
     profile::profile_groups_help,
 };
 
@@ -32,8 +29,6 @@ pub(crate) fn analyze(
     include_memory: bool,
     startup_cache_load: StartupCacheLoad,
     package_residency_policy: PackageResidencyPolicy,
-    indexing_preference: IndexingPerformancePreference,
-    package_batch_size: PackageBatchSize,
     target: Option<String>,
     output_format: OutputFormat,
 ) -> anyhow::Result<()> {
@@ -85,9 +80,6 @@ pub(crate) fn analyze(
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
-        .indexing_preference(indexing_preference)
-        .package_batch_size(package_batch_size)
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
         .memory_hooks(crate::memory::project_memory_hooks());
@@ -97,21 +89,9 @@ pub(crate) fn analyze(
     } else {
         builder
     };
-    let mut project = builder
+    let project = builder
         .build()
         .context("while attempting to build project")?;
-    if include_memory {
-        let finish_memory_control = memory_control;
-        project
-            .split_indexing()
-            .finish_profiled(move || sample_process_memory(&finish_memory_control))
-            .context("while attempting to finish deferred indexing")?;
-    } else {
-        project
-            .split_indexing()
-            .finish()
-            .context("while attempting to finish deferred indexing")?;
-    }
     let profile_snapshot = profile_run.map(ProfileRun::finish);
 
     let analyze_report = data::AnalyzeReport::build(

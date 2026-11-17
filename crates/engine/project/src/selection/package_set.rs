@@ -1,9 +1,5 @@
-use std::path::Path;
-
-use anyhow::Context as _;
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::PackageSubset;
-use rg_parse::ParseDb;
 use rg_std::{MemorySize, UniqueVec};
 use rg_workspace::WorkspaceMetadata;
 
@@ -40,27 +36,8 @@ impl PhasePackageSet {
         Self { packages }
     }
 
-    pub(crate) fn from_path(parse: &ParseDb, path: &Path) -> anyhow::Result<Self> {
-        let path = path
-            .canonicalize()
-            .with_context(|| format!("canonicalize {}", path.display()))?;
-        // Shared source files can appear in several targets or packages. Keep each owner once.
-        let mut packages = parse
-            .file_refs_for_path(&path)
-            .into_iter()
-            .map(|file| PackageSlot(file.package))
-            .collect::<Vec<_>>();
-        packages.sort_unstable();
-        packages.dedup();
-        Ok(Self { packages })
-    }
-
     pub(crate) fn as_slice(&self) -> &[PackageSlot] {
         &self.packages
-    }
-
-    pub(crate) fn into_vec(self) -> Vec<PackageSlot> {
-        self.packages
     }
 
     pub(crate) fn is_empty(&self) -> bool {

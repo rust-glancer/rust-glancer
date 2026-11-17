@@ -28,16 +28,12 @@ pub use self::{
     completion::CompletionClientCapabilities,
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
-        DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, InlayHintsConfig,
-        PackageBatchSize, SysrootDiscovery,
+        DiagnosticsConfig, EngineConfig, InlayHintsConfig, SysrootDiscovery,
     },
     error::EngineError,
     file_uri::{FileUriError, file_uri_to_path, path_for_editor, path_to_file_uri},
     folding::FoldingClientCapabilities,
-    notifications::{
-        DeferredIndexingOutcome, IndexingProgress, IndexingStage, ServiceLogLevel,
-        ServiceNotification,
-    },
+    notifications::{ServiceLogLevel, ServiceNotification},
     query::{QueryError, QueryScope, QueryValue},
     saved_source::{CapturedSourceInput, SaveProposal, SavedProjectChanges},
     semantic_tokens::{SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES, semantic_tokens_legend},

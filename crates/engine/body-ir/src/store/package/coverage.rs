@@ -39,8 +39,8 @@ pub enum CrateBodiesCoverage {
     /// All files containing bodies in this crate have been analyzed.
     #[display("complete")]
     Complete,
-    /// Files already analyzed, sorted and unique. Includes files with no bodies so queries do not
-    /// request them again.
+    /// Files included in request-local analysis, sorted and unique. Saved builds complete whole
+    /// targets; current-buffer analysis can cover only the files needed by one request.
     #[display("partial")]
     Files(Box<[FileId]>),
     /// Bodies have not been analyzed yet for this target.
@@ -64,28 +64,6 @@ impl CrateBodiesCoverage {
 
     pub fn is_materialized(&self) -> bool {
         matches!(self, Self::Complete | Self::Files(_))
-    }
-
-    pub fn contains_file(&self, file: FileId) -> bool {
-        match self {
-            Self::Complete => true,
-            Self::Files(files) => files.binary_search_by_key(&file.0, |file| file.0).is_ok(),
-            Self::Missing | Self::SkippedByPolicy => false,
-        }
-    }
-
-    /// Whether `self` already covers every file analyzed by `other`.
-    ///
-    /// For example, coverage of `lib.rs` and `model.rs` contains coverage of just `lib.rs`.
-    /// Missing and policy-skipped coverage carry no processed work, so every result contains them.
-    pub fn contains(&self, other: &Self) -> bool {
-        match other {
-            Self::Missing | Self::SkippedByPolicy => true,
-            Self::Complete => self.is_complete(),
-            Self::Files(files) => {
-                self.is_materialized() && files.iter().all(|&file| self.contains_file(file))
-            }
-        }
     }
 
     pub fn status(&self) -> CrateBodiesStatus {

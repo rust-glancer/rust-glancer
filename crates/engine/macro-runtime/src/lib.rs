@@ -14,7 +14,6 @@ pub use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
 
 pub use self::{
     cache::{MacroCompileRecord, MacroExpandRecord},
-    executor::MacroExpansionPerformancePreference,
     runtime::{
         CompletedMacroExpansion, DeclarativeMacroDefinition, MacroExpansionRequest,
         MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,

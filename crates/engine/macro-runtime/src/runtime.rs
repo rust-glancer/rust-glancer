@@ -18,8 +18,7 @@ use super::{
         CachedPreparedMacroExpansion, MacroCompileRecord, MacroExpandRecord, MacroExpansionCache,
     },
     executor::{
-        MacroExpansionExecutor, MacroExpansionJob, MacroExpansionOutput,
-        MacroExpansionPerformancePreference, MacroExpansionWork,
+        MacroExpansionExecutor, MacroExpansionJob, MacroExpansionOutput, MacroExpansionWork,
     },
     syntax::tt_span_for_parse_span,
 };
@@ -28,15 +27,13 @@ use super::{
 pub struct MacroExpansionRuntime {
     cache: MacroExpansionCache,
     executor: Option<MacroExpansionExecutor>,
-    performance_preference: MacroExpansionPerformancePreference,
 }
 
 impl MacroExpansionRuntime {
-    pub fn new(performance_preference: MacroExpansionPerformancePreference) -> Self {
+    pub fn new() -> Self {
         Self {
             cache: MacroExpansionCache::default(),
             executor: None,
-            performance_preference,
         }
     }
 
@@ -138,7 +135,7 @@ impl MacroExpansionRuntime {
     fn executor(&mut self) -> anyhow::Result<&MacroExpansionExecutor> {
         if self.executor.is_none() {
             self.executor = Some(
-                MacroExpansionExecutor::new(self.performance_preference)
+                MacroExpansionExecutor::new()
                     .context("while attempting to initialize macro expansion runtime")?,
             );
         }
@@ -165,7 +162,7 @@ impl MacroExpansionRuntime {
 
 impl Default for MacroExpansionRuntime {
     fn default() -> Self {
-        Self::new(MacroExpansionPerformancePreference::default())
+        Self::new()
     }
 }
 

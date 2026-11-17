@@ -34,8 +34,6 @@ mod store;
 pub mod testonly;
 mod visible;
 
-pub use rg_macro_runtime::MacroExpansionPerformancePreference;
-
 pub use self::{
     binding::{NameBinding, NameBindingProvenance, Namespace, NamespaceSet, PerNs, Visibility},
     body_macros::{

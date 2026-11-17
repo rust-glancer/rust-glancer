@@ -18,7 +18,7 @@ use crate::{
 /// Packages omitted from `source_packages` already have matching offloaded artifacts, so later
 /// build phases can read them lazily instead of lowering them from source. The compact DefMap
 /// directories route dependency and file queries, while Body IR coverage tells its provisional
-/// package-store entry which deferred data is already available.
+/// package-store entry which targets already have bodies.
 #[derive(MemorySize)]
 pub(super) struct PackageBuildPlan {
     pub(super) source_packages: PhasePackageSet,

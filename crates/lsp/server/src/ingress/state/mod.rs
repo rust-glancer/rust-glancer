@@ -722,10 +722,7 @@ impl EditorState {
         let cleanup = ClosedDocumentCleanup::new(weak_state, path.to_path_buf(), open.session);
         let (sequenced, current) = SequencedLifecycleEvent::new(
             entry.tail.clone(),
-            LifecycleEvent::Close {
-                path: path.to_path_buf(),
-                route: open.route,
-            },
+            LifecycleEvent::Close { route: open.route },
             Some(cleanup),
         );
         entry.last_session = open.session;

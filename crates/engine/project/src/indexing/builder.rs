@@ -8,8 +8,8 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetada
 
 use super::initial::build_state;
 use crate::{
-    BuildProcessMemory, IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy,
-    Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, SplitIndexingMode, StartupCacheLoad,
+    BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
+    ProjectMemoryPurgePoint, StartupCacheLoad,
     memory::NoopProjectMemoryHooks,
     profile::{BuildMemorySampler, record_build_checkpoint},
     storage::{cache::PackageCacheInstance, residency::ResidencyApplication},
@@ -21,9 +21,6 @@ pub struct ProjectBuilder {
     workspace_lowering_config: WorkspaceLoweringConfig,
     cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
-    split_indexing_mode: SplitIndexingMode,
-    indexing_preference: IndexingPerformancePreference,
-    package_batch_size: PackageBatchSize,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_sampler: BuildMemorySampler,
@@ -37,9 +34,6 @@ impl ProjectBuilder {
             workspace_lowering_config: WorkspaceLoweringConfig::default(),
             cargo_metadata_config: CargoMetadataConfig::default(),
             body_ir_policy: BodyIrBuildPolicy::default(),
-            split_indexing_mode: SplitIndexingMode::default(),
-            indexing_preference: IndexingPerformancePreference::default(),
-            package_batch_size: PackageBatchSize::default(),
             package_residency_policy: PackageResidencyPolicy::default(),
             startup_cache_load: StartupCacheLoad::default(),
             memory_sampler: BuildMemorySampler::disabled(),
@@ -49,24 +43,6 @@ impl ProjectBuilder {
 
     pub fn body_ir_policy(mut self, policy: BodyIrBuildPolicy) -> Self {
         self.body_ir_policy = policy;
-        self
-    }
-
-    pub fn split_indexing_mode(mut self, mode: SplitIndexingMode) -> Self {
-        self.split_indexing_mode = mode;
-        self
-    }
-
-    pub fn indexing_preference(mut self, preference: IndexingPerformancePreference) -> Self {
-        self.indexing_preference = preference;
-        self
-    }
-
-    /// Selects how many source packages batch indexing should process together.
-    ///
-    /// This setting is used only with [`IndexingPerformancePreference::LowerPeakMemory`].
-    pub fn package_batch_size(mut self, size: PackageBatchSize) -> Self {
-        self.package_batch_size = size;
         self
     }
 
@@ -122,9 +98,6 @@ impl ProjectBuilder {
             self.cargo_metadata_config,
             cache_instance,
             self.body_ir_policy,
-            self.split_indexing_mode,
-            self.indexing_preference,
-            self.package_batch_size,
             self.package_residency_policy,
             self.startup_cache_load,
             Arc::clone(&self.memory_hooks),

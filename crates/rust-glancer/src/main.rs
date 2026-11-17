@@ -2,7 +2,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use rg_project::{PackageBatchSize, StartupCacheLoad};
+use rg_project::StartupCacheLoad;
 
 mod analyze;
 mod compare_lsp;
@@ -12,10 +12,7 @@ mod report;
 mod start_engine;
 mod start_server;
 
-use self::{
-    analyze::{CliIndexingPreference, CliPackageResidencyPolicy},
-    compare_lsp::CliFixture,
-};
+use self::{analyze::CliPackageResidencyPolicy, compare_lsp::CliFixture};
 
 /// Command-line interface for the `rust-glancer` binary.
 #[derive(Debug, Parser)]
@@ -58,16 +55,6 @@ enum Command {
             hide = true
         )]
         package_residency: CliPackageResidencyPolicy,
-        /// Which indexing performance trade-off rust-glancer should prioritize.
-        #[clap(
-            long = "indexing-preference",
-            value_enum,
-            default_value_t = CliIndexingPreference::default()
-        )]
-        indexing_preference: CliIndexingPreference,
-        /// Packages processed together by lower-peak-memory batch indexing.
-        #[clap(long, default_value_t = PackageBatchSize::default())]
-        package_batch_size: PackageBatchSize,
         /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.
         #[clap(long)]
         target: Option<String>,
@@ -116,8 +103,6 @@ fn main() -> anyhow::Result<()> {
             memory,
             load,
             package_residency,
-            indexing_preference,
-            package_batch_size,
             target,
             format,
         } => {
@@ -132,8 +117,6 @@ fn main() -> anyhow::Result<()> {
                     StartupCacheLoad::Disabled
                 },
                 package_residency.into(),
-                indexing_preference.into(),
-                package_batch_size,
                 target,
                 format,
             )

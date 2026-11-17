@@ -14,7 +14,7 @@ use rg_std::Shrink;
 
 use super::macro_source_files;
 use crate::{
-    ProjectMemoryPurgePoint, SplitIndexingMode,
+    ProjectMemoryPurgePoint,
     selection::PhasePackageSet,
     state::ProjectState,
     stats::MacroExpansionLimitBuildSummary,
@@ -88,11 +88,8 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // the same source loader as fresh construction for both macro-generated modules and generated
     // includes, while clean dependency packages stay lazy.
     let memory_hooks = Arc::clone(&state.memory_hooks);
-    // Early-start declarations stay decoded until Body IR is durable. Full builds only need
-    // reallocation in resident mode; offloading mode can write and drop the completed payloads.
-    let reallocate_payloads = state
-        .split_indexing_mode
-        .reallocate_payloads(state.package_residency_policy);
+    // Resident data benefits from reallocation; offloading can write and drop the payloads.
+    let reallocate_payloads = !state.package_residency_policy.is_offloadable();
     let def_map_output = state
         .def_map
         .build_packages(
@@ -103,7 +100,6 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             packages.as_slice(),
             reallocate_payloads,
             &mut state.names,
-            state.indexing_preference.macro_expansion_preference(),
             &mut macro_source_files::MacroSourceFileLoader::new(&packages, memory_hooks.as_ref()),
         )
         .context("while attempting to rebuild affected def-map packages")?;
@@ -141,7 +137,6 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         loaders.semantic_ir.clone(),
         &rebuild_subset,
     )
-    .worker_limit(state.indexing_preference.body_ir_worker_limit())
     .evaluate_initializers()?;
     semantic_ir.apply_initializer_values(initializer_values);
 
@@ -155,30 +150,15 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),
         &rebuild_subset,
-    )
-    .worker_limit(state.indexing_preference.body_ir_worker_limit());
+    );
     let mut body_ir = state.body_ir.clone();
-    match state.split_indexing_mode {
-        SplitIndexingMode::Full => {
-            let products = body_builder
-                .configured_bodies(state.body_ir_policy)
-                .build()
-                .context("rebuild body products")?;
-            body_ir
-                .replace_built_packages(products)
-                .context("assemble rebuilt body packages")?;
-        }
-        SplitIndexingMode::EarlyStart => {
-            for (package, coverage) in body_builder
-                .prepare_coverage(state.body_ir_policy)
-                .context("prepare rebuilt body coverage")?
-            {
-                body_ir
-                    .replace_package(package, coverage)
-                    .context("initialize rebuilt body directory")?;
-            }
-        }
-    }
+    let products = body_builder
+        .configured_bodies(state.body_ir_policy)
+        .build()
+        .context("build body products")?;
+    body_ir
+        .replace_built_packages(products)
+        .context("assemble body packages")?;
     // Validate every late read and missing-path probe before the candidate replaces retained state.
     state
         .parse

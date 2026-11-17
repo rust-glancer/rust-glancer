@@ -12,10 +12,7 @@ use rg_std::NormalizedPathBuf;
 use tarpc::context;
 use tower_lsp_server::{Client as LspClient, gen_lsp_types::MessageType};
 
-use crate::{
-    client_status::{ClientStatusPublisher, work_done_progress},
-    ingress::EditorStateHandle,
-};
+use crate::{client_status::work_done_progress, ingress::EditorStateHandle};
 
 /// Publishes service side effects to the real LSP client.
 ///
@@ -25,21 +22,12 @@ use crate::{
 #[derive(Clone, Debug)]
 pub(crate) struct NotificationsPublisher {
     lsp_client: LspClient,
-    client_status: ClientStatusPublisher,
     editor: EditorStateHandle,
 }
 
 impl NotificationsPublisher {
-    pub(crate) fn new(
-        lsp_client: LspClient,
-        editor: EditorStateHandle,
-        client_status: ClientStatusPublisher,
-    ) -> Self {
-        Self {
-            lsp_client,
-            client_status,
-            editor,
-        }
+    pub(crate) fn new(lsp_client: LspClient, editor: EditorStateHandle) -> Self {
+        Self { lsp_client, editor }
     }
 
     async fn publish_service_notification(
@@ -107,29 +95,6 @@ impl NotificationsPublisher {
                         "failed to request inlay hint refresh after service notification"
                     );
                 }
-            }
-            ServiceNotification::DeferredIndexingStarted { root, generation } => {
-                self.client_status
-                    .deferred_indexing_started(&root, generation)
-                    .await;
-            }
-            ServiceNotification::DeferredIndexingProgress {
-                root,
-                generation,
-                progress,
-            } => {
-                self.client_status
-                    .deferred_indexing_progress(&root, generation, progress)
-                    .await;
-            }
-            ServiceNotification::DeferredIndexingFinished {
-                root,
-                generation,
-                outcome,
-            } => {
-                self.client_status
-                    .deferred_indexing_finished(&root, generation, outcome)
-                    .await;
             }
             ServiceNotification::LogMessage { level, message } => {
                 self.lsp_client

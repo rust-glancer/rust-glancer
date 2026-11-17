@@ -16,9 +16,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::macro_source_files;
-use crate::{
-    IndexingPerformancePreference, memory::NoopProjectMemoryHooks, selection::PhasePackageSet,
-};
+use crate::{memory::NoopProjectMemoryHooks, selection::PhasePackageSet};
 
 /// Builds ItemTree for every parsed benchmark package through the selected-package lowerer.
 pub fn build_item_tree(
@@ -56,7 +54,6 @@ pub fn build_def_map(
             source_packages.as_slice(),
             true,
             names,
-            IndexingPerformancePreference::default().macro_expansion_preference(),
             &mut macro_source_files::MacroSourceFileLoader::new(
                 &source_packages,
                 &NoopProjectMemoryHooks,
@@ -105,7 +102,6 @@ pub fn build_body_ir(
             .map(|_| PackageEntry::offloaded_with(PackageBodiesCoverage::from_crates(Vec::new())))
             .collect(),
     ));
-    let indexing_preference = IndexingPerformancePreference::default();
 
     let products = BodyIrBuilder::new(
         parse,
@@ -119,7 +115,6 @@ pub fn build_body_ir(
         &subset,
     )
     .configured_bodies(BodyIrBuildPolicy::default())
-    .worker_limit(indexing_preference.body_ir_worker_limit())
     .build()
     .context("build benchmark body products")?;
     body_ir

@@ -1,24 +1,6 @@
 //! Package, target, and file selection for saved body builds.
 
-use rg_ir_model::{CrateRef, FileId};
 use rg_std::MemorySize;
-
-/// One semantic crate interpretation of a source file selected for Body IR lowering.
-///
-/// A source file can participate in more than one Cargo target. Keeping the crate identity beside
-/// the file prevents an exact request for one target from also lowering a sibling target that reads
-/// the same file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BodyIrFile {
-    pub crate_ref: CrateRef,
-    pub file: FileId,
-}
-
-impl BodyIrFile {
-    pub fn new(crate_ref: CrateRef, file: FileId) -> Self {
-        Self { crate_ref, file }
-    }
-}
 
 /// Package-set selector for eager body lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]

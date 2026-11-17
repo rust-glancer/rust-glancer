@@ -5,7 +5,7 @@ use rg_std::CancellationToken;
 use test_fixture::testonly::MarkedText;
 
 use crate::{
-    CurrentSourceBuildSummary, Project, SplitIndexingMode,
+    CurrentSourceBuildSummary, Project,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -36,10 +36,10 @@ pub fn inspect() {
 "#;
 
 #[test]
-fn early_start_current_body_completion_builds_request_local_item_lookup() {
+fn current_body_completion_builds_request_local_item_lookup() {
     let source = ProjectSourceFixture::build(
         r#"
-//- /src/lib.rs crate:current_body_early_start_fixture
+//- /src/lib.rs crate:current_body_fixture
 pub struct Saved;
 
 impl Saved {
@@ -54,10 +54,10 @@ pub fn inspect() {}
 "#,
     );
     let project = Project::builder(source.workspace_metadata())
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
         .build()
-        .expect("early-start project should build");
-    assert_eq!(project.stats().body_ir.missing_crate_count, 1);
+        .expect("saved project should build");
+    let saved_stats = project.stats();
+    assert_eq!(saved_stats.body_ir.missing_crate_count, 0);
 
     let snapshot = project.snapshot();
     let context = snapshot
@@ -85,8 +85,7 @@ pub fn inspect() {
 "#,
     );
 
-    // The saved Body IR is still missing here. Current-body analysis must build only the cheap
-    // crate-wide lookup it needs instead of waiting for or materializing every saved body.
+    // Current-body analysis owns its lookup data without changing the saved declarations.
     for (marker, expected) in [("method", "method"), ("associated", "associated")] {
         let offset = current
             .offset(marker)
@@ -108,13 +107,13 @@ pub fn inspect() {
                 CancellationToken::new(),
                 |_| Ok(()),
             )
-            .expect("early-start current body should build");
+            .expect("saved current body should build");
         let labels = analysis
             .completions_at(
                 CompletionQuery::new(target.0, target.1, offset)
                     .with_completion_source(&completion_source),
             )
-            .expect("early-start completion should resolve")
+            .expect("saved completion should resolve")
             .into_iter()
             .map(|item| item.label)
             .collect::<Vec<_>>();
@@ -125,14 +124,14 @@ pub fn inspect() {
         );
         assert!(
             summary.is_complete(),
-            "early-start completion should build every selected current body: {summary:?}",
+            "saved completion should build every selected current body: {summary:?}",
         );
     }
 
     assert_eq!(
-        project.stats().body_ir.missing_crate_count,
-        1,
-        "request-local lookup construction must not materialize saved Body IR",
+        project.stats(),
+        saved_stats,
+        "request-local lookup construction must not change the saved project",
     );
 }
 

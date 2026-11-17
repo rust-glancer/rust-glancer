@@ -1,7 +1,7 @@
 //! RPC vocabulary between the editor-facing server and one analysis engine.
 //!
 //! Document methods carry complete immutable snapshots; there is no second document-text lifecycle
-//! on this boundary. A lightweight open-path hint may affect only deferred package scheduling.
+//! on this boundary.
 //! Saved-project mutations are separate and either carry exact source text or explicitly ask the
 //! project layer to interpret a filesystem path. Responses preserve operational failures instead
 //! of folding them into feature-specific empty values.
@@ -19,16 +19,10 @@ use crate::{
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
-/// Indexing state when the first queryable project is published.
-///
-/// The initialization response and background notifications travel independently. Returning this
-/// snapshot lets the server publish readiness without assuming that a missing start notification
-/// means there is no background work. The generation keeps an earlier completion authoritative
-/// when its notification arrives before this response.
+/// Identity of the saved project after eager indexing completes.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ProjectInitialization {
     pub generation: u64,
-    pub has_deferred_indexing: bool,
 }
 
 /// Requests and notifications accepted by one analysis engine.
@@ -42,9 +36,6 @@ pub trait EngineService {
     -> EngineResult<ProjectInitialization>;
 
     async fn initialized() -> EngineResult<()>;
-
-    /// Move the package containing an open editor path ahead of ordinary deferred work.
-    async fn set_deferred_indexing_priority(path: PathBuf, prioritized: bool) -> EngineResult<()>;
 
     async fn did_save(proposal: SaveProposal) -> EngineResult<u64>;
 

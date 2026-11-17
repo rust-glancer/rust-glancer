@@ -3,11 +3,7 @@
 //! This pass does not resolve names. It records the source shape, lexical scopes,
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
-use std::{
-    num::NonZeroUsize,
-    sync::atomic::{AtomicUsize, Ordering},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 mod body;
 mod builder;
@@ -39,10 +35,7 @@ pub(super) use self::{
     macro_expansion::BodyMacroExpansion,
     task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask},
 };
-use super::{
-    BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
-    materialization::BodyIrMaterialization,
-};
+use super::{local_thread_pool, materialization::BodyIrMaterialization};
 use crate::CrateBodiesCoverage;
 
 // These thresholds are diagnostic filters, not build budgets. Debug logging should identify
@@ -97,13 +90,11 @@ pub(super) fn build_selected_packages(
     scope: BodyIrMaterialization<'_>,
     package_slots: &[PackageSlot],
     interners: &mut PackageNameInterners,
-    worker_limit: Option<NonZeroUsize>,
-    report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
     cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
     validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
-    validate_selected_files(parse.package_count(), &scope)?;
+    validate_selected_crates(parse.package_count(), &scope)?;
 
     let mut selected = vec![false; parse.package_count()];
     for package_slot in package_slots {
@@ -120,8 +111,6 @@ pub(super) fn build_selected_packages(
         interners,
         &selected,
         &mut packages,
-        worker_limit,
-        report_progress,
         cancellation,
     )?;
 
@@ -141,8 +130,6 @@ fn build_package_outputs(
     interners: &mut PackageNameInterners,
     selected: &[bool],
     packages: &mut [Option<LoweredPackageBodies>],
-    worker_limit: Option<NonZeroUsize>,
-    report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
     cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
@@ -152,9 +139,7 @@ fn build_package_outputs(
         parse.package_count(),
     );
 
-    let thread_pool = local_thread_pool("rg-body-lower", worker_limit)?;
-    let completed_packages = AtomicUsize::new(0);
-    let total_packages = selected.iter().filter(|&&selected| selected).count();
+    let thread_pool = local_thread_pool("rg-body-lower")?;
 
     // Body lowering is package-local: each worker receives one parse package, one name interner,
     // and one output slot. Non-selected rebuild slots stay absent from this temporary output.
@@ -182,15 +167,6 @@ fn build_package_outputs(
                         interner,
                         cancellation,
                     )?);
-                    if let Some(report_progress) = report_progress {
-                        let completed_packages =
-                            completed_packages.fetch_add(1, Ordering::Relaxed) + 1;
-                        report_progress(BodyIrBuildProgress::new(
-                            BodyIrBuildStage::Lowering,
-                            completed_packages,
-                            total_packages,
-                        ));
-                    }
                     Ok(())
                 },
             )
@@ -284,16 +260,7 @@ fn build_package_with_interner(
             })
             .collect::<Vec<_>>();
 
-        // Decide both whether this crate needs work and how much of its body surface the result
-        // will cover. Selected-file rebuilds are allowed to materialize a crate partially, while
-        // package-policy builds keep the historical all-or-nothing behavior.
-        let body_files = functions
-            .iter()
-            .map(|(_, file_id, _)| *file_id)
-            .chain(consts.iter().map(|(_, file_id, _)| *file_id))
-            .chain(statics.iter().map(|(_, file_id, _)| *file_id))
-            .collect::<Vec<_>>();
-        let coverage = scope.crate_coverage(crate_ref, parse_package, parse_target, &body_files);
+        let coverage = scope.crate_coverage(parse_package, parse_target);
         if !coverage.is_materialized() {
             crates.push((crate_id, LoweredCrateBodies::with_coverage(coverage)));
             continue;
@@ -308,8 +275,6 @@ fn build_package_with_interner(
             parse_package,
             def_map,
             semantic_ir,
-            scope,
-            crate_ref,
             functions,
             consts,
             statics,
@@ -386,22 +351,12 @@ fn validate_selected_packages(
     Ok(())
 }
 
-fn validate_selected_files(
+fn validate_selected_crates(
     package_count: usize,
     scope: &BodyIrMaterialization<'_>,
 ) -> anyhow::Result<()> {
     match scope {
-        BodyIrMaterialization::Selected { files, crates } => {
-            if let Some(file) = files
-                .iter()
-                .copied()
-                .find(|file| file.crate_ref.package.0 >= package_count)
-            {
-                anyhow::bail!(
-                    "body IR file package slot {} is out of bounds for {package_count} parsed packages",
-                    file.crate_ref.package.0,
-                );
-            }
+        BodyIrMaterialization::SelectedCrates(crates) => {
             if let Some(crate_ref) = crates
                 .iter()
                 .copied()
@@ -414,7 +369,6 @@ fn validate_selected_files(
             }
         }
         BodyIrMaterialization::ConfiguredBodies(_)
-        | BodyIrMaterialization::CoverageOnly(_)
         | BodyIrMaterialization::DeclarationInitializers => {}
     }
 

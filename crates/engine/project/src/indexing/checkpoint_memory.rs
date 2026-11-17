@@ -77,17 +77,6 @@ impl<'a> CheckpointMemory<'a> {
         self.capture_memory_snapshot(memory);
     }
 
-    /// Records a lifecycle boundary that does not own a dedicated retained-memory metric.
-    ///
-    /// Batch indexing revisits the same phase sequence for several package groups. Cache-write and
-    /// offload boundaries still need process samples, but adding one snapshot metric per batch
-    /// would make the profile schema depend on workspace shape.
-    pub(super) fn checkpoint_labeled(self, sampler: &mut BuildMemorySampler, label: &'static str) {
-        let process_memory = sampler.sample_process_memory();
-        let active_retained_bytes = self.measure_retained(sampler);
-        record_build_checkpoint(label, None, active_retained_bytes, process_memory);
-    }
-
     fn capture_memory_snapshot(&self, memory: MemorySnapshotMetric) {
         if !memory.is_enabled() {
             return;

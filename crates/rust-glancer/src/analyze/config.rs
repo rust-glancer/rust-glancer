@@ -1,7 +1,5 @@
-use std::fmt as std_fmt;
-
 use clap::ValueEnum;
-use rg_project::{IndexingPerformancePreference, PackageResidencyPolicy};
+use rg_project::PackageResidencyPolicy;
 
 /// Developer-only storage choices for the `analyze` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -15,43 +13,6 @@ impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
         match policy {
             CliPackageResidencyPolicy::AllResident => Self::AllResident,
             CliPackageResidencyPolicy::AllOffloadable => Self::AllOffloadable,
-        }
-    }
-}
-
-/// CLI-facing indexing preference names for the `analyze` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum CliIndexingPreference {
-    LowerPeakMemory,
-    FasterBuilds,
-}
-
-impl From<IndexingPerformancePreference> for CliIndexingPreference {
-    fn from(preference: IndexingPerformancePreference) -> Self {
-        match preference {
-            IndexingPerformancePreference::LowerPeakMemory => Self::LowerPeakMemory,
-            IndexingPerformancePreference::FasterBuilds => Self::FasterBuilds,
-        }
-    }
-}
-
-impl Default for CliIndexingPreference {
-    fn default() -> Self {
-        IndexingPerformancePreference::default().into()
-    }
-}
-
-impl std_fmt::Display for CliIndexingPreference {
-    fn fmt(&self, f: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
-        f.write_str(IndexingPerformancePreference::from(*self).config_name())
-    }
-}
-
-impl From<CliIndexingPreference> for IndexingPerformancePreference {
-    fn from(preference: CliIndexingPreference) -> Self {
-        match preference {
-            CliIndexingPreference::LowerPeakMemory => Self::LowerPeakMemory,
-            CliIndexingPreference::FasterBuilds => Self::FasterBuilds,
         }
     }
 }

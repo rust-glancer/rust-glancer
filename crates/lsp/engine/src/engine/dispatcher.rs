@@ -3,7 +3,6 @@
 //! RPC tasks may enqueue work concurrently, but saved-project changes and semantic queries run one
 //! at a time here. This is intentional: query-time materialization mutates package residency, so a
 //! pool of otherwise read-only queries would still need to coordinate ownership of the project.
-//! Background deferred indexing follows the same rule by returning its result as another command.
 
 use std::{
     num::NonZeroUsize,
@@ -23,7 +22,6 @@ use crate::{
         query::{QueryContext, QueryRunner},
     },
     memory::MemoryControl,
-    service::ServiceNotificationsSink,
 };
 
 /// Owns the engine lane and routes each command to its narrower subsystem.
@@ -43,10 +41,9 @@ impl EngineDispatcher {
     pub(super) fn new(
         sender: Sender<QueuedEngineCommand>,
         memory_control: Arc<dyn MemoryControl>,
-        notifications: ServiceNotificationsSink,
     ) -> Self {
         Self {
-            project: ProjectCoordinator::new(sender, Arc::clone(&memory_control), notifications),
+            project: ProjectCoordinator::new(sender, Arc::clone(&memory_control)),
             memory_control,
             inlay_hints: InlayHintsConfig::default(),
         }
@@ -406,48 +403,6 @@ impl EngineDispatcher {
                 EngineCommand::ReindexWorkspace { respond_to } => {
                     tracing::trace!("engine command started: reindex_workspace");
                     let _ = respond_to.send(self.project.reindex_workspace());
-                }
-                EngineCommand::SetDeferredIndexingPriority {
-                    path,
-                    prioritized,
-                    respond_to,
-                } => {
-                    tracing::trace!(
-                        path = %path.display(),
-                        prioritized,
-                        "engine command started: set_deferred_indexing_priority"
-                    );
-                    self.project
-                        .set_deferred_indexing_priority(path, prioritized);
-                    let _ = respond_to.send(Ok(()));
-                }
-                EngineCommand::DeferredIndexingProducts { products } => {
-                    tracing::debug!(
-                        generation = products.generation_id().get(),
-                        "engine command started: deferred_indexing_products"
-                    );
-                    self.project.deferred_indexing_products(*products);
-                }
-                EngineCommand::DeferredIndexingProgress {
-                    generation,
-                    progress,
-                } => {
-                    tracing::trace!(
-                        generation,
-                        stage = ?progress.stage(),
-                        completed_packages = progress.completed_packages(),
-                        total_packages = progress.total_packages(),
-                        "engine command started: deferred_indexing_progress"
-                    );
-                    self.project
-                        .deferred_indexing_progress(generation, progress);
-                }
-                EngineCommand::DeferredIndexingFinished { generation, result } => {
-                    tracing::trace!(
-                        generation,
-                        "engine command started: deferred_indexing_finished"
-                    );
-                    self.project.deferred_indexing_finished(generation, result);
                 }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine dispatcher");
