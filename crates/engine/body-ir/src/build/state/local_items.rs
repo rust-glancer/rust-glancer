@@ -12,20 +12,20 @@ use rg_ir_model::{
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{ItemReader, ItemStore};
 
-use super::CrateBodyBuildState;
+use super::BodyStoreBuilder;
 use crate::{
-    BodyData, BodyLocalItems, BodyOwner,
+    BodyData, BodyLocalItems, BodyOwner, BodySourceStore,
     build::{
         local_items::LocalItemSource,
         lower::{
-            BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
-            CurrentRootItems, LoweredBodyTask,
+            BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, CurrentRootItems,
+            LoweredBodyTask,
         },
         query_source::BodyBuildQuerySource,
     },
 };
 
-impl CrateBodyBuildState<'_> {
+impl BodyStoreBuilder<'_> {
     // Walk every known body, collecting local facts and lowering newly discovered nested bodies.
     // This is a worklist rather than recursive descent: collecting one body can append nested
     // fn/const/static bodies, and the loop visits those appended bodies before resolution starts.
@@ -33,13 +33,13 @@ impl CrateBodyBuildState<'_> {
         &mut self,
         def_map: &DefinitionReader<'_>,
         semantic_ir: &ItemReader<'_>,
-        task_source: BodyTaskSource<'_>,
         cfg: CfgEvaluator<'_>,
         mut body_ref_for_nested: impl FnMut(LoweredBodyTask) -> anyhow::Result<BodyRef>,
     ) -> anyhow::Result<()> {
+        let task_source = self.source;
         self.body_local_items.clear();
-        // `body_local_items` is the cursor into `crate_bodies`: each collected slot means that
-        // body has its local DefMap/item store ready. Nested lowering may extend `crate_bodies`,
+        // `body_local_items` is the cursor into `lowered_bodies`: each collected slot means that
+        // body has its local DefMap/item store ready. Nested lowering may extend `lowered_bodies`,
         // so the loop stops only once every appended body has been collected too.
         let mut macro_expansion = BodyMacroExpansion::new(
             task_source.edition(),
@@ -47,7 +47,7 @@ impl CrateBodyBuildState<'_> {
             cfg,
             self.cancellation.clone(),
         );
-        while self.body_local_items.len() < self.crate_bodies.bodies().len() {
+        while self.body_local_items.len() < self.lowered_bodies.bodies().len() {
             task_source.check_cancelled()?;
             let body = self.body_local_items.next_id();
             let body_ref = self.body_ref(body);
@@ -56,51 +56,56 @@ impl CrateBodyBuildState<'_> {
                 .context("collect body-local declarations")?;
             if let Some((owner, owner_module)) = Self::request_root_owner_context(
                 body_ref,
-                self.crate_bodies.bodies()[body].body(),
+                self.lowered_bodies.bodies()[body].body(),
+                &self.lowered_bodies.bodies()[body].sources,
                 &items,
             )? {
-                self.crate_bodies.bodies_mut()[body].set_owner_context(owner, owner_module);
+                self.lowered_bodies.bodies_mut()[body].set_owner_context(owner, owner_module);
             }
-            let body_data = self.crate_bodies.bodies()[body].body();
+            let body_data = self.lowered_bodies.bodies()[body].body();
             let nested_tasks = Self::nested_body_tasks(
                 body_ref,
                 body_data,
-                body_data.owner(),
-                body_data.fallback_module(),
+                &self.lowered_bodies.bodies()[body].sources,
                 items.def_map(),
                 items.item_store(),
                 &self.cancellation,
             )
             .context("collect nested body tasks")?;
-            let allocated = self.body_local_items.alloc(Some(items));
+            let allocated = self.body_local_items.alloc(items);
             debug_assert_eq!(allocated, body);
 
             if !nested_tasks.is_empty() {
-                BodyTaskLowering::new(task_source, &mut self.crate_bodies, cfg, &self.cancellation)
-                    .lower_tasks(&nested_tasks, &mut macro_expansion)?
-                    .into_iter()
-                    .try_for_each(|lowered| {
-                        let body_ref = body_ref_for_nested(lowered)?;
-                        anyhow::ensure!(
-                            body_ref.crate_ref == self.crate_ref,
-                            "nested body identity belongs to a different crate",
-                        );
-                        anyhow::ensure!(
-                            !self.body_slots.contains_key(&body_ref),
-                            "nested body identity {:?} was allocated more than once",
-                            body_ref.body,
-                        );
-                        let allocated = self.body_refs.alloc(body_ref);
-                        anyhow::ensure!(
-                            allocated == lowered.body,
-                            "nested body identity worklist is not aligned with lowered bodies",
-                        );
-                        anyhow::ensure!(
-                            self.body_slots.insert(body_ref, allocated).is_none(),
-                            "nested body identity was already present in the worklist",
-                        );
-                        Ok(())
-                    })?;
+                BodyTaskLowering::new(
+                    task_source,
+                    &mut self.lowered_bodies,
+                    cfg,
+                    &self.cancellation,
+                )
+                .lower_tasks(&nested_tasks, &mut macro_expansion)?
+                .into_iter()
+                .try_for_each(|lowered| {
+                    let body_ref = body_ref_for_nested(lowered)?;
+                    anyhow::ensure!(
+                        body_ref.crate_ref == self.crate_ref,
+                        "nested body identity belongs to a different crate",
+                    );
+                    anyhow::ensure!(
+                        !self.body_slots.contains_key(&body_ref),
+                        "nested body identity {:?} was allocated more than once",
+                        body_ref.body,
+                    );
+                    let allocated = self.body_refs.alloc(body_ref);
+                    anyhow::ensure!(
+                        allocated == lowered.body,
+                        "nested body identity worklist is not aligned with lowered bodies",
+                    );
+                    anyhow::ensure!(
+                        self.body_slots.insert(body_ref, allocated).is_none(),
+                        "nested body identity was already present in the worklist",
+                    );
+                    Ok(())
+                })?;
             }
         }
 
@@ -116,17 +121,17 @@ impl CrateBodyBuildState<'_> {
     fn request_root_owner_context(
         body_ref: BodyRef,
         body: &BodyData,
+        sources: &BodySourceStore,
         items: &BodyLocalItems,
     ) -> anyhow::Result<Option<(BodyOwner, ModuleRef)>> {
         if body.owner().declaration().origin() != DefMapRef::Body(body_ref) {
             return Ok(None);
         }
 
-        let source = body.source();
+        let source = sources.source(body.source());
         let matches_root_source = |file_id, location| {
             file_id == source.file_id
-                && body
-                    .source_items()
+                && sources
                     .location(location)
                     .is_some_and(|location| location.span == source.span)
         };
@@ -216,7 +221,8 @@ impl CrateBodyBuildState<'_> {
         semantic_ir: &ItemReader<'_>,
     ) -> anyhow::Result<BodyLocalItems> {
         let body_ref = self.body_ref(body);
-        let body = self.crate_bodies.bodies()[body].body();
+        let lowered = &self.lowered_bodies.bodies()[body];
+        let body = lowered.body();
 
         // Finalization can see previously collected body-local DefMaps. This is what lets nested
         // bodies import names from the body scope that declared them.
@@ -227,7 +233,7 @@ impl CrateBodyBuildState<'_> {
             &self.body_slots,
             &self.body_local_items,
         );
-        LocalItemSource::for_body(body)
+        LocalItemSource::for_body(body, &lowered.sources)
             .collect(body_ref, source, &self.cancellation)
             .context("collect body-local declarations")
     }
@@ -235,13 +241,14 @@ impl CrateBodyBuildState<'_> {
     fn nested_body_tasks(
         body_ref: BodyRef,
         body: &BodyData,
-        body_owner: BodyOwner,
-        fallback_module: ModuleRef,
+        sources: &BodySourceStore,
         def_map: &DefMap,
         item_store: &ItemStore,
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Vec<BodyLoweringTask>> {
-        let body_source = body.source();
+        let body_source = sources.source(body.source());
+        let body_owner = body.owner();
+        let fallback_module = body.fallback_module();
         let origin = DefMapRef::Body(body_ref);
         let mut tasks = Vec::new();
 
@@ -255,8 +262,7 @@ impl CrateBodyBuildState<'_> {
             if body_owner == BodyOwner::Function(function_ref) {
                 continue;
             }
-            let span = body
-                .source_items()
+            let span = sources
                 .location(function_data.location)
                 .context("body declaration occurrence is absent")?
                 .span;
@@ -292,8 +298,7 @@ impl CrateBodyBuildState<'_> {
             if body_owner == BodyOwner::Const(const_ref) {
                 continue;
             }
-            let span = body
-                .source_items()
+            let span = sources
                 .location(const_data.location)
                 .context("body declaration occurrence is absent")?
                 .span;
@@ -326,8 +331,7 @@ impl CrateBodyBuildState<'_> {
             if body_owner == BodyOwner::Static(static_ref) {
                 continue;
             }
-            let span = body
-                .source_items()
+            let span = sources
                 .location(static_data.location)
                 .context("body declaration occurrence is absent")?
                 .span;

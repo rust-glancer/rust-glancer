@@ -6,7 +6,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 /// Provenance of source tokens copied into a body's macro expansions.
 ///
-/// Lowering puts original argument offsets directly in the IR's name and field spans. This map
+/// Lowering puts original argument offsets in the body's occurrence table. This map
 /// distinguishes those precise locations from generated nodes anchored to the whole invocation.
 /// For `duplicate!(value)` expanding to `(value, value)`, both paths keep the span of the single
 /// written `value`. This map records that span once; the paths retain their separate IR identities.

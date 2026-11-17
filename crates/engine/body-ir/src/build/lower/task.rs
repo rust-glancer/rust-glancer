@@ -5,7 +5,7 @@
 //! it groups those scheduled owners by file, opens each parsed file once, finds the matching AST
 //! item by span, and then delegates the actual expression lowering to `BodyLowering`.
 
-use std::{borrow::Cow, path::Path};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
@@ -17,11 +17,11 @@ use rg_parse::{CurrentSource, Package, saved_syntax};
 use rg_semantic_ir::BodyOwnerData;
 use rg_source::QueryContext;
 use rg_std::CancellationToken;
-use rg_syntax::{AstNode as _, SourceFile, SyntaxKind, TextRange, ast};
+use rg_syntax::{AstNode as _, SourceFile, SyntaxError, SyntaxKind, TextRange, ast};
 use rg_text::RustEdition;
 
 use super::{
-    CurrentRootItems, LoweredCrateBodies, body::BodyLowering,
+    CurrentRootItems, LoweredBodies, body::BodyLowering,
     macro_expansion::BodyMacroExpansionContext, syntax::source_for,
 };
 use crate::BodyOwner;
@@ -67,11 +67,10 @@ impl BodyLoweringTask {
 
 /// Which immutable syntax tree scheduled body tasks must use.
 ///
-/// Saved crate builds open ordinary parse-package files. A current request substitutes its one
+/// Saved builds share tracked parses. A current request substitutes its one
 /// captured document while retaining the saved package for any other source reached by lowering.
 #[derive(Clone, Copy)]
 pub(crate) enum BodyTaskSource<'a> {
-    Parsed(&'a Package),
     Tracked {
         db: &'a QueryContext<'a>,
         edition: RustEdition,
@@ -86,17 +85,8 @@ pub(crate) enum BodyTaskSource<'a> {
 impl<'a> BodyTaskSource<'a> {
     pub(crate) fn edition(self) -> RustEdition {
         match self {
-            Self::Parsed(package) | Self::Current { package, .. } => package.edition(),
+            Self::Current { package, .. } => package.edition(),
             Self::Tracked { edition, .. } => edition,
-        }
-    }
-
-    pub(crate) fn file_path(self, file: FileId) -> Option<Cow<'a, Path>> {
-        match self {
-            Self::Parsed(package) | Self::Current { package, .. } => {
-                package.file_path(file).map(Cow::Borrowed)
-            }
-            Self::Tracked { db, .. } => file.path(&db.interner()).ok().map(Cow::Owned),
         }
     }
 
@@ -117,7 +107,7 @@ pub(crate) struct LoweredBodyTask {
 
 pub(crate) struct BodyTaskLowering<'a> {
     source: BodyTaskSource<'a>,
-    crate_bodies: &'a mut LoweredCrateBodies,
+    lowered_bodies: &'a mut LoweredBodies,
     cfg: CfgEvaluator<'a>,
     cancellation: &'a CancellationToken,
 }
@@ -125,13 +115,13 @@ pub(crate) struct BodyTaskLowering<'a> {
 impl<'a> BodyTaskLowering<'a> {
     pub(crate) fn new(
         source: BodyTaskSource<'a>,
-        crate_bodies: &'a mut LoweredCrateBodies,
+        lowered_bodies: &'a mut LoweredBodies,
         cfg: CfgEvaluator<'a>,
         cancellation: &'a CancellationToken,
     ) -> Self {
         Self {
             source,
-            crate_bodies,
+            lowered_bodies,
             cfg,
             cancellation,
         }
@@ -174,26 +164,36 @@ impl<'a> BodyTaskLowering<'a> {
         if let BodyTaskSource::Current { file, source, .. } = self.source
             && file == file_id
         {
-            let syntax = source.parse().tree();
+            let parse = source.parse();
+            let syntax = parse.tree();
             return self.lower_file_tasks_from_syntax(
                 file_id,
                 tasks,
                 lowered,
                 macro_expansion,
                 &syntax,
+                parse.parse_errors(),
             );
         }
 
-        let syntax = match self.source {
-            BodyTaskSource::Tracked { db, edition } => saved_syntax(db, file_id, edition)?.tree(),
-            BodyTaskSource::Parsed(package) | BodyTaskSource::Current { package, .. } => package
-                .parsed_file(file_id)
-                .with_context(|| format!("fetch parsed source file {file_id:?}"))?
-                .parse_syntax()
-                .with_context(|| format!("parse body source {file_id:?}"))?
-                .tree(),
+        let parse = match self.source {
+            BodyTaskSource::Tracked { db, edition } => saved_syntax(db, file_id, edition)?,
+            BodyTaskSource::Current { package, .. } => Arc::new(
+                package
+                    .parsed_file(file_id)
+                    .with_context(|| format!("fetch parsed source file {file_id:?}"))?
+                    .parse_syntax()
+                    .with_context(|| format!("parse body source {file_id:?}"))?,
+            ),
         };
-        self.lower_file_tasks_from_syntax(file_id, tasks, lowered, macro_expansion, &syntax)
+        self.lower_file_tasks_from_syntax(
+            file_id,
+            tasks,
+            lowered,
+            macro_expansion,
+            &parse.tree(),
+            parse.parse_errors(),
+        )
     }
 
     fn lower_file_tasks_from_syntax(
@@ -203,6 +203,7 @@ impl<'a> BodyTaskLowering<'a> {
         lowered: &mut Vec<LoweredBodyTask>,
         macro_expansion: &mut dyn BodyMacroExpansionContext,
         syntax: &SourceFile,
+        parse_errors: &[SyntaxError],
     ) -> anyhow::Result<()> {
         // Source readers resolve owner occurrences before scheduling. Every task now carries
         // a byte range in exactly the syntax snapshot opened above.
@@ -226,6 +227,24 @@ impl<'a> BodyTaskLowering<'a> {
             else {
                 continue;
             };
+            let mut lowering = BodyLowering::new(
+                task.owner,
+                task.owner_module,
+                task.fallback_module,
+                source_for(file_id, &node),
+                self.cfg,
+                &mut *macro_expansion,
+                self.cancellation,
+            );
+            // Parser recovery can leave meaning outside the nodes we lower. Keep exact text for
+            // that owner only. parse_errors() reads the shared parser result without validating
+            // the whole file again for every function in a broad hint request.
+            if parse_errors
+                .iter()
+                .any(|error| range.intersect(error.range()).is_some())
+            {
+                lowering.record_unmodeled_syntax(&node);
+            }
             match task.owner {
                 BodyOwner::Function(_) => {
                     let ast_fn = ast::Fn::cast(node).expect("body task kind matches syntax");
@@ -233,20 +252,11 @@ impl<'a> BodyTaskLowering<'a> {
                         continue;
                     };
 
-                    let source = source_for(file_id, ast_fn.syntax());
-                    let body = BodyLowering::new(
-                        task.owner,
-                        task.owner_module,
-                        task.fallback_module,
-                        source,
-                        self.cfg,
-                        &mut *macro_expansion,
-                        self.cancellation,
-                    )
-                    .lower_function(ast_fn, body_ast, task.current_root_items)
-                    .context("lower function body")?;
+                    let body = lowering
+                        .lower_function(ast_fn, body_ast, task.current_root_items)
+                        .context("lower function body")?;
                     lowered.push(LoweredBodyTask {
-                        body: self.crate_bodies.alloc_body(body),
+                        body: self.lowered_bodies.alloc_body(body),
                         task: *task,
                     });
                 }
@@ -256,20 +266,11 @@ impl<'a> BodyTaskLowering<'a> {
                         continue;
                     };
 
-                    let source = source_for(file_id, ast_const.syntax());
-                    let body = BodyLowering::new(
-                        task.owner,
-                        task.owner_module,
-                        task.fallback_module,
-                        source,
-                        self.cfg,
-                        &mut *macro_expansion,
-                        self.cancellation,
-                    )
-                    .lower_const(ast_const, body_ast, task.current_root_items)
-                    .context("lower const body")?;
+                    let body = lowering
+                        .lower_const(ast_const, body_ast, task.current_root_items)
+                        .context("lower const body")?;
                     lowered.push(LoweredBodyTask {
-                        body: self.crate_bodies.alloc_body(body),
+                        body: self.lowered_bodies.alloc_body(body),
                         task: *task,
                     });
                 }
@@ -280,20 +281,11 @@ impl<'a> BodyTaskLowering<'a> {
                         continue;
                     };
 
-                    let source = source_for(file_id, ast_static.syntax());
-                    let body = BodyLowering::new(
-                        task.owner,
-                        task.owner_module,
-                        task.fallback_module,
-                        source,
-                        self.cfg,
-                        &mut *macro_expansion,
-                        self.cancellation,
-                    )
-                    .lower_static(ast_static, body_ast, task.current_root_items)
-                    .context("lower static body")?;
+                    let body = lowering
+                        .lower_static(ast_static, body_ast, task.current_root_items)
+                        .context("lower static body")?;
                     lowered.push(LoweredBodyTask {
-                        body: self.crate_bodies.alloc_body(body),
+                        body: self.lowered_bodies.alloc_body(body),
                         task: *task,
                     });
                 }

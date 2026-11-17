@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rg_def_map::{DefMap, ItemSource, ItemSourceKind};
 use rg_ir_model::{
-    BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, ImplRef,
+    BodyKey, BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, ImplRef,
     LocalDefRef, ModuleRef, SemanticItemRef, SourceId, SourceLocation, Span,
 };
 use rg_item_tree::SourceLocations;
@@ -15,36 +15,17 @@ use rg_semantic_ir::{
     TargetDeclarationReader,
 };
 use rg_source::{QueryContext, ReadError};
-use rg_std::UniqueVec;
 
 use self::saved::SavedBodyReader;
-use crate::{BodyLocalItems, BodySourceItems, BodyView, CurrentSourceStore};
-
-pub(crate) trait BodySource: Send + Sync + std::fmt::Debug {
-    fn declaration_source(
-        &self,
-        krate: CrateRef,
-        source: ItemSource,
-    ) -> Result<DeclarationSourceView<'_>, ReadError>;
-    fn files(&self, krate: CrateRef) -> Result<UniqueVec<FileId>, ReadError>;
-    fn bodies(
-        &self,
-        krate: CrateRef,
-        file: Option<FileId>,
-        selected: &dyn Fn(&BodyOwnerData) -> bool,
-    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError>;
-    fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError>;
-    fn body(&self, body: BodyRef) -> Result<Option<(BodyView<'_>, &BodyLocalItems)>, ReadError>;
-    fn initializer(
-        &self,
-        item: ConstOrStaticRef,
-    ) -> Result<Option<&EvaluatedConstValue>, ReadError>;
-}
+use crate::{
+    BodyData, BodyFactsStore, BodyLocalItems, BodySourceStore, BodyView, CurrentSourceStore,
+    PreparedBodyStore,
+};
 
 /// One operation's saved body reads and its optional current-source overlay.
 #[derive(Debug, Clone)]
 pub struct BodyReader<'db> {
-    saved: Arc<dyn BodySource + 'db>,
+    saved: Arc<SavedBodyReader<'db>>,
     current: Arc<CurrentSourceStore>,
 }
 
@@ -58,9 +39,9 @@ impl<'db> BodyReader<'db> {
         source: ItemSource,
     ) -> Result<DeclarationSourceView<'_>, ReadError> {
         if let ItemSourceKind::Body(source) = source.kind
-            && let Some(items) = self.current.source_items(source.body)
+            && let Some(sources) = self.current.sources(source.body)
         {
-            return Ok(DeclarationSourceView::Body(items));
+            return Ok(DeclarationSourceView::Body(sources));
         }
         self.saved.declaration_source(krate, source)
     }
@@ -83,12 +64,8 @@ impl<'db> BodyReader<'db> {
     }
 
     pub fn new(db: &'db QueryContext<'db>, declarations: &TargetDeclarationReader<'db>) -> Self {
-        Self::from_source(Arc::new(SavedBodyReader::new(db, declarations.targets())))
-    }
-
-    pub(crate) fn from_source(saved: Arc<dyn BodySource + 'db>) -> Self {
         Self {
-            saved,
+            saved: Arc::new(SavedBodyReader::new(db, declarations.targets())),
             current: Arc::new(CurrentSourceStore::default()),
         }
     }
@@ -121,11 +98,24 @@ impl<'db> BodyReader<'db> {
         if let Some(fallback) = self.current.declaration_fallback(module) {
             return Ok(fallback);
         }
-        if let DefMapRef::Body(body_ref) = module.origin
-            && let Some(body) = self.body(body_ref)?
-            && module == body.owner_module()
-        {
-            return Ok(body.fallback_module());
+        if let DefMapRef::Body(body_ref) = module.origin {
+            // Signature lookup needs the lexical context, not expression facts. A local
+            // declaration read must not force inference of the body that declares it.
+            let body = if let Some(current) = self
+                .current
+                .bodies()
+                .iter()
+                .find(|body| body.body_ref() == body_ref)
+            {
+                Some(current.view().structure())
+            } else {
+                self.saved_prepared_body(body_ref)?.map(|(body, _)| body)
+            };
+            if let Some(body) = body
+                && module == body.owner_module()
+            {
+                return Ok(body.fallback_module());
+            }
         }
         Ok(module)
     }
@@ -245,7 +235,48 @@ impl<'db> BodyReader<'db> {
         if let Some(items) = self.current.items(DefMapRef::Body(body_ref)) {
             return Ok(Some(items));
         }
-        Ok(self.saved_body(body_ref)?.map(|(_, items)| items))
+        Ok(self.saved_prepared_body(body_ref)?.map(|(_, items)| items))
+    }
+
+    /// Read local meaning without acquiring source tables or inferred facts.
+    fn saved_prepared_body(
+        &self,
+        body_ref: BodyRef,
+    ) -> Result<Option<(&BodyData, &BodyLocalItems)>, ReadError> {
+        // Only a changed editor file needs masking. Its outer-owner metadata also identifies
+        // the file of nested bodies, so checking visibility never needs occurrence locations.
+        if let Some((krate, file)) = self.current.masked_file
+            && krate == body_ref.crate_ref
+            && let Some(owner) = body_ref.root.owner()
+            && self
+                .saved
+                .owners(krate)?
+                .iter()
+                .any(|data| data.owner == owner && data.file == file)
+        {
+            return Ok(None);
+        }
+        self.saved.prepared_body(body_ref)
+    }
+
+    pub(crate) fn saved_prepared_bodies(
+        &self,
+        krate: CrateRef,
+        file: FileId,
+        selected: &dyn Fn(&BodyOwnerData) -> bool,
+    ) -> Result<Vec<(BodyRef, &BodyData)>, ReadError> {
+        self.saved.prepared_bodies(krate, file, selected)
+    }
+
+    pub(crate) fn saved_prepared_owner(
+        &self,
+        key: BodyKey,
+    ) -> Result<Option<Arc<PreparedBodyStore>>, ReadError> {
+        self.saved.prepared_owner(key)
+    }
+
+    pub(crate) fn saved_facts(&self, key: BodyKey) -> Result<Arc<BodyFactsStore>, ReadError> {
+        self.saved.facts(key)
     }
 
     fn saved_body(
@@ -317,14 +348,14 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
 /// A declaration's meaning carries an [`ItemSource`]; this view joins it to the selected snapshot.
 ///
 /// Saved file and expansion sources need the tables opened by [`SavedDeclarationSourceView`].
-/// Body sources already contain resolved locations, so this view borrows their [`BodySourceItems`]
+/// Body sources already contain resolved locations, so this view borrows their [`BodySourceStore`]
 /// instead. The body can be saved or rebuilt for this request; [`BodyReader`] chooses it first.
 ///
 /// Both forms expose [`SourceLocations`], keeping the navigation/editability distinction the same
 /// for source scanners regardless of where the declaration was lowered.
 pub enum DeclarationSourceView<'a> {
     Saved(SavedDeclarationSourceView<'a>),
-    Body(&'a BodySourceItems),
+    Body(&'a BodySourceStore),
 }
 
 impl SourceLocations for DeclarationSourceView<'_> {

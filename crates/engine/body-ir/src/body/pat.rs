@@ -1,8 +1,8 @@
-use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, Span};
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, SourceId};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{BodyPath, BodySource, LiteralKind, RecordFieldSyntax};
+use super::{BodyPath, LiteralKind, RecordFieldSyntax};
 
 /// Binding mode written on an identifier pattern.
 #[derive(
@@ -42,7 +42,7 @@ pub enum PatRangeKind {
 /// One lowered pattern node.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PatData {
-    pub source: BodySource,
+    pub source: SourceId,
     pub kind: PatKind,
 }
 
@@ -66,7 +66,7 @@ pub enum PatKind {
     /// `Path { field, other: <pat>, .. }`.
     Record {
         path: Option<BodyPath>,
-        field_list_span: Option<Span>,
+        field_list_location: Option<SourceId>,
         fields: Vec<RecordPatField>,
         rest: Option<PatId>,
     },
@@ -192,8 +192,8 @@ impl PatKind {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct RecordPatField {
     pub key: FieldKey,
-    pub key_span: Span,
-    pub source_span: Span,
+    pub key_location: SourceId,
+    pub location: SourceId,
     pub syntax: RecordFieldSyntax,
     pub pat: PatId,
 }

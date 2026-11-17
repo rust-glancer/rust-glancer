@@ -14,7 +14,7 @@ use rg_ir_model::{
 use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_std::{ExpectedUnique, UniqueVec};
 
-use crate::{BodyOwner, BodyReader, BodyView};
+use crate::{BodyData, BodyOwner, BodyReader};
 
 /// Finds the saved crate-level owner associated with a current body root.
 ///
@@ -78,7 +78,7 @@ impl SavedNestedBodyIndex {
         saved_body_ir: &BodyReader<'_>,
         crate_ref: CrateRef,
         file: FileId,
-        saved_bodies: &[(BodyRef, BodyView<'_>)],
+        saved_bodies: &[(BodyRef, &BodyData)],
         roots: impl IntoIterator<Item = BodyRef>,
     ) -> anyhow::Result<Self> {
         let mut index = Self {

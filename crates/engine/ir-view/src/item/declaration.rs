@@ -442,25 +442,31 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        let selection_span = binding.name_span.unwrap_or(binding.source.span);
+        let selection_span = binding
+            .name_location
+            .map(|id| body.span(id))
+            .unwrap_or(body.source_at(binding.source).span);
         Ok(Some(match &binding.name {
             Some(name) => Declaration::named(
                 binding_ref.body.crate_ref,
                 SymbolKind::Variable,
                 name.clone(),
-                binding.source.file_id,
-                binding.source.span,
-                binding.name_span.map(|span| SourceLocation {
-                    span,
-                    editable: binding.source.is_written(),
-                }),
+                body.source_at(binding.source).file_id,
+                body.source_at(binding.source).span,
+                binding
+                    .name_location
+                    .map(|id| body.span(id))
+                    .map(|span| SourceLocation {
+                        span,
+                        editable: body.source_at(binding.source).is_written(),
+                    }),
             ),
             None => Declaration {
                 crate_ref: binding_ref.body.crate_ref,
                 kind: SymbolKind::Variable,
                 label: DeclarationLabel::Unsupported,
-                file_id: binding.source.file_id,
-                span: binding.source.span,
+                file_id: body.source_at(binding.source).file_id,
+                span: body.source_at(binding.source).span,
                 selection_span,
                 editable_span: None,
             },

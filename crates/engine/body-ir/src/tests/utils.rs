@@ -16,8 +16,9 @@ use rg_ty::{
 };
 
 use crate::{
-    BindingData, BodyOwner, BodySource, BodyView, ClosureCapture, ClosureKind, ClosureParamData,
-    ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind,
+    BindingData, BodyOwner, BodySource, BodySourceItem, BodyView, ClosureCapture, ClosureKind,
+    ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData,
+    PatKind, StmtKind,
     body::facts::BodyResolution,
     testonly::{BodyIrFixture, BodyIrView},
 };
@@ -243,7 +244,7 @@ impl CrateBodyIrSnapshot<'_> {
         if !body.source_items().items().is_empty() {
             writeln!(dump, "source_items").expect("string writes should not fail");
             for (idx, item) in body.source_items().items().iter().enumerate() {
-                self.render_source_item(idx, item, dump);
+                self.render_source_item(body, idx, item, dump);
             }
         }
 
@@ -272,14 +273,20 @@ impl CrateBodyIrSnapshot<'_> {
         }
 
         for (idx, pat) in body.pats().iter().enumerate() {
-            self.render_pat(PatId(idx), pat, dump);
+            self.render_pat(body, PatId(idx), pat, dump);
         }
     }
 
-    fn render_source_item(&self, id: usize, item: &crate::body::BodySourceItem, dump: &mut String) {
+    fn render_source_item(
+        &self,
+        body: BodyView<'_>,
+        id: usize,
+        item: &BodySourceItem,
+        dump: &mut String,
+    ) {
         let source_item = item.item();
         let name = source_item.name.as_deref().unwrap_or("<unnamed>");
-        let provenance = if item.source().is_written() {
+        let provenance = if body.source_at(item.source()).is_written() {
             ""
         } else {
             " generated"
@@ -291,7 +298,7 @@ impl CrateBodyIrSnapshot<'_> {
             source_item.kind.tag(),
             name,
             provenance,
-            self.render_source(item.source()),
+            self.render_source(body.source_at(item.source())),
         )
         .expect("string writes should not fail");
     }
@@ -310,14 +317,19 @@ impl CrateBodyIrSnapshot<'_> {
             .unwrap_or_default();
         let name = binding.name.as_deref().unwrap_or("<unsupported>");
         let name_span = binding
-            .name_span
+            .name_location
+            .map(|id| body.span(id))
             .filter(|span| {
-                *span != binding.source.span && matches!(binding.kind, crate::BindingKind::Let)
+                *span != body.source_at(binding.source).span
+                    && matches!(binding.kind, crate::BindingKind::Let)
             })
             .map(|span| {
                 format!(
                     " name @ {}",
-                    self.render_source(BodySource::written(binding.source.file_id, span))
+                    self.render_source(BodySource::written(
+                        body.source_at(binding.source).file_id,
+                        span
+                    ))
                 )
             })
             .unwrap_or_default();
@@ -328,13 +340,13 @@ impl CrateBodyIrSnapshot<'_> {
             id.0,
             binding.kind,
             name,
-            self.render_source_text(binding.source),
+            self.render_source_text(body.source_at(binding.source)),
             annotation,
             self.render_ty(
                 body.binding_ty(id)
                     .expect("dumped binding should have finalized facts"),
             ),
-            self.render_source(binding.source),
+            self.render_source(body.source_at(binding.source)),
             name_span,
         )
         .expect("string writes should not fail");
@@ -345,14 +357,14 @@ impl CrateBodyIrSnapshot<'_> {
         );
     }
 
-    fn render_pat(&self, id: PatId, pat: &PatData, dump: &mut String) {
+    fn render_pat(&self, body: BodyView<'_>, id: PatId, pat: &PatData, dump: &mut String) {
         writeln!(
             dump,
             "- p{} {} `{}` @ {}",
             id.0,
             self.render_pat_head(pat),
-            self.render_source_text(pat.source),
-            self.render_source(pat.source),
+            self.render_source_text(body.source_at(pat.source)),
+            self.render_source(body.source_at(pat.source)),
         )
         .expect("string writes should not fail");
     }
@@ -485,7 +497,7 @@ impl CrateBodyIrSnapshot<'_> {
                     "{}stmt s{} let {bindings}{annotation} @ {}",
                     Self::indent(depth),
                     statement.0,
-                    self.render_source(data.source),
+                    self.render_source(body.source_at(data.source)),
                 )
                 .expect("string writes should not fail");
                 if let Some(initializer) = initializer {
@@ -509,7 +521,7 @@ impl CrateBodyIrSnapshot<'_> {
                     "{}stmt s{} expr{suffix} @ {}",
                     Self::indent(depth),
                     statement.0,
-                    self.render_source(data.source),
+                    self.render_source(body.source_at(data.source)),
                 )
                 .expect("string writes should not fail");
                 self.render_expr(body, *expr, depth + 1, dump);
@@ -521,7 +533,7 @@ impl CrateBodyIrSnapshot<'_> {
                     Self::indent(depth),
                     statement.0,
                     item.0,
-                    self.render_source(data.source),
+                    self.render_source(body.source_at(data.source)),
                 )
                 .expect("string writes should not fail");
             }
@@ -531,7 +543,7 @@ impl CrateBodyIrSnapshot<'_> {
                     "{}stmt s{} item <ignored> @ {}",
                     Self::indent(depth),
                     statement.0,
-                    self.render_source(data.source),
+                    self.render_source(body.source_at(data.source)),
                 )
                 .expect("string writes should not fail");
             }
@@ -550,10 +562,10 @@ impl CrateBodyIrSnapshot<'_> {
             "{}expr e{} {}{} => {} @ {}",
             Self::indent(depth),
             expr.0,
-            self.render_expr_head(data),
+            self.render_expr_head(body, data),
             self.render_resolution(&facts.resolution),
             self.render_ty(&facts.ty),
-            self.render_source(data.source),
+            self.render_source(body.source_at(data.source)),
         )
         .expect("string writes should not fail");
 
@@ -804,8 +816,8 @@ impl CrateBodyIrSnapshot<'_> {
                         "{}spread @ {}",
                         Self::indent(depth + 1),
                         self.render_source(BodySource::written(
-                            data.source.file_id,
-                            spread.source_span
+                            body.source_at(data.source).file_id,
+                            body.span(spread.location)
                         ))
                     )
                     .expect("string writes should not fail");
@@ -847,7 +859,7 @@ impl CrateBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_expr_head(&self, data: &ExprData) -> String {
+    fn render_expr_head(&self, body: BodyView<'_>, data: &ExprData) -> String {
         match &data.kind {
             ExprKind::Block {
                 kind, label, scope, ..
@@ -988,14 +1000,20 @@ impl CrateBodyIrSnapshot<'_> {
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
             ExprKind::BuiltinMacro { kind, .. } => format!("builtin_macro {kind}"),
             ExprKind::Literal { kind } => {
-                format!("literal {kind} `{}`", self.render_source_text(data.source))
+                format!(
+                    "literal {kind} `{}`",
+                    self.render_source_text(body.source_at(data.source))
+                )
             }
             ExprKind::Underscore => "underscore".to_string(),
             ExprKind::Yield { .. } => "yield".to_string(),
             ExprKind::Yeet { .. } => "yeet".to_string(),
             ExprKind::Become { .. } => "become".to_string(),
             ExprKind::Unknown { .. } => {
-                format!("unknown `{}`", self.render_source_text(data.source))
+                format!(
+                    "unknown `{}`",
+                    self.render_source_text(body.source_at(data.source))
+                )
             }
         }
     }
@@ -1492,7 +1510,7 @@ impl CrateBodyIrSnapshot<'_> {
                 self.project
                     .body(body_ref)
                     .expect("fixture body")
-                    .source_items()
+                    .sources()
                     .location(data.location)
                     .expect("fixture declaration location")
                     .span

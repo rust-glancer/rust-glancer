@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
-use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceLocation, Span};
+use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceId, Span};
 use rg_item_tree::{RecordSource, SourceRole};
 use rg_std::CancellationToken;
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
@@ -14,7 +14,7 @@ use super::{
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
 };
-use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
+use crate::body::{BodyLocation, BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 pub(super) struct BodyLowering<'a> {
     pub(super) owner: BodyOwner,
@@ -61,6 +61,7 @@ impl<'a> BodyLowering<'a> {
             file: self.body_source.file_id,
             cfg: self.cfg,
             items: &mut self.builder.source_items,
+            sources: &mut self.builder.sources,
             cancellation: self.cancellation,
         }
         .root(item, role)
@@ -151,6 +152,12 @@ impl<'a> BodyLowering<'a> {
 }
 
 impl BodyLowering<'_> {
+    pub(super) fn record_unmodeled_syntax(&mut self, syntax: &SyntaxNode) {
+        self.builder
+            .unmodeled_syntax
+            .push(syntax.text().to_string());
+    }
+
     pub(super) fn alloc_expr(
         &mut self,
         syntax: &SyntaxNode,
@@ -169,6 +176,7 @@ impl BodyLowering<'_> {
         // Name resolution uses this boundary to avoid seeing bindings introduced after the
         // expression, while still allowing earlier bindings in the same lexical scope.
         let visible_bindings = self.builder.bindings.len();
+        let source = self.builder.sources.record(source);
         self.builder.alloc_expr(ExprData {
             source,
             scope,
@@ -195,15 +203,15 @@ impl BodyLowering<'_> {
 
     /// Translate a range within one expansion token back to the original macro argument.
     ///
-    /// Path segments and member names store spans without a separate `BodySource`. They need
-    /// the same copied-token check as expression sources; template tokens get the whole call span.
-    pub(super) fn source_span(&self, range: TextRange) -> Span {
-        match &self.generated_context {
-            Some(context) => self
-                .written_source_span(range)
-                .unwrap_or(context.source.span),
-            None => Span::from_text_range(range),
-        }
+    /// Path segments and member names need the same copied-token check as expression sources;
+    /// template tokens get the whole call span as a non-editable navigation fallback.
+    pub(super) fn source_location(&mut self, range: TextRange) -> SourceId {
+        self.with_sources(|sources| sources.record(range))
+    }
+
+    pub(super) fn source_id(&mut self, syntax: &SyntaxNode) -> SourceId {
+        let source = self.source(syntax);
+        self.builder.sources.record(source)
     }
 
     /// Keep an occurrence only when its bytes belong to written source. Generated template text
@@ -218,30 +226,30 @@ impl BodyLowering<'_> {
     /// Record the physical interpretation while syntax and macro provenance are available.
     /// Type and declaration lowering receive the same recorder in ordinary and generated bodies.
     ///
-    /// A call creates one occurrence owner, which can cover just a type annotation rather than
-    /// an entire item. Body locations are resolved here and stored with the body; they do not need
-    /// the saved generated-source reader to replay token origins later.
+    /// All calls append to this body's occurrence sequence, including type annotations that do
+    /// not declare an item. Locations are resolved here; reading them does not need to replay
+    /// token origins later.
     pub(super) fn with_sources<T>(&mut self, lower: impl FnOnce(&mut dyn RecordSource) -> T) -> T {
         let context = self.generated_context.as_ref();
-        let mut map = |range, role| match context {
+        let map = |range, role| match context {
             Some(context) => {
                 let copied = matches!(role, SourceRole::Syntax)
                     .then(|| context.expanded.source_for_range(context.source, range))
                     .flatten();
-                SourceLocation {
-                    span: copied.unwrap_or(context.source.span),
+                BodyLocation {
+                    source: BodySource::macro_generated(
+                        context.source.file_id,
+                        copied.unwrap_or(context.source.span),
+                    ),
                     editable: copied.is_some(),
                 }
             }
-            None => SourceLocation {
-                span: Span::from_text_range(range),
+            None => BodyLocation {
+                source: BodySource::written(self.body_source.file_id, Span::from_text_range(range)),
                 editable: true,
             },
         };
-        let mut sources = self.builder.source_items.locations.start_owner(&mut map);
-        let result = lower(&mut sources);
-        self.builder.source_items.locations.finish_owner(sources);
-        result
+        lower(&mut self.builder.sources.recorder(&map))
     }
 
     pub(super) fn dollar_crate(&self) -> Option<CrateRef> {
@@ -291,7 +299,8 @@ impl BodyLowering<'_> {
         // Save the proven input spans in Body IR while the full expansion tree is still available.
         // The tree and its token map only need to live through recursive lowering.
         self.builder
-            .source_map
+            .sources
+            .provenance
             .record_expansion_arguments(expanded.argument_spans(call_source));
         let (syntax, expanded_context) = expanded.into_syntax_and_context();
         let context = GeneratedBodyMacroContext::new(call_source, expanded_context);
@@ -335,9 +344,11 @@ impl BodyLowering<'_> {
             return;
         }
 
+        let source = self.builder.sources.record(call_source);
+        let name_location = self.source_location(name_ref.syntax().text_range());
         self.builder.push_macro_call(BodyMacroCallData {
-            source: call_source,
-            name_span: self.source(name_ref.syntax()).span,
+            source,
+            name_location,
             definition,
         });
     }

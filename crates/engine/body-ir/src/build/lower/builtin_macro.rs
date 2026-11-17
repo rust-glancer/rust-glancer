@@ -67,7 +67,10 @@ impl BodyLowering<'_> {
             let expr = self.lower_format_capture(name, source, scope);
             args.push(expr);
             if let Some(span) = written_span {
-                self.builder.source_map.record_format_capture(expr, span);
+                self.builder
+                    .sources
+                    .provenance
+                    .record_format_capture(expr, span);
             }
         });
         args
@@ -75,7 +78,8 @@ impl BodyLowering<'_> {
 
     fn lower_format_capture(&mut self, name: &str, source: BodySource, scope: ScopeId) -> ExprId {
         let name = Name::new(name);
-        let path = BodyPath::unqualified_name(name, source.span);
+        let location = self.builder.sources.record(source);
+        let path = BodyPath::unqualified_name(name, location);
         // Treat `{user}` like a `user` expression here. Normal name lookup then finds
         // the right local, and hover and navigation can use the same path.
         // TODO: Require width and precision captures to have type `usize` during inference.

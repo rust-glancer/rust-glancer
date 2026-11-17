@@ -1,50 +1,49 @@
+//! An operation-local join of independently stored preparation, inference, and locations.
+
+use std::sync::Arc;
+
 use rg_arena::Arena;
 use rg_def_map::DefMap;
 use rg_ir_model::BodyId;
-use rg_std::{MemorySize, Shrink};
-use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{BodyData, BodyFacts, BodyLocalItems, BodyView};
+use crate::{
+    BodyData, BodyFactsStore, BodyLocalItems, BodySourceStore, BodyView, PreparedBodyStore,
+};
 
-/// Aligned syntax, semantic facts and declarations for one completed body worklist.
-///
-/// Each [`BodyId`] selects matching [`BodyData`], [`BodyFacts`] and [`BodyLocalItems`]: the body's
-/// expressions and bindings, inferred information, and declarations written inside it. Rebuilding
-/// with more source files can change those ids, so these three stores must be replaced together.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+/// Shared payloads for one outer owner. This join is never serialized: the three payloads have
+/// independent equality and persistence boundaries, and are released with their query operation.
+#[derive(Debug, Clone)]
 pub struct BodyStore {
-    bodies: Arena<BodyId, BodyData>,
-    facts: Arena<BodyId, BodyFacts>,
-    body_local_items: Arena<BodyId, BodyLocalItems>,
+    pub(crate) prepared: Arc<PreparedBodyStore>,
+    pub(crate) facts: Arc<BodyFactsStore>,
+    pub(crate) sources: Arc<Arena<BodyId, BodySourceStore>>,
 }
 
 impl BodyStore {
     pub(crate) fn new(
-        bodies: Arena<BodyId, BodyData>,
-        facts: Arena<BodyId, BodyFacts>,
-        body_local_items: Arena<BodyId, BodyLocalItems>,
+        prepared: Arc<PreparedBodyStore>,
+        facts: Arc<BodyFactsStore>,
+        sources: Arc<Arena<BodyId, BodySourceStore>>,
     ) -> Self {
-        debug_assert_eq!(bodies.len(), facts.len());
-        debug_assert_eq!(bodies.len(), body_local_items.len());
-        debug_assert!(
-            bodies
-                .iter()
-                .zip(&facts)
-                .all(|(body, facts)| facts.is_aligned_with(body)),
-        );
+        assert_eq!(prepared.bodies.len(), facts.bodies.len());
+        assert_eq!(prepared.bodies.len(), sources.len());
         Self {
-            bodies,
+            prepared,
             facts,
-            body_local_items,
+            sources,
         }
     }
 
     pub fn body(&self, body: BodyId) -> Option<BodyView<'_>> {
-        Some(BodyView::new(self.bodies.get(body)?, self.facts.get(body)?))
+        Some(BodyView::new(
+            self.prepared.bodies.get(body)?,
+            self.facts.bodies.get(body)?,
+            self.sources.get(body)?,
+        ))
     }
 
     pub fn body_local_items(&self, body: BodyId) -> Option<&BodyLocalItems> {
-        self.body_local_items.get(body)
+        self.prepared.local_items.get(body)
     }
 
     pub fn body_def_map(&self, body: BodyId) -> Option<&DefMap> {
@@ -52,13 +51,18 @@ impl BodyStore {
     }
 
     pub fn bodies(&self) -> &[BodyData] {
-        self.bodies.as_slice()
+        self.prepared.bodies.as_slice()
     }
 
-    /// Iterate bodies in stable `BodyId` order with their aligned semantic facts.
     pub fn body_views(&self) -> impl Iterator<Item = (BodyId, BodyView<'_>)> {
-        self.bodies
+        self.prepared
+            .bodies
             .iter_with_ids()
-            .map(move |(body, data)| (body, BodyView::new(data, &self.facts[body])))
+            .map(move |(body, data)| {
+                (
+                    body,
+                    BodyView::new(data, &self.facts.bodies[body], &self.sources[body]),
+                )
+            })
     }
 }

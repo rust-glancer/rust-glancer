@@ -1,7 +1,7 @@
-//! Shared state and build sequence for saved crates and current body worklists.
+//! Preparation of one outer owner and the nested bodies discovered in its local declarations.
 //!
 //! Local-item collection expands the worklist before semantic stages derive body facts. Each stage
-//! updates this same owner; finalization then produces saved storage or request-local bodies.
+//! updates this same worklist; finalization separates immutable meaning from source occurrences.
 
 mod finish;
 mod local_items;
@@ -15,36 +15,36 @@ use std::{
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
-use rg_ir_model::{BodyId, BodyRef, BodyRoot, CrateRef};
+use rg_ir_model::{BodyId, BodyRef, CrateRef};
 use rg_semantic_ir::{ItemLookupQuery, ItemReader};
+use rg_std::CancellationToken;
 
-use super::lower::{BodyTaskSource, LoweredCrateBodies};
-use crate::{BodyFacts, BodyLocalItems, BodyStore};
+use super::lower::{BodyTaskSource, LoweredBodies};
+use crate::{BodyLocalItems, BodySourceStore, PreparedBodyStore};
 
-// Phase logs explain a slow crate-level build without emitting one event for every normal phase.
-const SLOW_CRATE_RESOLUTION_PHASE: Duration = Duration::from_secs(1);
-/// Semantic stages shared by saved crate builds and selected current-body builds.
+// Phase logs explain a slow owner preparation without emitting one event for every normal phase.
+const SLOW_PREPARATION_PHASE: Duration = Duration::from_secs(1);
+
+/// Semantic stages shared by saved and current owner preparation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BodySemanticStage {
     ImplHeaders,
     PatternBindings,
-    Bodies,
 }
 
 /// Time spent in each shared semantic stage.
+#[derive(Default)]
 pub(super) struct BodySemanticTimings {
     pub(super) impl_headers: Duration,
     pub(super) initializer_values: Duration,
     pub(super) pattern_bindings: Duration,
-    pub(super) bodies: Duration,
 }
 
-/// Coordinates all body-local facts needed to resolve one crate's bodies.
-pub(super) struct CrateBodyBuildState<'crate_data> {
+/// Settles declarations, nested identities, and binding arenas before publishing an owner's data.
+pub(super) struct BodyStoreBuilder<'source> {
     crate_ref: CrateRef,
-    source: BodyTaskSource<'crate_data>,
-    root: BodyRoot,
-    crate_bodies: LoweredCrateBodies,
+    source: BodyTaskSource<'source>,
+    lowered_bodies: LoweredBodies,
     /// Project identities for the bodies in the temporary worklist.
     ///
     /// Saved builds use the same ID for both arenas. A selected current build may reuse one saved
@@ -53,109 +53,59 @@ pub(super) struct CrateBodyBuildState<'crate_data> {
     body_refs: Arena<BodyId, BodyRef>,
     /// Worklist slot for each project or request-only body identity.
     body_slots: HashMap<BodyRef, BodyId>,
-    body_facts: Arena<BodyId, BodyFacts>,
-    body_local_items: Arena<BodyId, Option<BodyLocalItems>>,
-    cancellation: rg_std::CancellationToken,
+    body_local_items: Arena<BodyId, BodyLocalItems>,
+    cancellation: CancellationToken,
 }
 
-impl<'crate_data> CrateBodyBuildState<'crate_data> {
+impl<'source> BodyStoreBuilder<'source> {
     pub(super) fn new(
-        crate_ref: CrateRef,
-        source: BodyTaskSource<'crate_data>,
-        root: BodyRoot,
-        crate_bodies: LoweredCrateBodies,
-        cancellation: rg_std::CancellationToken,
+        root: BodyRef,
+        source: BodyTaskSource<'source>,
+        lowered_bodies: LoweredBodies,
+        cancellation: CancellationToken,
     ) -> Self {
-        let mut body_refs = Arena::with_capacity(crate_bodies.bodies().len());
-        let mut body_slots = HashMap::with_capacity(crate_bodies.bodies().len());
-        for (body, _) in crate_bodies.bodies().iter_with_ids() {
-            let body_ref = BodyRef {
-                crate_ref,
-                root,
-                body,
-            };
-            let allocated = body_refs.alloc(body_ref);
-            debug_assert_eq!(allocated, body);
-            body_slots.insert(body_ref, body);
-        }
+        assert_eq!(
+            lowered_bodies.bodies().len(),
+            1,
+            "preparation starts with one outer owner"
+        );
+        // The worklist always starts at slot zero. Its project identity can be a saved root or
+        // an independently allocated current BodyRef; nested bodies receive identities later.
         Self {
-            crate_ref,
+            crate_ref: root.crate_ref,
             source,
-            root,
-            crate_bodies,
-            body_refs,
-            body_slots,
-            body_facts: Arena::new(),
+            lowered_bodies,
+            body_refs: Arena::from_vec(vec![root]),
+            body_slots: HashMap::from([(root, BodyId(0))]),
             body_local_items: Arena::new(),
             cancellation,
         }
     }
 
-    /// Start the same semantic pipeline from request-local lowered roots.
-    pub(super) fn for_current(
-        crate_ref: CrateRef,
-        parse_package: &'crate_data rg_parse::Package,
-        crate_bodies: LoweredCrateBodies,
-        body_refs: Vec<BodyRef>,
-        cancellation: rg_std::CancellationToken,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            crate_bodies.bodies().len() == body_refs.len(),
-            "current body worklist and identity list have different lengths",
-        );
-        anyhow::ensure!(
-            body_refs.iter().all(|body| body.crate_ref == crate_ref),
-            "current body identity belongs to a different crate",
-        );
-        anyhow::ensure!(
-            body_refs.iter().enumerate().all(|(index, body)| {
-                !body_refs[..index].iter().any(|previous| previous == body)
-            }),
-            "current body identity was assigned to more than one root",
-        );
-        let body_slots = body_refs
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(slot, body_ref)| (body_ref, BodyId(slot)))
-            .collect();
-        Ok(Self {
-            crate_ref,
-            source: BodyTaskSource::Parsed(parse_package),
-            root: BodyRoot::Current,
-            crate_bodies,
-            body_refs: Arena::from_vec(body_refs),
-            body_slots,
-            body_facts: Arena::new(),
-            body_local_items: Arena::new(),
-            cancellation,
-        })
-    }
-
-    /// Resolve one lowered crate through a visibility-scoped semantic lookup query.
+    /// Prepare a saved owner, assigning nested identities in its worklist order.
     ///
-    /// The crate gets its own use-site visibility and solver answers. Candidate answers, lookup
+    /// The owner gets its own use-site visibility and solver answers. Candidate answers, lookup
     /// preparation, and canonical declarations are shared by the active query operation.
-    pub(super) fn resolve(
+    pub(super) fn prepare_saved(
         mut self,
         def_map: &DefinitionReader<'_>,
         semantic_ir: &ItemReader<'_>,
         cfg: CfgEvaluator<'_>,
-    ) -> anyhow::Result<BodyStore> {
+    ) -> anyhow::Result<(PreparedBodyStore, Arena<BodyId, BodySourceStore>)> {
         let span = tracing::debug_span!(
-            "body_ir_crate_resolution",
+            "body_ir_preparation",
             rg.crate_id = self.crate_ref.crate_id.0,
         );
         let _entered = span.enter();
-        let resolution_started = Instant::now();
+        let preparation_started = Instant::now();
 
         // Before resolving bodies on the expr level, we need to collect
         // the items declared within the body, and we need to match `impl`
         // blocks to their corresponding `Self` types.
         let phase_started = Instant::now();
         let crate_ref = self.crate_ref;
-        let root = self.root;
-        self.materialize_body_local_items(def_map, semantic_ir, self.source, cfg, |lowered| {
+        let root = self.body_refs[BodyId(0)].root;
+        self.materialize_body_local_items(def_map, semantic_ir, cfg, |lowered| {
             Ok(BodyRef {
                 root,
                 crate_ref,
@@ -164,12 +114,12 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         })?;
         let elapsed = phase_started.elapsed();
         let body_local_items_ms = elapsed.as_millis();
-        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
+        if elapsed >= SLOW_PREPARATION_PHASE {
             tracing::debug!(
                 phase = "body_local_items",
                 elapsed_ms = elapsed.as_millis(),
-                body_count = self.crate_bodies.bodies().len(),
-                "slow Body IR crate resolution phase"
+                body_count = self.lowered_bodies.bodies().len(),
+                "slow Body IR preparation phase"
             );
         }
 
@@ -181,25 +131,23 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             ItemLookupQuery::build_from(*semantic_ir, self.crate_ref, &self.cancellation)?;
         let elapsed = phase_started.elapsed();
         let item_lookup_query_ms = elapsed.as_millis();
-        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
+        if elapsed >= SLOW_PREPARATION_PHASE {
             tracing::debug!(
                 phase = "item_lookup_query",
                 elapsed_ms = elapsed.as_millis(),
-                "slow Body IR crate resolution phase"
+                "slow Body IR preparation phase"
             );
         }
         let semantic_timings =
-            self.resolve_semantics(def_map, semantic_ir, &item_lookup_query, |_| Ok(()))?;
+            self.prepare_semantics(def_map, semantic_ir, &item_lookup_query, |_| Ok(()))?;
         let body_local_impl_headers_ms = semantic_timings.impl_headers.as_millis();
         let initializer_values_ms = semantic_timings.initializer_values.as_millis();
         let pattern_bindings_ms = semantic_timings.pattern_bindings.as_millis();
-        let bodies_ms = semantic_timings.bodies.as_millis();
 
-        // Finalize the build state, e.g. associate each body with its corresponding
-        // defmap/item store.
-        let body_count = self.crate_bodies.bodies().len();
+        // Freeze the settled body arenas and their local declarations before inference reads them.
+        let body_count = self.lowered_bodies.bodies().len();
         let finish_started = Instant::now();
-        rg_std::check_cancel!(self.cancellation, "finalize crate bodies");
+        rg_std::check_cancel!(self.cancellation, "finalize body preparation");
         let bodies = self.finish();
         let finish_ms = finish_started.elapsed().as_millis();
         tracing::trace!(
@@ -209,10 +157,9 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             body_local_impl_headers_ms,
             initializer_values_ms,
             pattern_bindings_ms,
-            bodies_ms,
             finish_ms,
-            total_ms = resolution_started.elapsed().as_millis(),
-            "Body IR crate resolution phases finished"
+            total_ms = preparation_started.elapsed().as_millis(),
+            "Body IR preparation finished"
         );
         Ok(bodies)
     }

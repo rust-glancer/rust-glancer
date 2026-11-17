@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ImplRef, ModuleRef, Span};
 
 pub(crate) use self::body::CurrentBody;
-use crate::{BodyLocalItems, BodySource, BodySourceItems};
+use crate::{BodyLocalItems, BodySource, BodySourceStore};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CurrentImplRole {
@@ -33,7 +33,7 @@ pub(crate) struct CurrentImplData {
     pub(crate) fallback_module: ModuleRef,
     pub(crate) role: CurrentImplRole,
     pub(crate) items: BodyLocalItems,
-    pub(crate) source_items: BodySourceItems,
+    pub(crate) sources: BodySourceStore,
 }
 
 /// A complete impl chosen from current syntax. Its semantic identity may still be saved.
@@ -60,16 +60,16 @@ pub struct CurrentSourceStore {
 }
 
 impl CurrentSourceStore {
-    pub(crate) fn source_items(&self, body_ref: BodyRef) -> Option<&BodySourceItems> {
+    pub(crate) fn sources(&self, body_ref: BodyRef) -> Option<&BodySourceStore> {
         self.bodies
             .iter()
             .find(|body| body.body_ref() == body_ref)
-            .map(|body| body.view().source_items())
+            .map(|body| body.view().sources())
             .or_else(|| {
                 self.declaration_impl
                     .as_ref()
                     .filter(|current| current.impl_ref.origin == DefMapRef::Body(body_ref))
-                    .map(|current| &current.source_items)
+                    .map(|current| &current.sources)
             })
     }
 

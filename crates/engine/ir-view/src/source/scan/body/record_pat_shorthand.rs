@@ -56,9 +56,9 @@ impl RecordPatShorthandBinding {
         Some(Self {
             binding,
             key: field.key.clone(),
-            field_span: field.source_span,
-            pat_span: body.pat(field.pat)?.source.span,
-            binding_name_span: binding_data.name_span?,
+            field_span: body.span(field.location),
+            pat_span: body.span(body.pat(field.pat)?.source),
+            binding_name_span: body.span(binding_data.name_location?),
         })
     }
 

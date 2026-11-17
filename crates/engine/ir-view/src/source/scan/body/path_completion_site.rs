@@ -13,7 +13,7 @@
 //! model::$0                  qualifier `model`, empty replacement span
 //! ```
 
-use rg_body_ir::{BodyPath, BodyReader, BodyView, ExprKind, PatData, PatKind};
+use rg_body_ir::{BodyPath, BodyReader, BodySourceStore, BodyView, ExprKind, PatData, PatKind};
 use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span};
 use rg_item_tree::{SourceLocations, TypePath};
 use rg_source::ReadError;
@@ -109,7 +109,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             }
 
             BodyScanSites::new(body).walk_type_paths(Some(self.file_id), false, |site| {
-                let Some(binding) = site_at(site.path, self.offset, body.source_items()) else {
+                let Some(binding) = site_at(site.path, self.offset, body.sources()) else {
                     return;
                 };
                 best.consider(
@@ -120,7 +120,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                         member_prefix_span: binding.member_prefix_span,
                         existing_bindings: binding.existing_bindings,
                     },
-                    body.source_items()
+                    body.sources()
                         .editable_span(site.path.location)
                         .map_or(u32::MAX, |span| span.len()),
                 );
@@ -144,11 +144,11 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                 site.scope,
                 site.path,
                 site.position,
-                body.source_items(),
+                body.sources(),
             ) {
                 best.consider(
                     completion_site,
-                    body.source_items()
+                    body.sources()
                         .editable_span(site.path.location)
                         .map_or(u32::MAX, |span| span.len()),
                 );
@@ -164,11 +164,15 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         for expr_data in body.exprs() {
-            if !expr_data.source.is_written_in_file(self.file_id) {
+            if !body
+                .source_at(expr_data.source)
+                .is_written_in_file(self.file_id)
+            {
                 continue;
             }
             match &expr_data.kind {
                 ExprKind::Path { path } => self.scan_body_path(
+                    body.sources(),
                     body_ref,
                     expr_data.scope,
                     path,
@@ -178,6 +182,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                 ExprKind::Record {
                     path: Some(path), ..
                 } => self.scan_body_path(
+                    body.sources(),
                     body_ref,
                     expr_data.scope,
                     path,
@@ -190,7 +195,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
 
         let sites = BodyScanSites::new(body);
         sites.walk_pats(Some(self.file_id), Some(self.offset), false, |site| {
-            self.scan_pat_data(body_ref, site.scope, site.data, best);
+            self.scan_pat_data(body_ref, body, site.scope, site.data, best);
         });
     }
 
@@ -198,6 +203,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     fn scan_pat_data(
         &self,
         body_ref: BodyRef,
+        body: BodyView<'_>,
         scope: ScopeId,
         data: &PatData,
         best: &mut NarrowestSourceSite<PathCompletionSite>,
@@ -232,6 +238,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             | PatKind::Path { path: None } => return,
         };
         self.scan_body_path(
+            body.sources(),
             body_ref,
             scope,
             path,
@@ -292,14 +299,15 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
 
     fn empty_member_site_for_body_path(
         &self,
+        sources: &BodySourceStore,
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
         context: BodyQualifiedPathContext,
     ) -> Option<PathCompletionSite> {
         let last_segment_idx = path.segment_count().checked_sub(1)?;
-        let last_segment_span = path.last_segment_span()?;
-        let span = self.empty_member_span(path.source_span, last_segment_span)?;
+        let last_segment_span = path.last_segment_location().map(|id| sources.span(id))?;
+        let span = self.empty_member_span(sources.span(path.location), last_segment_span)?;
         let module_qualifier = path.prefix_through(last_segment_idx);
         let associated_qualifier = path.associated_prefix_through(last_segment_idx)?.into();
 
@@ -321,6 +329,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     /// as `model::ma$0ke()` selects the value namespace.
     fn scan_body_path(
         &self,
+        sources: &BodySourceStore,
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
@@ -328,7 +337,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         for idx in 1..path.segment_count() {
-            let Some(span) = path.segment_span(idx) else {
+            let Some(span) = path.segment_location(idx).map(|id| sources.span(id)) else {
                 continue;
             };
             if !span.touches(self.offset) {
@@ -348,12 +357,14 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     member_prefix_span: span,
                     context,
                 },
-                path.source_span.len(),
+                sources.span(path.location).len(),
             );
         }
 
-        if let Some(site) = self.empty_member_site_for_body_path(body, scope, path, context) {
-            best.consider(site, path.source_span.len());
+        if let Some(site) =
+            self.empty_member_site_for_body_path(sources, body, scope, path, context)
+        {
+            best.consider(site, sources.span(path.location).len());
         }
     }
 }

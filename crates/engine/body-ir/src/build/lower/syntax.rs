@@ -39,7 +39,7 @@ impl BodyLowering<'_> {
     }
 
     pub(super) fn lower_body_path(&mut self, path: ast::Path) -> Option<BodyPath> {
-        let source_span = self.source(path.syntax()).span;
+        let location = self.source_location(path.syntax().text_range());
         let absolute = path
             .first_segment()
             .is_some_and(|segment| segment.coloncolon_token().is_some());
@@ -50,7 +50,7 @@ impl BodyLowering<'_> {
             return None;
         }
 
-        Some(BodyPath::new(source_span, absolute, segments))
+        Some(BodyPath::new(location, absolute, segments))
     }
 
     pub(super) fn lower_label(&mut self, label: Option<ast::Label>) -> Option<LabelData> {
@@ -106,7 +106,7 @@ impl BodyLowering<'_> {
         let lifetime = lifetime?;
         Some(LabelData {
             name: Name::new(lifetime.text()),
-            span: self.source(lifetime.syntax()).span,
+            location: self.source_location(lifetime.syntax().text_range()),
         })
     }
 
@@ -128,9 +128,9 @@ impl BodyLowering<'_> {
     }
 
     fn lower_path_segment(&mut self, segment: ast::PathSegment) -> Option<BodyPathSegment> {
-        let (kind, span) = match segment.kind()? {
+        let (kind, location) = match segment.kind()? {
             PathSegmentKind::Name(name_ref) => {
-                let span = self.source(name_ref.syntax()).span;
+                let location = self.source_location(name_ref.syntax().text_range());
                 let name = Name::new(name_ref.text());
                 // `$crate` is meaningful only for macro-generated syntax, where the temporary
                 // lowering context knows which crate defined the macro.
@@ -139,7 +139,7 @@ impl BodyLowering<'_> {
                 } else {
                     BodyPathSegmentKind::Name(name)
                 };
-                (kind, span)
+                (kind, location)
             }
             // `Self` needs to stay distinguishable in the rich path, but its DefMap projection
             // follows DefMap's type-path convention and behaves like a normal type name.
@@ -147,28 +147,28 @@ impl BodyLowering<'_> {
                 let token = segment.self_type_token()?;
                 (
                     BodyPathSegmentKind::SelfType,
-                    self.source_span(token.text_range()),
+                    self.source_location(token.text_range()),
                 )
             }
             PathSegmentKind::SelfKw => {
                 let token = segment.self_token()?;
                 (
                     BodyPathSegmentKind::SelfKw,
-                    self.source_span(token.text_range()),
+                    self.source_location(token.text_range()),
                 )
             }
             PathSegmentKind::SuperKw => {
                 let token = segment.super_token()?;
                 (
                     BodyPathSegmentKind::SuperKw,
-                    self.source_span(token.text_range()),
+                    self.source_location(token.text_range()),
                 )
             }
             PathSegmentKind::CrateKw => {
                 let token = segment.crate_token()?;
                 (
                     BodyPathSegmentKind::CrateKw,
-                    self.source_span(token.text_range()),
+                    self.source_location(token.text_range()),
                 )
             }
             PathSegmentKind::Type {
@@ -183,17 +183,17 @@ impl BodyLowering<'_> {
                             TypeRef::Path(TypePath::from_ast(&path, sources))
                         })
                     });
-                let span = segment
+                let location = segment
                     .type_anchor()
-                    .map(|anchor| self.source(anchor.syntax()).span)
-                    .unwrap_or_else(|| self.source(segment.syntax()).span);
+                    .map(|anchor| self.source_location(anchor.syntax().text_range()))
+                    .unwrap_or_else(|| self.source_location(segment.syntax().text_range()));
 
-                (BodyPathSegmentKind::TypeAnchor { ty, trait_ref }, span)
+                (BodyPathSegmentKind::TypeAnchor { ty, trait_ref }, location)
             }
         };
 
         let args = self.lower_path_segment_args(&segment);
-        Some(BodyPathSegment::new(kind, span, args))
+        Some(BodyPathSegment::new(kind, location, args))
     }
 
     fn lower_path_segment_args(

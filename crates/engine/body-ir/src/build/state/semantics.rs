@@ -1,4 +1,4 @@
-//! Resolve impl headers, settle binding identities, and infer facts for each body.
+//! Resolve local impl headers and initializer values, then settle binding identities.
 
 use std::time::{Duration, Instant};
 
@@ -8,27 +8,21 @@ use rg_ir_model::{ConstOrStaticRef, DefMapRef};
 use rg_semantic_ir::{ItemLookupQuery, ItemReader, TypePathResolution};
 use rg_std::ExpectedUnique;
 
-use super::{
-    BodySemanticStage, BodySemanticTimings, CrateBodyBuildState, SLOW_CRATE_RESOLUTION_PHASE,
-};
+use super::{BodySemanticStage, BodySemanticTimings, BodyStoreBuilder, SLOW_PREPARATION_PHASE};
 use crate::{
     BodyOwner,
     build::{pattern_binding::PatternBindingQuery, query_source::BodyBuildQuerySource},
     profile::metric,
-    resolution::{BodyResolutionContext, InferenceContext},
+    resolution::BodyResolutionContext,
 };
 
-// Bodies are the highest-cardinality build unit. Construct their diagnostic record only after the
-// timer crosses this threshold; a normal body does not create a tracing span or event.
-const SLOW_BODY_RESOLUTION: Duration = Duration::from_secs(1);
-
-impl CrateBodyBuildState<'_> {
+impl BodyStoreBuilder<'_> {
     /// Run the semantic stages in the same order for saved and current worklists.
     ///
     /// Lowering and body-local item discovery decide which bodies belong to the worklist. From
     /// this point onward both build modes use exactly these stages: impl headers first, initializer
-    /// values next, ambiguous pattern bindings next, then expression facts.
-    pub(crate) fn resolve_semantics(
+    /// values next, then ambiguous pattern bindings. Inference only sees the frozen result.
+    pub(crate) fn prepare_semantics(
         &mut self,
         def_map: &DefinitionReader<'_>,
         semantic_ir: &ItemReader<'_>,
@@ -38,7 +32,7 @@ impl CrateBodyBuildState<'_> {
         let started = Instant::now();
         self.resolve_body_local_impl_headers(def_map, semantic_ir, item_lookup_query)?;
         let impl_headers = started.elapsed();
-        Self::report_slow_semantic_stage("body_local_impl_headers", impl_headers, None);
+        Self::report_slow_semantic_stage("body_local_impl_headers", impl_headers);
         checkpoint(BodySemanticStage::ImplHeaders)
             .context("check body work after resolving body-local impl headers")?;
 
@@ -46,42 +40,30 @@ impl CrateBodyBuildState<'_> {
         self.evaluate_initializers(def_map, semantic_ir, item_lookup_query)?;
         let initializer_values = started.elapsed();
         metric::LOCAL_CONST_EVALUATION.record(initializer_values);
-        Self::report_slow_semantic_stage("initializer_values", initializer_values, None);
+        Self::report_slow_semantic_stage("initializer_values", initializer_values);
 
         let started = Instant::now();
         self.materialize_pattern_bindings(def_map, semantic_ir, item_lookup_query)?;
         let pattern_bindings = started.elapsed();
-        Self::report_slow_semantic_stage("pattern_bindings", pattern_bindings, None);
+        Self::report_slow_semantic_stage("pattern_bindings", pattern_bindings);
         checkpoint(BodySemanticStage::PatternBindings)
             .context("check body work after resolving pattern bindings")?;
-
-        let started = Instant::now();
-        self.resolve_bodies(def_map, semantic_ir, item_lookup_query)?;
-        let bodies = started.elapsed();
-        Self::report_slow_semantic_stage("bodies", bodies, Some(self.crate_bodies.bodies().len()));
-        checkpoint(BodySemanticStage::Bodies).context("check body work after body resolution")?;
 
         Ok(BodySemanticTimings {
             impl_headers,
             initializer_values,
             pattern_bindings,
-            bodies,
         })
     }
 
-    fn report_slow_semantic_stage(
-        phase: &'static str,
-        elapsed: Duration,
-        body_count: Option<usize>,
-    ) {
-        if elapsed < SLOW_CRATE_RESOLUTION_PHASE {
+    fn report_slow_semantic_stage(phase: &'static str, elapsed: Duration) {
+        if elapsed < SLOW_PREPARATION_PHASE {
             return;
         }
         tracing::debug!(
             phase,
             elapsed_ms = elapsed.as_millis(),
-            body_count,
-            "slow Body IR crate resolution phase"
+            "slow Body IR preparation phase"
         );
     }
 
@@ -93,14 +75,13 @@ impl CrateBodyBuildState<'_> {
         semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
     ) -> anyhow::Result<()> {
-        for (body_id, lowered_body) in self.crate_bodies.bodies().iter_with_ids() {
+        for (body_id, lowered_body) in self.lowered_bodies.bodies().iter_with_ids() {
             self.source.check_cancelled()?;
             rg_std::check_cancel!(self.cancellation, "body impl headers");
             let body_ref = self.body_ref(body_id);
             let body = lowered_body.body();
             let resolved_headers = {
-                let Some(items) = self.body_local_items.get(body_id).and_then(Option::as_ref)
-                else {
+                let Some(items) = self.body_local_items.get(body_id) else {
                     continue;
                 };
                 let impl_headers = items
@@ -164,11 +145,7 @@ impl CrateBodyBuildState<'_> {
                 resolved_headers
             };
 
-            let Some(items) = self
-                .body_local_items
-                .get_mut(body_id)
-                .and_then(Option::as_mut)
-            else {
+            let Some(items) = self.body_local_items.get_mut(body_id) else {
                 continue;
             };
             for (impl_id, resolved_self_ty, resolved_trait_ref) in resolved_headers {
@@ -193,7 +170,7 @@ impl CrateBodyBuildState<'_> {
             &self.body_local_items,
         );
 
-        for (body_id, body) in self.crate_bodies.bodies_mut().iter_mut_with_ids() {
+        for (body_id, body) in self.lowered_bodies.bodies_mut().iter_mut_with_ids() {
             rg_std::check_cancel!(self.cancellation, "body pattern bindings");
             let body_ref = self.body_refs[body_id];
             if !body.has_pending_bindings() {
@@ -235,7 +212,7 @@ impl CrateBodyBuildState<'_> {
         );
         let mut values = Vec::new();
         let mut initializers = 0;
-        for (body_id, lowered) in self.crate_bodies.bodies().iter_with_ids() {
+        for (body_id, lowered) in self.lowered_bodies.bodies().iter_with_ids() {
             let body = lowered.body();
             // Saved crate declarations are evaluated separately. This worklist only publishes facts
             // for declarations owned by a body, including request-local initializer roots.
@@ -269,67 +246,8 @@ impl CrateBodyBuildState<'_> {
         metric::LOCAL_CONST_KNOWN_VALUES.add(values.len() as u64);
         // Apply results after the read-only walk, so no query observes a partially filled store.
         for (body, item, value) in values {
-            self.body_local_items[body]
-                .as_mut()
-                .expect("evaluated initializer should have a local item store")
-                .set_initializer_value(item, value);
+            self.body_local_items[body].set_initializer_value(item, value);
         }
-        Ok(())
-    }
-
-    // For each body with resolved items, infer its expressions and patterns recursively, complete
-    // pending semantic operations, and finalize the types and selected declarations.
-    fn resolve_bodies(
-        &mut self,
-        def_map: &DefinitionReader<'_>,
-        semantic_ir: &ItemReader<'_>,
-        item_lookup_query: &ItemLookupQuery<'_>,
-    ) -> anyhow::Result<()> {
-        // Make body inference aware of body-local items.
-        let source = BodyBuildQuerySource::new(
-            def_map,
-            semantic_ir,
-            self.crate_ref,
-            &self.body_slots,
-            &self.body_local_items,
-        );
-        debug_assert!(self.body_facts.is_empty());
-
-        for (body_id, body) in self.crate_bodies.bodies().iter_with_ids() {
-            self.source.check_cancelled()?;
-            rg_std::check_cancel!(self.cancellation, "body inference");
-            let body_ref = self.body_refs[body_id];
-            let body = body.body();
-            let body_source = body.source();
-            let started = Instant::now();
-            let facts = InferenceContext::new(
-                &source,
-                &source,
-                item_lookup_query,
-                body_ref,
-                body,
-                &self.cancellation,
-            )
-            .infer_body()?;
-            let elapsed = started.elapsed();
-            if elapsed >= SLOW_BODY_RESOLUTION {
-                tracing::debug!(
-                    body_id = body_id.0,
-                    owner = ?body.owner(),
-                    file_id = body_source.file_id.as_raw(),
-                    path = ?self.source.file_path(body_source.file_id),
-                    span = ?body_source.span,
-                    elapsed_ms = elapsed.as_millis(),
-                    expression_count = body.exprs().len(),
-                    binding_count = body.bindings().len(),
-                    statement_count = body.statements().len(),
-                    "slow body resolution"
-                );
-            }
-            let allocated = self.body_facts.alloc(facts);
-            debug_assert_eq!(allocated, body_id);
-        }
-
         Ok(())
     }
 }

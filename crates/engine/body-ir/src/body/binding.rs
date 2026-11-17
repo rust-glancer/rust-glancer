@@ -1,16 +1,14 @@
-use rg_ir_model::{ScopeId, Span};
+use rg_ir_model::{ScopeId, SourceId};
 use rg_item_tree::{SelfParamKind, TypeRef};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::BodySource;
-
 /// One local binding introduced by a parameter or `let`.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BindingData {
-    pub source: BodySource,
-    pub name_span: Option<Span>,
+    pub source: SourceId,
+    pub name_location: Option<SourceId>,
     pub scope: ScopeId,
     pub kind: BindingKind,
     pub name: Option<Name>,

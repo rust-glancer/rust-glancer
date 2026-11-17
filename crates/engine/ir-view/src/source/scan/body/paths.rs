@@ -83,7 +83,7 @@ impl<'a> TypePathSourceScanner<'a> {
         }
 
         for (idx, segment) in path.segments.iter().enumerate() {
-            let Some(span) = self.body.source_items().editable_span(segment.location) else {
+            let Some(span) = self.body.sources().editable_span(segment.location) else {
                 continue;
             };
             if self.offset_matches(span) && self.body.contains_source_span(source, span) {
@@ -179,11 +179,14 @@ impl<'a> BodyPathSourceScanner<'a> {
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
         // different symbols even though they belong to the same lowered expression.
         for (expr_idx, expr_data) in self.body.exprs().iter().enumerate() {
-            if !expr_data.source.is_written_in_selected_file(self.file_id)
+            if !self
+                .body
+                .source_at(expr_data.source)
+                .is_written_in_selected_file(self.file_id)
                 && !(self.offset.is_some()
                     && self
                         .file_id
-                        .is_none_or(|file| expr_data.source.file_id == file))
+                        .is_none_or(|file| self.body.source_at(expr_data.source).file_id == file))
             {
                 continue;
             }
@@ -192,7 +195,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                 ExprKind::Path { path } => self.scan_body_path(
                     expr_data.scope,
                     path,
-                    expr_data.source,
+                    self.body.source_at(expr_data.source),
                     false,
                     Some(expr),
                     BodyPathFinalSegment::ValuePath,
@@ -202,7 +205,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                 } => self.scan_body_path(
                     expr_data.scope,
                     path,
-                    expr_data.source,
+                    self.body.source_at(expr_data.source),
                     false,
                     Some(expr),
                     BodyPathFinalSegment::Expression,
@@ -210,7 +213,11 @@ impl<'a> BodyPathSourceScanner<'a> {
                 _ => {}
             }
             if let ExprKind::Record { fields, .. } = &expr_data.kind {
-                self.scan_record_expr_shorthand_values(expr_data.scope, fields, expr_data.source);
+                self.scan_record_expr_shorthand_values(
+                    expr_data.scope,
+                    fields,
+                    self.body.source_at(expr_data.source),
+                );
             }
         }
 
@@ -229,7 +236,7 @@ impl<'a> BodyPathSourceScanner<'a> {
             self.scan_body_path(
                 scope,
                 path,
-                data.source,
+                self.body.source_at(data.source),
                 self.include_single_segment,
                 None,
                 BodyPathFinalSegment::TypePath,
@@ -238,7 +245,7 @@ impl<'a> BodyPathSourceScanner<'a> {
             self.scan_body_path(
                 scope,
                 path,
-                data.source,
+                self.body.source_at(data.source),
                 self.include_single_segment,
                 None,
                 BodyPathFinalSegment::ValuePath,
@@ -265,7 +272,7 @@ impl<'a> BodyPathSourceScanner<'a> {
 
         let segment_count = path.segment_count();
         for idx in 0..segment_count {
-            let Some(span) = path.segment_span(idx) else {
+            let Some(span) = path.segment_location(idx).map(|id| self.body.span(id)) else {
                 continue;
             };
             if self.offset_matches(span) && self.body.contains_source_span(source, span) {
@@ -325,8 +332,10 @@ impl<'a> BodyPathSourceScanner<'a> {
     ) {
         for field in fields {
             if field.syntax.is_explicit()
-                || !self.offset_matches(field.key_span)
-                || !self.body.contains_source_span(source, field.key_span)
+                || !self.offset_matches(self.body.span(field.key_location))
+                || !self
+                    .body
+                    .contains_source_span(source, self.body.span(field.key_location))
             {
                 continue;
             }
@@ -337,14 +346,14 @@ impl<'a> BodyPathSourceScanner<'a> {
                 body: self.body_ref,
                 scope,
                 file_id: source.file_id,
-                span: field.key_span,
+                span: self.body.span(field.key_location),
                 source: match field.value {
                     Some(expr) => ValueReferenceSource::Expr(expr),
                     None => ValueReferenceSource::Path(Path::unqualified_name(name.as_str())),
                 },
                 surface: ValueReferenceSurface::RecordExprShorthand {
                     key: field.key.clone(),
-                    field_span: field.source_span,
+                    field_span: self.body.span(field.location),
                 },
             });
         }

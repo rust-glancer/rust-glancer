@@ -1,21 +1,21 @@
 use rg_ir_model::{
-    BindingId, BodyRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, Span, StmtId,
+    BindingId, BodyRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, SourceId, Span, StmtId,
     identity::DeclarationRef,
 };
 use rg_item_tree::{ItemNode, ItemTreeId};
 
 use super::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
-    BodySourceMap, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
+    BodySourceMap, BodySourceStore, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
     facts::{BodyFacts, BodyResolution, CallFacts, ExprFacts},
 };
 
-/// Finalized read view over one structural body and its persisted semantic sidecar.
+/// Read view joining one prepared body, its inferred facts, and its source locations.
 ///
-/// `BodyData` and `BodyFacts` have separate owners so structural IR can be built and frozen before
-/// resolution starts. Readers normally need both: `expr(id)` reads the lowered node, while
-/// `expr_ty(id)` and `expr_declarations(...)` read conclusions for that same id. This view joins
-/// the two without creating a third owning representation.
+/// `expr(id)` reads the lowered node; `expr_ty(id)` and `expr_declarations(...)` read conclusions
+/// for that same ID. `source_at(node.source)` supplies the current position. The first two can
+/// stay unchanged after a comment moves the expression. The source table must come from the new
+/// preparation, so this view borrows each part without copying them into a combined payload.
 ///
 /// Construction expects the dense sidecars to mirror the body's arenas and checks that invariant
 /// in debug builds. These facts are published only after inference has removed its live variables.
@@ -23,19 +23,40 @@ use super::{
 pub struct BodyView<'a> {
     body: &'a BodyData,
     facts: &'a BodyFacts,
+    sources: &'a BodySourceStore,
 }
 
 impl<'a> BodyView<'a> {
-    pub(crate) fn new(body: &'a BodyData, facts: &'a BodyFacts) -> Self {
+    pub(crate) fn new(
+        body: &'a BodyData,
+        facts: &'a BodyFacts,
+        sources: &'a BodySourceStore,
+    ) -> Self {
         debug_assert!(
             facts.is_aligned_with(body),
             "body facts should mirror body binding and expression ids",
         );
-        Self { body, facts }
+        Self {
+            body,
+            facts,
+            sources,
+        }
     }
 
     pub fn structure(self) -> &'a BodyData {
         self.body
+    }
+
+    pub fn sources(self) -> &'a BodySourceStore {
+        self.sources
+    }
+
+    pub fn source_at(self, id: SourceId) -> BodySource {
+        self.sources.source(id)
+    }
+
+    pub fn span(self, id: SourceId) -> Span {
+        self.sources.span(id)
     }
 
     pub fn owner(self) -> BodyOwner {
@@ -55,7 +76,7 @@ impl<'a> BodyView<'a> {
     }
 
     pub fn source(self) -> BodySource {
-        self.body.source()
+        self.sources.source(self.body.source())
     }
 
     pub fn source_items(self) -> &'a BodySourceItems {
@@ -67,11 +88,16 @@ impl<'a> BodyView<'a> {
     }
 
     pub fn source_map(self) -> &'a BodySourceMap {
-        self.body.source_map()
+        self.sources.provenance()
     }
 
     pub fn contains_source_span(self, source: BodySource, span: Span) -> bool {
-        self.body.contains_source_span(source, span)
+        self.source_map().is_macro_argument(span)
+            || source.is_written()
+                && !self
+                    .macro_calls()
+                    .iter()
+                    .any(|call| self.source_at(call.source).span.contains_span(span))
     }
 
     pub fn param_scope(self) -> ScopeId {
@@ -135,11 +161,14 @@ impl<'a> BodyView<'a> {
     }
 
     pub fn source_item_source(self, item: ItemTreeId) -> Option<BodySource> {
-        self.body.source_item_source(item)
+        self.body
+            .source_item_source(item)
+            .map(|id| self.source_at(id))
     }
 
     pub fn source_item_is_written(self, item: ItemTreeId) -> bool {
-        self.body.source_item_is_written(item)
+        self.source_item_source(item)
+            .is_none_or(|source| source.is_written())
     }
 
     pub fn statement(self, statement: StmtId) -> Option<&'a StmtData> {

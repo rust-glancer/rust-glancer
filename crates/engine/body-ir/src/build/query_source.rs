@@ -1,28 +1,31 @@
 //! Build-time body-aware routing for shared DefMap and item-store queries.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use rg_arena::Arena;
 use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
 use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, LocalDefRef, ModuleRef, SemanticItemRef};
-use rg_semantic_ir::{ItemReader, SemanticItemSource, SemanticItemView};
+use rg_semantic_ir::{ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
-use rg_std::UniqueVec;
+use rg_std::{CancellationToken, Shrink as _, UniqueVec};
 
-use crate::BodyLocalItems;
+use crate::{BodyFactsStore, BodyLocalItems, PreparedBodyStore, resolution::InferenceContext};
 
-/// Provides crate semantic facts plus body-local facts collected while building that crate.
+/// Provides saved crate facts plus the local declarations of one outer owner and its nested bodies.
 ///
-/// The frozen query path can already route arbitrary body origins through `BodyReader`. During
-/// indexing we need the same shape before the bodies have been written back to storage, so this
-/// source reads body-local stores from the crate build state instead.
+/// The frozen query path can already route arbitrary body origins through `BodyReader`.
+/// Preparation and inference need the same routing before those bodies have been published, so
+/// this source borrows their local stores directly.
 #[derive(Clone, Copy)]
 pub(super) struct BodyBuildQuerySource<'a, 'db> {
     def_map: &'a DefinitionReader<'db>,
     semantic_ir: &'a ItemReader<'db>,
     crate_ref: CrateRef,
     body_slots: &'a HashMap<BodyRef, BodyId>,
-    body_local_items: &'a Arena<BodyId, Option<BodyLocalItems>>,
+    body_local_items: &'a Arena<BodyId, BodyLocalItems>,
 }
 
 impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
@@ -31,7 +34,7 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
         semantic_ir: &'a ItemReader<'db>,
         crate_ref: CrateRef,
         body_slots: &'a HashMap<BodyRef, BodyId>,
-        body_local_items: &'a Arena<BodyId, Option<BodyLocalItems>>,
+        body_local_items: &'a Arena<BodyId, BodyLocalItems>,
     ) -> Self {
         Self {
             def_map,
@@ -48,7 +51,7 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
         }
 
         let slot = *self.body_slots.get(&body_ref)?;
-        self.body_local_items.get(slot)?.as_ref()
+        self.body_local_items.get(slot)
     }
 }
 
@@ -131,5 +134,66 @@ impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource
                 .map(|items| items.semantic_items().collect())
                 .unwrap_or_default()),
         }
+    }
+}
+
+impl PreparedBodyStore {
+    /// Saved and edited owners use the same inference kernel and the same lexical overlay.
+    /// This method cannot see source maps: every dependency it observes contributes to meaning.
+    pub(crate) fn infer(
+        &self,
+        definitions: &DefinitionReader<'_>,
+        items: &ItemReader<'_>,
+        lookup: &ItemLookupQuery<'_>,
+        cancellation: &CancellationToken,
+    ) -> anyhow::Result<BodyFactsStore> {
+        let body_slots = self
+            .body_refs
+            .iter_with_ids()
+            .map(|(slot, body)| (*body, slot))
+            .collect();
+        let mut facts = Arena::with_capacity(self.bodies.len());
+        let Some(first) = self.body_refs.as_slice().first() else {
+            return Ok(BodyFactsStore { bodies: facts });
+        };
+        let source = BodyBuildQuerySource::new(
+            definitions,
+            items,
+            first.crate_ref,
+            &body_slots,
+            &self.local_items,
+        );
+        for (slot, body) in self.bodies.iter_with_ids() {
+            rg_std::check_cancel!(cancellation, "body inference");
+            let started = Instant::now();
+            let result = InferenceContext::new(
+                &source,
+                &source,
+                lookup,
+                self.body_refs[slot],
+                body,
+                cancellation,
+            )
+            .infer_body()?;
+            let elapsed = started.elapsed();
+            if elapsed >= Duration::from_secs(1) {
+                // Keep slow-body diagnostics independent of source queries. A position read here
+                // would make location changes invalidate otherwise reusable inference.
+                tracing::debug!(
+                    body = ?self.body_refs[slot],
+                    owner = ?body.owner(),
+                    elapsed_ms = elapsed.as_millis(),
+                    expression_count = body.exprs().len(),
+                    binding_count = body.bindings().len(),
+                    statement_count = body.statements().len(),
+                    "slow body resolution"
+                );
+            }
+            let allocated = facts.alloc(result);
+            debug_assert_eq!(allocated, slot);
+        }
+        let mut facts = BodyFactsStore { bodies: facts };
+        facts.shrink_to_fit();
+        Ok(facts)
     }
 }

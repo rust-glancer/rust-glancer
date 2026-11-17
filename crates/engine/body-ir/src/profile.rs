@@ -5,8 +5,10 @@ use rg_profile::{ProfileDescriptor, declare_metrics};
 declare_metrics! {
     pub(crate) mod metric {
         scope "body_ir.saved" {
-            /// Outer owners computed by the saved-body provider; reuse does not increment this.
+            /// Outer owners lowered and prepared; source-only changes can increment this.
             counter OWNERS = "owners";
+            /// Prepared outer owners submitted for inference; source-only changes reuse this work.
+            counter INFERRED_OWNERS = "inference_owners";
         }
         scope "body_ir.const_eval" {
             /// Body-local and current-root const and static initializers submitted for evaluation.

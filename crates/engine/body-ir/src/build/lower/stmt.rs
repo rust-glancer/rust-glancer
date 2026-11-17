@@ -50,7 +50,7 @@ impl BodyLowering<'_> {
     }
 
     fn lower_self_param(&mut self, param: ast::SelfParam, scope: ScopeId) -> FunctionParamData {
-        let source = self.source(param.syntax());
+        let source = self.source_id(param.syntax());
         let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let self_kind = if annotation.is_some() {
             SelfParamKind::Explicit
@@ -61,12 +61,13 @@ impl BodyLowering<'_> {
         } else {
             SelfParamKind::Value
         };
+        let name_location = param
+            .name()
+            .map(|name| self.source_location(name.syntax().text_range()))
+            .or(Some(source));
         let binding = self.builder.alloc_binding(BindingData {
             source,
-            name_span: param
-                .name()
-                .map(|name| self.source(name.syntax()).span)
-                .or(Some(source.span)),
+            name_location,
             scope,
             kind: BindingKind::SelfParam(self_kind),
             name: Some(Name::new("self")),
@@ -82,7 +83,7 @@ impl BodyLowering<'_> {
     }
 
     fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> FunctionParamData {
-        let source = self.source(param.syntax());
+        let source = self.source_id(param.syntax());
         let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let (pat, bindings) = match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
@@ -90,7 +91,7 @@ impl BodyLowering<'_> {
                 None,
                 vec![self.builder.alloc_binding(BindingData {
                     source,
-                    name_span: None,
+                    name_location: None,
                     scope,
                     kind: BindingKind::Param,
                     name: None,
@@ -337,6 +338,7 @@ impl BodyLowering<'_> {
         expr: Option<ExprId>,
         has_semicolon: bool,
     ) -> StmtId {
+        let source = self.builder.sources.record(source);
         self.builder.alloc_statement(StmtData {
             source,
             kind: match expr {
@@ -350,7 +352,7 @@ impl BodyLowering<'_> {
     }
 
     fn lower_item_statement(&mut self, item: ast::Item, scope: ScopeId) -> StmtId {
-        let source = self.source(item.syntax());
+        let source = self.source_id(item.syntax());
 
         let kind = self
             .lower_source_item(&item)
@@ -377,8 +379,9 @@ impl BodyLowering<'_> {
             .unwrap_or_default();
         let (pat, bindings) = bindings;
 
+        let source = self.source_id(statement.syntax());
         self.builder.alloc_statement(StmtData {
-            source: self.source(statement.syntax()),
+            source,
             kind: StmtKind::Let {
                 scope,
                 pat,
@@ -525,9 +528,9 @@ impl BodyLowering<'_> {
             let Some(item) = self.cfg.enabled_syntax(item) else {
                 continue;
             };
-            let source = self.source(item.syntax());
             if let Some(node) = self.lower_source_item(&item) {
-                item_ids.push(self.builder.alloc_scopeless_source_item(node, source));
+                let location = node.location;
+                item_ids.push(self.builder.alloc_scopeless_source_item(node, location));
             }
         }
         item_ids
@@ -546,9 +549,9 @@ impl BodyLowering<'_> {
             let Some(item) = self.cfg.enabled_syntax(item) else {
                 continue;
             };
-            let source = self.source(item.syntax());
             if let Some(node) = self.lower_source_assoc_item(item) {
-                item_ids.push(self.builder.alloc_scopeless_source_item(node, source));
+                let location = node.location;
+                item_ids.push(self.builder.alloc_scopeless_source_item(node, location));
             }
         }
         item_ids

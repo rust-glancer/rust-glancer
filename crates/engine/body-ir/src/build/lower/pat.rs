@@ -1,6 +1,6 @@
 //! Pattern lowering and binding allocation for destructuring syntax.
 
-use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span};
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, SourceId};
 use rg_item_tree::TypeRef;
 use rg_syntax::{
     AstNode as _,
@@ -43,7 +43,7 @@ impl PatLoweringOptions {
 
 struct PatBindingRequest<'a> {
     syntax: &'a rg_syntax::SyntaxNode,
-    name_span: Span,
+    name_location: SourceId,
     scope: ScopeId,
     kind: BindingKind,
     name: Name,
@@ -96,7 +96,7 @@ impl BodyLowering<'_> {
         options: PatLoweringOptions,
         bindings: &mut Vec<BindingId>,
     ) -> PatId {
-        let source = self.source(pat.syntax());
+        let source = self.source_id(pat.syntax());
         let kind = options.kind;
         let alloc_bindings = options.alloc_bindings;
         let ident_binding = options.ident_binding;
@@ -122,12 +122,12 @@ impl BodyLowering<'_> {
                 let Some(name_ast) = pat.name() else {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
-                let name_span = self.source(name_ast.syntax()).span;
+                let name_location = self.source_location(name_ast.syntax().text_range());
                 let name = Name::new(name_ast.text());
                 let mode = Self::pat_binding_mode_from_ast(&pat);
                 let ambiguous_path = pat
                     .is_simple_ident()
-                    .then(|| BodyPath::unqualified_name(name.clone(), name_span));
+                    .then(|| BodyPath::unqualified_name(name.clone(), name_location));
                 let subpat = pat.pat().map(|pat| {
                     self.lower_pat_inner(pat, scope, kind, None, alloc_bindings, bindings)
                 });
@@ -149,7 +149,7 @@ impl BodyLowering<'_> {
                     self.push_pat_binding(
                         PatBindingRequest {
                             syntax: pat.syntax(),
-                            name_span,
+                            name_location,
                             scope,
                             kind,
                             name,
@@ -207,10 +207,10 @@ impl BodyLowering<'_> {
                     let Some(field_name) = field.field_name() else {
                         continue;
                     };
-                    let key_span = self.source(field_name.syntax()).span;
+                    let key_location = self.source_location(field_name.syntax().text_range());
                     let name = Name::new(field_name.text());
                     let key = FieldKey::Named(name.clone());
-                    let source_span = self.source(field.syntax()).span;
+                    let location = self.source_location(field.syntax().text_range());
                     let syntax = Self::record_pat_field_syntax(&field);
                     let pat = if syntax.is_explicit() {
                         match field.pat() {
@@ -238,8 +238,8 @@ impl BodyLowering<'_> {
                     };
                     fields.push(RecordPatField {
                         key,
-                        key_span,
-                        source_span,
+                        key_location,
+                        location,
                         syntax,
                         pat,
                     });
@@ -260,9 +260,9 @@ impl BodyLowering<'_> {
                     });
                 PatKind::Record {
                     path: pat.path().and_then(|path| self.lower_body_path(path)),
-                    field_list_span: field_list
+                    field_list_location: field_list
                         .as_ref()
-                        .map(|field_list| self.source(field_list.syntax()).span),
+                        .map(|field_list| self.source_location(field_list.syntax().text_range())),
                     fields,
                     rest,
                 }
@@ -409,7 +409,7 @@ impl BodyLowering<'_> {
     ) -> Option<BindingId> {
         let PatBindingRequest {
             syntax,
-            name_span,
+            name_location,
             scope,
             kind,
             name,
@@ -430,10 +430,11 @@ impl BodyLowering<'_> {
             return Some(binding);
         }
 
+        let source = self.source_id(syntax);
         let binding = self.builder.alloc_pending_binding(
             BindingData {
-                source: self.source(syntax),
-                name_span: Some(name_span),
+                source,
+                name_location: Some(name_location),
                 scope,
                 kind,
                 name: Some(name),
@@ -488,8 +489,9 @@ impl BodyLowering<'_> {
     }
 
     fn alloc_unsupported_pat(&mut self, syntax: &rg_syntax::SyntaxNode) -> PatId {
+        let source = self.source_id(syntax);
         self.builder.alloc_pat(PatData {
-            source: self.source(syntax),
+            source,
             kind: PatKind::Unsupported,
         })
     }

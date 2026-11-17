@@ -14,5 +14,5 @@ pub use self::{
         CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
         CurrentSourceSelection, CurrentSourceUnavailable,
     },
-    saved::{SavedBody, saved_body},
+    saved::{PreparedBody, infer_saved_body, prepare_saved_body, saved_body},
 };

@@ -75,30 +75,32 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<RecordFieldCompletionSite>,
     ) {
         for expr in body.exprs().iter() {
-            if !expr.source.is_written_in_file(self.file_id) {
+            if !body.source_at(expr.source).is_written_in_file(self.file_id) {
                 continue;
             }
             let ExprKind::Record {
                 path: Some(path),
-                field_list_span: Some(field_list_span),
+                field_list_location: Some(field_list_location),
                 fields,
                 spread,
             } = &expr.kind
             else {
                 continue;
             };
-            let spread_span = spread.as_ref().map(|spread| spread.source_span);
+            let spread_span = spread.as_ref().map(|spread| body.span(spread.location));
             let Some(site) = self.site_for_record_fields(
                 body_ref,
                 expr.scope,
                 path,
-                *field_list_span,
-                fields.iter().map(RecordFieldSpan::from_expr_field),
+                body.span(*field_list_location),
+                fields
+                    .iter()
+                    .map(|field| RecordFieldSpan::from_expr_field(field, body)),
                 spread_span,
             ) else {
                 continue;
             };
-            best.consider(site, expr.source.span.len());
+            best.consider(site, body.source_at(expr.source).span.len());
         }
     }
 
@@ -126,7 +128,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     ) {
         let PatKind::Record {
             path: Some(path),
-            field_list_span: Some(field_list_span),
+            field_list_location: Some(field_list_location),
             fields,
             rest,
         } = &data.kind
@@ -134,16 +136,19 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
             return;
         };
 
-        let rest_span = rest.and_then(|rest| body.pat(rest).map(|pat| pat.source.span));
+        let rest_span =
+            rest.and_then(|rest| body.pat(rest).map(|pat| body.source_at(pat.source).span));
         if let Some(site) = self.site_for_record_fields(
             body_ref,
             scope,
             path,
-            *field_list_span,
-            fields.iter().map(RecordFieldSpan::from_pat_field),
+            body.span(*field_list_location),
+            fields
+                .iter()
+                .map(|field| RecordFieldSpan::from_pat_field(field, body)),
             rest_span,
         ) {
-            best.consider(site, data.source.span.len());
+            best.consider(site, body.span(data.source).len());
         }
     }
 
@@ -213,19 +218,19 @@ struct RecordFieldSpan<'field> {
 }
 
 impl<'field> RecordFieldSpan<'field> {
-    fn from_expr_field(field: &'field RecordExprField) -> Self {
+    fn from_expr_field(field: &'field RecordExprField, body: BodyView<'_>) -> Self {
         Self {
             key: &field.key,
-            key_span: field.key_span,
-            source_span: field.source_span,
+            key_span: body.span(field.key_location),
+            source_span: body.span(field.location),
         }
     }
 
-    fn from_pat_field(field: &'field RecordPatField) -> Self {
+    fn from_pat_field(field: &'field RecordPatField, body: BodyView<'_>) -> Self {
         Self {
             key: &field.key,
-            key_span: field.key_span,
-            source_span: field.source_span,
+            key_span: body.span(field.key_location),
+            source_span: body.span(field.location),
         }
     }
 }

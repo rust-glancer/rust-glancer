@@ -14,7 +14,7 @@
 //! module::it$0;          not handled here: candidates come from `module`
 //! ```
 
-use rg_body_ir::{BodyPath, BodyReader, BodyView, ExprKind, PatKind, StmtKind};
+use rg_body_ir::{BodyPath, BodyReader, BodySourceStore, BodyView, ExprKind, PatKind, StmtKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{BindingId, BodyRef, CrateRef, DefMapRef, FileId, GenericDefRef, ScopeId, Span};
 use rg_item_tree::{SourceLocations, TypePath};
@@ -114,9 +114,9 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             // and similar recovered children. Broad block expressions use their inner scope but
             // derive the binding cutoff from source order so earlier statements remain visible.
             for expr in body.exprs() {
-                if !expr.source.is_written_in_file(self.file_id)
-                    || !expr.source.span.touches(self.offset)
-                    || expr.source.span.len() > source_len
+                if !body.source_at(expr.source).is_written_in_file(self.file_id)
+                    || !body.source_at(expr.source).span.touches(self.offset)
+                    || body.source_at(expr.source).span.len() > source_len
                 {
                     continue;
                 }
@@ -129,16 +129,18 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 } else {
                     expr.visible_bindings
                 };
-                source_len = expr.source.span.len();
+                source_len = body.source_at(expr.source).span.len();
             }
 
             // Missing let annotations and initializers may have no expression node. The statement
             // still preserves their lexical scope and the bindings introduced by that let, which
             // must not be visible within its own initializer.
             for statement in body.statements() {
-                if !statement.source.is_written_in_file(self.file_id)
-                    || !statement.source.span.touches(self.offset)
-                    || statement.source.span.len() > source_len
+                if !body
+                    .source_at(statement.source)
+                    .is_written_in_file(self.file_id)
+                    || !body.source_at(statement.source).span.touches(self.offset)
+                    || body.source_at(statement.source).span.len() > source_len
                 {
                     continue;
                 }
@@ -154,7 +156,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                         .map(|binding| binding.0)
                         .min()
                         .unwrap_or_else(|| Self::binding_cutoff_at(body, self.offset));
-                    source_len = statement.source.span.len();
+                    source_len = body.source_at(statement.source).span.len();
                 }
             }
 
@@ -180,7 +182,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     fn binding_cutoff_at(body: BodyView<'_>, offset: u32) -> usize {
         body.bindings()
             .iter()
-            .position(|binding| binding.source.span.start >= offset)
+            .position(|binding| body.source_at(binding.source).span.start >= offset)
             .unwrap_or_else(|| body.bindings().len())
     }
 
@@ -202,7 +204,11 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             let Some(source_item) = body.source_item(source.item) else {
                 continue;
             };
-            let Some(span) = body.source_items().span(source_item.location) else {
+            let Some(span) = body
+                .sources()
+                .location(source_item.location)
+                .map(|location| location.span)
+            else {
                 continue;
             };
             if source_item.file_id == self.file_id && span.touches(self.offset) {
@@ -229,11 +235,11 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 Self::generic_owner(items, body_ref, site.owner_item),
                 site.path,
                 site.position,
-                body.source_items(),
+                body.sources(),
             ) {
                 best.consider(
                     completion_site,
-                    body.source_items()
+                    body.sources()
                         .editable_span(site.path.location)
                         .map_or(u32::MAX, |span| span.len()),
                 );
@@ -249,7 +255,10 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<UnqualifiedCompletionSite>,
     ) {
         for expr_data in body.exprs() {
-            if !expr_data.source.is_written_in_file(self.file_id) {
+            if !body
+                .source_at(expr_data.source)
+                .is_written_in_file(self.file_id)
+            {
                 continue;
             }
             match &expr_data.kind {
@@ -258,6 +267,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                     path: Some(path), ..
                 } => {
                     self.scan_body_path(
+                        body.sources(),
                         body_ref,
                         expr_data.scope,
                         expr_data.visible_bindings,
@@ -312,6 +322,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
 
             if let Some(path) = path {
                 self.scan_body_path(
+                    body.sources(),
                     body_ref,
                     site.scope,
                     visible_bindings,
@@ -329,7 +340,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             let Some(binding_data) = body.binding(binding) else {
                 return;
             };
-            let Some(span) = binding_data.name_span else {
+            let Some(span) = binding_data.name_location.map(|id| body.span(id)) else {
                 return;
             };
             if !span.touches(self.offset) {
@@ -351,7 +362,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                     expected_type_binding: Some(binding),
                     visible_bindings,
                 },
-                site.data.source.span.len(),
+                body.span(site.data.source).len(),
             );
         });
     }
@@ -419,6 +430,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     #[allow(clippy::too_many_arguments)]
     fn scan_body_path(
         &self,
+        sources: &BodySourceStore,
         body: BodyRef,
         scope: ScopeId,
         visible_bindings: usize,
@@ -433,7 +445,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         if !def_map_path.is_relative() || path.segment_count() != 1 {
             return;
         }
-        let Some(span) = path.segment_span(0) else {
+        let Some(span) = path.segment_location(0).map(|id| sources.span(id)) else {
             return;
         };
         if !span.touches(self.offset) {
@@ -455,7 +467,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 expected_type_binding,
                 visible_bindings,
             },
-            path.source_span.len(),
+            sources.span(path.location).len(),
         );
     }
 }
