@@ -5,6 +5,7 @@ use rg_ir_model::{PrimitiveTy, Span, UnsignedIntTy};
 use rg_profile::test_support::ProfileTest;
 use rg_source::CapturedSource;
 use rg_std::CancellationToken;
+use rg_text::RustEdition;
 
 use crate::{
     ProjectSnapshot, SavedFileChange, profile_descriptors, testonly::ProjectSourceFixture,
@@ -118,12 +119,7 @@ fn editor_declarations_reach_other_files_and_survive_request_boundaries() {
                 .expect("consumer");
             let sources = snapshot.sources();
             let text = sources.text(context.file)?;
-            let syntax = sources.syntax(
-                context.file,
-                snapshot
-                    .package_edition(context.crate_ref.package)
-                    .expect("edition"),
-            )?;
+            let syntax = sources.syntax(context.file, RustEdition::Edition2024)?;
             Ok((
                 result_type(snapshot, &consumer)?,
                 Arc::downgrade(&text),

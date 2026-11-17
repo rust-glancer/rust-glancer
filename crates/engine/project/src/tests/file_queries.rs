@@ -5,11 +5,67 @@ use rg_body_ir::body_store;
 use rg_ir_model::{BodyKey, PrimitiveTy, Span, UnsignedIntTy};
 use rg_semantic_ir::target_declarations;
 use rg_std::CancellationToken;
+use rg_text::RustEdition;
 
 use crate::{
     SavedFileChange,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
+
+#[test]
+fn syntax_edition_uses_collected_sources_and_package_metadata() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /outer/src/lib.rs crate:outer root:outer edition:2024
+pub struct Modern;
+
+//- /outer/legacy/src/lib.rs crate:legacy root:outer/legacy edition:2015
+#[rustc_builtin_macro]
+macro_rules! include { ($($args:tt)*) => {}; }
+#[path = "../../../shared.rs"]
+mod shared;
+pub struct Value;
+impl Value { include!("methods.rs"); }
+
+//- /outer/legacy/src/methods.rs
+pub fn async() {}
+
+//- /shared.rs
+pub fn async() {}
+
+//- /outer/legacy/loose.rs
+fn async() {}
+
+//- /outer/loose.rs
+async fn demo() {}
+
+//- /standalone.rs
+async fn demo() {}
+"#,
+    );
+    let project = fixture.build_project();
+    for (path, expected) in [
+        ("outer/src/lib.rs", Some(RustEdition::Edition2024)),
+        ("outer/legacy/src/lib.rs", Some(RustEdition::Edition2015)),
+        (
+            "outer/legacy/src/methods.rs",
+            Some(RustEdition::Edition2015),
+        ),
+        ("shared.rs", Some(RustEdition::Edition2015)),
+        ("outer/legacy/loose.rs", Some(RustEdition::Edition2015)),
+        ("outer/loose.rs", Some(RustEdition::Edition2024)),
+        ("standalone.rs", None),
+    ] {
+        let source_path = fixture.path(path).canonicalize().expect("fixture source");
+        assert_eq!(
+            project
+                .source_edition(&source_path)
+                .expect("source edition"),
+            expected,
+            "{path}"
+        );
+    }
+}
 
 #[test]
 fn queries_bodies_in_primary_and_secondary_targets() {

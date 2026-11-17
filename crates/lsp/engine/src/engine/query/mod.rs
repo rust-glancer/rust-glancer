@@ -30,7 +30,7 @@ use rg_lsp_proto::{
 use rg_parse::{LineIndex, parse_source_file};
 use rg_project::{FileContext, ProjectSnapshot};
 use rg_source::CapturedSource;
-use rg_std::{CancellationToken, UniqueVec};
+use rg_std::UniqueVec;
 
 pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
 use crate::{
@@ -335,18 +335,15 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn document_symbol(
         &mut self,
         input: DocumentSnapshot,
-        cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Vec<DocumentSymbol>> {
-        self.with_editor_snapshot(input.editor(), cancellation, |snapshot| {
-            let document = input.document();
-            let edition = Self::rust_edition_for_path(snapshot, document.source_path())?;
-            let syntax = parse_source_file(document.text(), edition).tree();
-            let line_index = LineIndex::new(document.text());
-            Ok(Analysis::document_symbols_from_syntax(&syntax)
-                .into_iter()
-                .map(|symbol| symbols::document_symbol(&line_index, symbol))
-                .collect())
-        })
+        let document = input.document();
+        let edition = self.rust_edition_for_path(document.source_path())?;
+        let syntax = parse_source_file(document.text(), edition).tree();
+        let line_index = LineIndex::new(document.text());
+        Ok(Analysis::document_symbols_from_syntax(&syntax)
+            .into_iter()
+            .map(|symbol| symbols::document_symbol(&line_index, symbol))
+            .collect())
     }
 
     /// Build folding ranges directly from the syntax shown by the editor.
@@ -358,11 +355,7 @@ impl<'a> QueryRunner<'a> {
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         let edition = self
-            .project
-            .saved_project()?
-            .with_snapshot(CancellationToken::new(), |snapshot| {
-                Self::rust_edition_for_path(snapshot, &path)
-            })
+            .rust_edition_for_path(&path)
             .context("resolve folding-range edition")?;
         let syntax = parse_source_file(document.text(), edition).tree();
         let line_index = LineIndex::new(document.text());
@@ -399,14 +392,9 @@ impl<'a> QueryRunner<'a> {
         let path = document.source_path().to_path_buf();
         let text = document.text();
         let started = Instant::now();
-        let edition = {
-            self.project
-                .saved_project()?
-                .with_snapshot(CancellationToken::new(), |snapshot| {
-                    Self::rust_edition_for_path(snapshot, &path)
-                })
-                .context("resolve formatting edition")?
-        };
+        let edition = self
+            .rust_edition_for_path(&path)
+            .context("resolve formatting edition")?;
         let line_index = LineIndex::new(text);
         let formatted_text = formatting::rustfmt(text, edition, line_index.line_endings())
             .context("format Rust source")?;

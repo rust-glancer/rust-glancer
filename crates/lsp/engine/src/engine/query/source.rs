@@ -37,13 +37,12 @@ impl QueryRunner<'_> {
         Ok(context)
     }
 
-    /// Standalone Rust files have no owner and use the newest supported edition for syntax queries.
-    pub(super) fn rust_edition_for_path(
-        snapshot: ProjectSnapshot<'_>,
-        path: &Path,
-    ) -> anyhow::Result<RustEdition> {
-        Ok(Self::file_context(snapshot, path)?
-            .and_then(|context| snapshot.package_edition(context.crate_ref.package))
+    /// Files with no package edition use the newest supported edition for syntax queries.
+    pub(super) fn rust_edition_for_path(&self, path: &Path) -> anyhow::Result<RustEdition> {
+        Ok(self
+            .project
+            .saved_project()?
+            .source_edition(path)?
             .unwrap_or(RustEdition::Edition2024))
     }
 }

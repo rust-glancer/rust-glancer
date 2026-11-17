@@ -9,7 +9,6 @@ use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_parse::SourceReader;
 use rg_semantic_ir::{complete_source_ownership, target_declarations};
 use rg_std::MemorySize;
-use rg_text::RustEdition;
 
 use super::ProjectSnapshot;
 
@@ -40,16 +39,9 @@ impl<'a> ProjectSnapshot<'a> {
             .is_some_and(|package| package.is_workspace_member)
     }
 
-    /// Returns the Rust edition declared for a package in the current workspace metadata.
-    pub fn package_edition(&self, package: PackageSlot) -> Option<RustEdition> {
-        self.state
-            .workspace()
-            .packages()
-            .get(package.0)
-            .map(|package| package.edition)
-    }
-
     /// Returns the selected analysis context for an already-selected project-source identity.
+    /// Unknown paths require member expansion to discover include owners. Syntax-only requests
+    /// can choose an edition with [`crate::Project::source_edition`] without that discovery.
     pub fn file_context_for_source_path(
         &self,
         source_path: &Path,

@@ -42,6 +42,17 @@ impl ProjectSourceIndex {
             .min_by_key(|krate| (krate.package.0, krate.crate_id.0))
     }
 
+    /// Syntax queries can use collected includes too, without discovering further owners.
+    pub(crate) fn first_source_crate(&self, file: FileId) -> Option<CrateRef> {
+        self.first_module_crate(file).or_else(|| {
+            self.by_crate
+                .iter()
+                .filter(|(_, sources)| sources.collected.binary_search(&file).is_ok())
+                .map(|(&krate, _)| krate)
+                .min_by_key(|krate| (krate.package.0, krate.crate_id.0))
+        })
+    }
+
     pub(crate) fn file_count(&self) -> usize {
         self.by_crate
             .iter()

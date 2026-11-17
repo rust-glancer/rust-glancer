@@ -347,7 +347,7 @@ impl EngineDispatcher {
                         context,
                         respond_to,
                         cancellation,
-                        |runner, cancellation| runner.document_symbol(snapshot, cancellation),
+                        |runner, _| runner.document_symbol(snapshot),
                     );
                 }
                 EngineCommand::FoldingRange {
