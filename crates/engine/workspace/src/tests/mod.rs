@@ -668,68 +668,6 @@ pub struct Independent;
 }
 
 #[test]
-fn finds_packages_containing_source_paths() {
-    let fixture = fixture_crate(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/app", "crates/dep"]
-resolver = "3"
-
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/app/src/lib.rs
-pub struct App;
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
-pub struct Dep;
-"#,
-    );
-    let workspace =
-        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-            .expect("fixture workspace metadata should build");
-
-    let app_api = fixture
-        .path("crates/app/src")
-        .canonicalize()
-        .expect("fixture src dir should canonicalize")
-        .join("api.rs");
-    let generated_api = fixture
-        .path("")
-        .canonicalize()
-        .expect("fixture root should canonicalize")
-        .join("generated/api.rs");
-
-    let package_names = workspace
-        .package_slots_containing_path(&app_api)
-        .into_iter()
-        .map(|slot| workspace.packages()[slot].name.clone())
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(
-        package_names,
-        BTreeSet::from(["app".to_string()]),
-        "a new source path should map to the package root that contains it"
-    );
-    assert!(
-        workspace
-            .package_slots_containing_path(&generated_api)
-            .is_empty(),
-        "paths outside every package root should not force a package rebuild"
-    );
-}
-
-#[test]
 fn parses_rustc_host_target_from_verbose_version_output() {
     let output = r#"
 rustc 1.94.1

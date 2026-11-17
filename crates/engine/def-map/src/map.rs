@@ -2,8 +2,8 @@ use std::{collections::HashMap, convert::Infallible, mem};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
-    LocalImplId, LocalImplRef, ModuleId, ModuleRef,
+    DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalImplId, LocalImplRef,
+    ModuleId, ModuleRef,
 };
 use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
 use rg_std::{MemoryRecorder, MemorySize, Shrink};
@@ -18,7 +18,6 @@ use crate::{
     local::{LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData},
     macro_definition::MacroDefinitionData,
     module::{ModuleBuilder, ModuleData},
-    source::{GeneratedItemStore, GeneratedSourceData, GeneratedSourceId},
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -38,8 +37,8 @@ struct DefMapData {
 /// Collectors add modules, items, and direct bindings here. Import resolution retains those
 /// bindings and adds imported answers to the same scope.
 ///
-/// Crate builds also retain generated syntax for Semantic IR. Freezing moves that syntax out
-/// separately, so the queryable DefMap does not keep the expansion arena alive.
+/// Generated syntax belongs to the crate or member expansion that produced it. The DefMap keeps
+/// only source references, so freezing this builder does not retain an expansion arena.
 #[derive(Debug)]
 pub struct DefMapBuilder {
     own_ref: DefMapRef,
@@ -50,7 +49,6 @@ pub struct DefMapBuilder {
     foreign_blocks: HashMap<LocalDefId, ItemSource>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
-    generated_items: GeneratedItemStore,
 }
 
 impl DefMapBuilder {
@@ -64,7 +62,6 @@ impl DefMapBuilder {
             foreign_blocks: HashMap::new(),
             local_impls: Arena::new(),
             imports: Arena::new(),
-            generated_items: GeneratedItemStore::default(),
         }
     }
 
@@ -204,25 +201,8 @@ impl DefMapBuilder {
         self.local_impls.alloc(local_impl)
     }
 
-    /// Records the generated items that replace one trait/impl macro invocation.
-    pub(crate) fn insert_associated_macro_expansion(
-        &mut self,
-        call: ItemSource,
-        generated_items: Vec<ItemSource>,
-    ) {
-        self.generated_items
-            .insert_associated_macro_expansion(call, generated_items);
-    }
-
     pub fn alloc_import(&mut self, import: ImportData) -> ImportId {
         self.imports.alloc(import)
-    }
-
-    pub(crate) fn alloc_generated_source(
-        &mut self,
-        generated_source: GeneratedSourceData,
-    ) -> GeneratedSourceId {
-        self.generated_items.alloc_source(generated_source)
     }
 
     /// Resolves source-level visibility into the module identity used by scope lookup.
@@ -418,30 +398,8 @@ impl DefMapBuilder {
         self.imports.as_slice()
     }
 
-    pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
-        self.imports.iter_with_ids()
-    }
-
-    /// Returns a generated source allocated so far during macro collection.
-    pub(crate) fn generated_source(
-        &self,
-        generated_source: GeneratedSourceId,
-    ) -> Option<&GeneratedSourceData> {
-        self.generated_items.source(generated_source)
-    }
-
-    pub fn build(self) -> DefMap {
-        let (def_map, generated_items) = self.into_parts();
-        debug_assert!(
-            generated_items.is_empty(),
-            "generated crate declarations must be handed to Semantic IR",
-        );
-        def_map
-    }
-
     /// Freeze each module and move declaration arenas into the retained map.
-    /// Generated syntax leaves separately for Semantic IR lowering.
-    pub(crate) fn into_parts(self) -> (DefMap, GeneratedItemStore) {
+    pub fn build(self) -> DefMap {
         // Keep allocation order: parent links, imports, and bindings already contain these ids.
         let modules = Arena::from_vec(
             self.modules
@@ -450,7 +408,7 @@ impl DefMapBuilder {
                 .map(ModuleBuilder::freeze)
                 .collect(),
         );
-        let def_map = DefMap {
+        DefMap {
             own_ref: self.own_ref,
             data: DefMapData {
                 modules,
@@ -461,8 +419,7 @@ impl DefMapBuilder {
                 local_impls: self.local_impls,
                 imports: self.imports,
             },
-        };
-        (def_map, self.generated_items)
+        }
     }
 }
 
@@ -538,16 +495,6 @@ impl DefMap {
         self.data.local_enum_variants.as_slice()
     }
 
-    pub fn local_enum_variant_refs(&self) -> impl Iterator<Item = LocalEnumVariantRef> {
-        self.data
-            .local_enum_variants
-            .iter_with_ids()
-            .map(|(id, _)| LocalEnumVariantRef {
-                origin: self.own_ref,
-                local_enum_variant: id,
-            })
-    }
-
     pub fn local_enum_variant_entries_for_enum(
         &self,
         enum_def: LocalDefId,
@@ -594,10 +541,6 @@ impl DefMap {
 
     pub fn import(&self, import: ImportId) -> Option<&ImportData> {
         self.data.imports.get(import)
-    }
-
-    pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
-        self.data.imports.iter_with_ids()
     }
 }
 

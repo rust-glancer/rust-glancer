@@ -5,9 +5,12 @@ use std::{fmt::Write as _, path::Path};
 use expect_test::Expect;
 use rg_body_ir::{BodyReader, ExprData, ExprKind};
 use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
-use rg_ir_view::IndexedViewDb;
-use rg_parse::{CargoTargetId, ParseDb};
-use rg_semantic_ir::testonly::{SemanticIrFixture, SemanticIrView};
+use rg_ir_view::{IndexedViewDb, testonly::render_indexed_type};
+use rg_parse::SavedSourceReader;
+use rg_semantic_ir::{
+    complete_source_ownership,
+    testonly::{SemanticIrFixture, SemanticIrView},
+};
 use rg_workspace::{TargetKind, testonly::WorkspaceFixture};
 use test_fixture::{
     CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers,
@@ -19,8 +22,8 @@ use crate::{
     CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
     CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
     NavigationTargetKind, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SavedSourceView, SymbolAt,
-    SymbolKind, WorkspaceSymbol,
+    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SymbolAt, SymbolKind,
+    WorkspaceSymbol,
 };
 
 /// Queries written beside their markers are removed before the fixture reaches analysis.
@@ -437,7 +440,7 @@ struct AnalysisFixture<'db> {
 
 impl<'db> AnalysisFixture<'db> {
     fn analysis(&self) -> Analysis<'db> {
-        Analysis::new(self.view_db(), SavedSourceView::new(self.parse_db()))
+        Analysis::new(self.view_db(), self.semantic.workspace())
     }
 
     fn view_db(&self) -> IndexedViewDb<'db> {
@@ -446,13 +449,8 @@ impl<'db> AnalysisFixture<'db> {
             self.semantic.definitions(),
             self.semantic.items(),
             self.bodies(),
-            self.parse_db(),
             self.semantic.db().services().cancellation.clone(),
         )
-    }
-
-    fn parse_db(&self) -> &'db ParseDb {
-        self.semantic.parse_db()
     }
 
     fn bodies(&self) -> BodyReader<'db> {
@@ -462,14 +460,9 @@ impl<'db> AnalysisFixture<'db> {
     /// Renders source locations relative to their Cargo package instead of exposing temporary
     /// fixture roots or host-native path separators in snapshots.
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
-        let parsed_package = self
-            .parse_db()
-            .packages()
-            .get(package.0)
-            .expect("snapshot package should exist while rendering a file path");
-        let path = parsed_package
-            .file_path(file_id)
-            .expect("snapshot file should exist while rendering a file path");
+        let path = SavedSourceReader::new(self.semantic.db())
+            .path(file_id)
+            .expect("snapshot source path should load");
         let package_root = self.semantic.workspace().packages()[package.0].root_dir();
 
         // Cargo-generated sources may sit outside their package root. Their build directory is
@@ -490,39 +483,21 @@ impl<'db> AnalysisFixture<'db> {
     ) -> (CrateRef, FileId) {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
-        let reader = self.semantic.definitions();
-
-        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
-            if !selected.matches_package(package.package_name()) {
+        let sources = SavedSourceReader::new(self.semantic.db());
+        for (owner, target) in self.semantic.workspace().targets() {
+            let package = &self.semantic.workspace().packages()[owner.package.0];
+            if !selected.matches_package(&package.name) || target.kind != selected.kind {
                 continue;
             }
-
-            let Some(file) = package
-                .parsed_files()
-                .find(|file| file.path().ends_with(normalized_path))
-            else {
-                continue;
-            };
-            let file_id = file.file_id();
-            for target in package
-                .targets()
-                .iter()
-                .filter(|target| target.kind == selected.kind)
-            {
-                let owner = CrateRef {
-                    package: PackageSlot(package_slot),
-                    crate_id: rg_ir_model::CrateId(target.id.0),
-                };
-                let definitions = reader
-                    .def_map(owner)
-                    .expect("fixture target definitions should load")
-                    .expect("fixture target should exist");
-                if definitions
-                    .modules()
-                    .iter()
-                    .any(|module| module.origin.contains_file(file_id))
+            let ownership = complete_source_ownership(self.semantic.db(), owner)
+                .expect("fixture source ownership should resolve");
+            for file in ownership.files() {
+                if sources
+                    .path(file)
+                    .expect("fixture file path")
+                    .ends_with(normalized_path)
                 {
-                    matches.push((owner, file_id));
+                    matches.push((owner, file));
                 }
             }
         }
@@ -539,20 +514,10 @@ impl<'db> AnalysisFixture<'db> {
     fn target_for(&self, selected: &AnalysisTarget) -> CrateRef {
         let mut matches = Vec::new();
 
-        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
-            if !selected.matches_package(package.package_name()) {
-                continue;
-            }
-
-            for target in package
-                .targets()
-                .iter()
-                .filter(|target| target.kind == selected.kind)
-            {
-                matches.push(CrateRef {
-                    package: PackageSlot(package_slot),
-                    crate_id: rg_ir_model::CrateId(target.id.0),
-                });
+        for (krate, target) in self.semantic.workspace().targets() {
+            let package = &self.semantic.workspace().packages()[krate.package.0];
+            if selected.matches_package(&package.name) && target.kind == selected.kind {
+                matches.push(krate);
             }
         }
 
@@ -611,7 +576,6 @@ impl AnalysisQuerySnapshot<'_, '_> {
                         .analysis()
                         .symbol_at(target, file_id, offset)
                         .expect("fixture symbol query should resolve"),
-                    target.package,
                     file_id,
                     &mut dump,
                 );
@@ -766,24 +730,14 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     dump,
                     "{}",
                     ty.as_ref()
-                        .map(|ty| rg_ir_view::testonly::render_indexed_type(
-                            &self.db.view_db(),
-                            self.db.parse_db(),
-                            ty,
-                        ))
+                        .map(|ty| render_indexed_type(&self.db.view_db(), ty))
                         .unwrap_or_else(|| "<none>".to_string())
                 )
                 .expect("string writes should not fail");
             }
             AnalysisQueryKind::CodeActions(trigger) => {
-                let source_text = self
-                    .db
-                    .parse_db()
-                    .package(target.package.0)
-                    .expect("code action package should exist")
-                    .parsed_file(file_id)
-                    .expect("code action file should exist")
-                    .source_text()
+                let source_text = SavedSourceReader::new(self.db.semantic.db())
+                    .text(file_id)
                     .expect("code action source text should load");
                 let actions = self
                     .db
@@ -805,9 +759,9 @@ impl AnalysisQuerySnapshot<'_, '_> {
             }
             AnalysisQueryKind::CompletionsAt => {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_client_capabilities(
-                        CompletionClientCapabilities::default().with_snippet_support(true),
-                    );
+                    .with_client_capabilities(CompletionClientCapabilities {
+                        snippet_support: true,
+                    });
                 let mut completions = self
                     .db
                     .analysis()
@@ -818,9 +772,9 @@ impl AnalysisQuerySnapshot<'_, '_> {
             }
             AnalysisQueryKind::CompletionsAtVerbose => {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_client_capabilities(
-                        CompletionClientCapabilities::default().with_snippet_support(true),
-                    );
+                    .with_client_capabilities(CompletionClientCapabilities {
+                        snippet_support: true,
+                    });
                 let mut completions = self
                     .db
                     .analysis()
@@ -833,20 +787,14 @@ impl AnalysisQuerySnapshot<'_, '_> {
             | AnalysisQueryKind::CompletionsAtVerboseWithSource
             | AnalysisQueryKind::CompletionKeywordsAtWithSource
             | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource => {
-                let source_text = self
-                    .db
-                    .parse_db()
-                    .package(target.package.0)
-                    .expect("completion package should exist")
-                    .parsed_file(file_id)
-                    .expect("completion file should exist")
-                    .source_text()
+                let source_text = SavedSourceReader::new(self.db.semantic.db())
+                    .text(file_id)
                     .expect("completion source text should load");
                 let completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_source_text(&source_text)
-                    .with_client_capabilities(
-                        CompletionClientCapabilities::default().with_snippet_support(true),
-                    );
+                    .with_client_capabilities(CompletionClientCapabilities {
+                        snippet_support: true,
+                    });
                 let mut completions = self
                     .db
                     .analysis()
@@ -876,7 +824,6 @@ impl AnalysisQuerySnapshot<'_, '_> {
                         .analysis()
                         .hover(target, file_id, offset)
                         .expect("fixture hover query should resolve"),
-                    target.package,
                     file_id,
                     &mut dump,
                 );
@@ -901,13 +848,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
         (target, file_id, marker.offset)
     }
 
-    fn render_symbol(
-        &self,
-        symbol: Option<SymbolAt>,
-        package: PackageSlot,
-        file_id: FileId,
-        dump: &mut String,
-    ) {
+    fn render_symbol(&self, symbol: Option<SymbolAt>, file_id: FileId, dump: &mut String) {
         let Some(symbol) = symbol else {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;
@@ -926,7 +867,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(
                     dump,
                     "body @ {}",
-                    self.render_source_span(body.crate_ref.package, source.file_id, source.span)
+                    self.render_source_span(source.file_id, source.span)
                 )
                 .expect("string writes should not fail");
             }
@@ -940,12 +881,8 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
                     .unwrap_or_else(|| "declaration <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "{label} @ {}",
-                    self.render_source_span(package, file_id, span)
-                )
-                .expect("string writes should not fail");
+                writeln!(dump, "{label} @ {}", self.render_source_span(file_id, span))
+                    .expect("string writes should not fail");
             }
             SymbolAt::Expr { expr } => {
                 let body = expr.body_ir();
@@ -960,11 +897,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(
                     dump,
                     "{}",
-                    self.render_expr_symbol(
-                        body.crate_ref.package,
-                        expr_data,
-                        body_view.source_at(expr_data.source),
-                    )
+                    self.render_expr_symbol(expr_data, body_view.source_at(expr_data.source))
                 )
                 .expect("string writes should not fail");
             }
@@ -976,7 +909,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     dump,
                     "type path {} @ {}",
                     type_path.path(),
-                    self.render_source_span(package, file_id, span)
+                    self.render_source_span(file_id, span)
                 )
                 .expect("string writes should not fail");
             }
@@ -984,7 +917,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(
                     dump,
                     "value path {path} @ {}",
-                    self.render_source_span(package, file_id, span)
+                    self.render_source_span(file_id, span)
                 )
                 .expect("string writes should not fail");
             }
@@ -998,7 +931,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     dump,
                     "record field {owner}::{} @ {}",
                     key.declaration_label(),
-                    self.render_source_span(package, file_id, span)
+                    self.render_source_span(file_id, span)
                 )
                 .expect("string writes should not fail");
             }
@@ -1006,19 +939,14 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(
                     dump,
                     "path {path} @ {}",
-                    self.render_source_span(package, file_id, span)
+                    self.render_source_span(file_id, span)
                 )
                 .expect("string writes should not fail");
             }
         }
     }
 
-    fn render_expr_symbol(
-        &self,
-        package: PackageSlot,
-        expr: &ExprData,
-        source: BodySource,
-    ) -> String {
+    fn render_expr_symbol(&self, expr: &ExprData, source: BodySource) -> String {
         let label = match &expr.kind {
             ExprKind::Block { .. } => "block".to_string(),
             ExprKind::Path { path } => format!("path {path}"),
@@ -1091,23 +1019,20 @@ impl AnalysisQuerySnapshot<'_, '_> {
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
             ExprKind::BuiltinMacro { kind, .. } => format!("builtin_macro {kind}"),
             ExprKind::Literal { kind } => {
-                format!(
-                    "literal {kind} {}",
-                    self.render_source_text(package, source)
-                )
+                format!("literal {kind} {}", self.render_source_text(source))
             }
             ExprKind::Underscore => "underscore".to_string(),
             ExprKind::Yield { .. } => "yield".to_string(),
             ExprKind::Yeet { .. } => "yeet".to_string(),
             ExprKind::Become { .. } => "become".to_string(),
             ExprKind::Unknown { .. } => {
-                format!("unknown {}", self.render_source_text(package, source))
+                format!("unknown {}", self.render_source_text(source))
             }
         };
 
         format!(
             "expr {label} @ {}",
-            self.render_source_span(package, source.file_id, source.span)
+            self.render_source_span(source.file_id, source.span)
         )
     }
 
@@ -1137,7 +1062,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
             writeln!(
                 dump,
                 "{label} @ {}",
-                self.render_optional_span(target.crate_ref.package, target.file_id, target.span)
+                self.render_optional_span(target.file_id, target.span)
             )
             .expect("string writes should not fail");
         }
@@ -1301,11 +1226,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
             writeln!(
                 dump,
                 "`{}` @ {}",
-                self.render_source_text_for_span(
-                    reference.crate_ref.package,
-                    reference.file_id,
-                    reference.span,
-                ),
+                self.render_source_text_for_span(reference.file_id, reference.span),
                 self.render_file_span(
                     reference.crate_ref.package,
                     reference.file_id,
@@ -1381,13 +1302,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
         .expect("string writes should not fail");
     }
 
-    fn render_hover(
-        &self,
-        hover: Option<HoverInfo>,
-        package: PackageSlot,
-        file_id: FileId,
-        dump: &mut String,
-    ) {
+    fn render_hover(&self, hover: Option<HoverInfo>, file_id: FileId, dump: &mut String) {
         let Some(hover) = hover else {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;
@@ -1396,7 +1311,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
         writeln!(
             dump,
             "range: {}",
-            self.render_optional_span(package, file_id, hover.range)
+            self.render_optional_span(file_id, hover.range)
         )
         .expect("string writes should not fail");
         for block in hover.blocks {
@@ -1423,25 +1338,14 @@ impl AnalysisQuerySnapshot<'_, '_> {
         }
     }
 
-    fn render_optional_span(
-        &self,
-        package: PackageSlot,
-        file_id: FileId,
-        span: Option<Span>,
-    ) -> String {
-        span.map(|span| self.render_source_span(package, file_id, span))
+    fn render_optional_span(&self, file_id: FileId, span: Option<Span>) -> String {
+        span.map(|span| self.render_source_span(file_id, span))
             .unwrap_or_else(|| "<root>".to_string())
     }
 
-    fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
-        let line_column = self
-            .db
-            .parse_db()
-            .package(package.0)
-            .expect("span package should exist while rendering analysis query")
-            .parsed_file(file_id)
-            .expect("span file should exist while rendering analysis query")
-            .line_index()
+    fn render_source_span(&self, file_id: FileId, span: Span) -> String {
+        let line_column = SavedSourceReader::new(self.db.semantic.db())
+            .line_index(file_id)
             .expect("span file line index should load while rendering analysis query")
             .line_column_span(span);
         format!(
@@ -1453,26 +1357,13 @@ impl AnalysisQuerySnapshot<'_, '_> {
         )
     }
 
-    fn render_source_text(&self, package: PackageSlot, source: BodySource) -> String {
-        self.render_source_text_for_span(package, source.file_id, source.span)
+    fn render_source_text(&self, source: BodySource) -> String {
+        self.render_source_text_for_span(source.file_id, source.span)
     }
 
-    fn render_source_text_for_span(
-        &self,
-        package: PackageSlot,
-        file_id: FileId,
-        span: Span,
-    ) -> String {
-        let parsed_file = self
-            .db
-            .parse_db()
-            .package(package.0)
-            .expect("span package should exist while rendering analysis query text")
-            .parsed_file(file_id)
-            .expect("span file should exist while rendering analysis query text");
-
-        parsed_file
-            .text_for_span(span)
+    fn render_source_text_for_span(&self, file_id: FileId, span: Span) -> String {
+        SavedSourceReader::new(self.db.semantic.db())
+            .text_for_span(file_id, span)
             .expect("analysis source text should load")
             .unwrap_or_else(|| "<invalid>".to_string())
             .split_whitespace()
@@ -1484,21 +1375,22 @@ impl AnalysisQuerySnapshot<'_, '_> {
         format!(
             "{}:{}",
             self.render_file_path(package, file_id),
-            self.render_source_span(package, file_id, span)
+            self.render_source_span(file_id, span)
         )
     }
 
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
-        let parsed_package = self
+        let metadata = self
             .db
-            .parse_db()
+            .semantic
+            .workspace()
             .packages()
             .get(package.0)
             .expect("reference package should exist while rendering file path");
         let relative_path = self.db.render_file_path(package, file_id);
 
-        if self.db.parse_db().packages().len() > 1 {
-            format!("{}/{relative_path}", parsed_package.package_name())
+        if self.db.semantic.workspace().packages().len() > 1 {
+            format!("{}/{relative_path}", metadata.name)
         } else {
             relative_path
         }
@@ -1568,7 +1460,7 @@ impl AnalysisSymbolSnapshot<'_> {
         }
 
         for hint in hints {
-            self.render_inlay_hint(target.package, &hint, &mut dump);
+            self.render_inlay_hint(&hint, &mut dump);
         }
         dump
     }
@@ -1600,7 +1492,7 @@ impl AnalysisSymbolSnapshot<'_> {
         } else {
             format!(
                 " selection {}",
-                self.render_source_span(package, file_id, symbol.selection_span)
+                self.render_source_span(file_id, symbol.selection_span)
             )
         };
         let label = if symbol.kind == SymbolKind::Impl {
@@ -1612,7 +1504,7 @@ impl AnalysisSymbolSnapshot<'_> {
         writeln!(
             dump,
             "{indent}{label} @ {}{}",
-            self.render_source_span(package, file_id, symbol.span),
+            self.render_source_span(file_id, symbol.span),
             selection
         )
         .expect("string writes should not fail");
@@ -1639,12 +1531,12 @@ impl AnalysisSymbolSnapshot<'_> {
         .expect("string writes should not fail");
     }
 
-    fn render_inlay_hint(&self, package: PackageSlot, hint: &InlayHint, dump: &mut String) {
+    fn render_inlay_hint(&self, hint: &InlayHint, dump: &mut String) {
         writeln!(
             dump,
             "`{}` @ {}",
             hint.label,
-            self.render_source_span(package, hint.file_id, hint.span)
+            self.render_source_span(hint.file_id, hint.span)
         )
         .expect("string writes should not fail");
     }
@@ -1652,15 +1544,19 @@ impl AnalysisSymbolSnapshot<'_> {
     fn render_crate_ref(&self, crate_ref: CrateRef) -> String {
         let package = self
             .db
-            .parse_db()
+            .semantic
+            .workspace()
             .packages()
             .get(crate_ref.package.0)
             .expect("target package should exist while rendering workspace symbol");
-        let target = package
-            .target(CargoTargetId(crate_ref.crate_id.0))
-            .expect("target should exist while rendering workspace symbol");
+        let target = self
+            .db
+            .semantic
+            .workspace()
+            .target(crate_ref)
+            .expect("fixture target should exist");
 
-        format!("{}[{}]", package.package_name(), target.kind)
+        format!("{}[{}]", package.name, target.kind)
     }
 
     fn render_file_span(
@@ -1671,7 +1567,7 @@ impl AnalysisSymbolSnapshot<'_> {
     ) -> String {
         let file = self.render_file_path(package, file_id);
         match span {
-            Some(span) => format!("{file}:{}", self.render_source_span(package, file_id, span)),
+            Some(span) => format!("{file}:{}", self.render_source_span(file_id, span)),
             None => format!("{file}:<root>"),
         }
     }
@@ -1680,15 +1576,9 @@ impl AnalysisSymbolSnapshot<'_> {
         self.db.render_file_path(package, file_id)
     }
 
-    fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
-        let line_column = self
-            .db
-            .parse_db()
-            .package(package.0)
-            .expect("span package should exist while rendering analysis symbol")
-            .parsed_file(file_id)
-            .expect("span file should exist while rendering analysis symbol")
-            .line_index()
+    fn render_source_span(&self, file_id: FileId, span: Span) -> String {
+        let line_column = SavedSourceReader::new(self.db.semantic.db())
+            .line_index(file_id)
             .expect("span file line index should load while rendering analysis symbol")
             .line_column_span(span);
         format!(

@@ -1,11 +1,8 @@
 //! Candidate lookup over one use site's saved visibility.
 //!
-//! Preparing a lookup reads only its small visibility and language-item environment. Candidate
-//! questions go through the source that owns the indexes: production readers use Ajika, while kernel
-//! fixtures can supply borrowed indexes. In either case lookup only selects declarations; type
-//! reasoning still proves their applicability.
-
-use std::{fmt, sync::Arc};
+//! Lookup retains a small environment of final language-item identities. Candidate questions go
+//! through the source that owns visibility and candidate indexes. Lookup only selects declarations;
+//! type reasoning still proves their applicability.
 
 use rg_ir_model::{
     CrateRef, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef, TypeAliasRef,
@@ -20,23 +17,15 @@ use super::{
     ItemStoreQuery, SemanticItemSource,
     candidates::{LookupAnswer, LookupQuestion},
 };
-use crate::{ItemLookupEnv, ItemLookupIndex, ItemReader, TraitImplSelfHead};
-
-type CandidateLookup<'a> =
-    dyn Fn(&LookupQuestion) -> Result<LookupAnswer, ReadError> + Send + Sync + 'a;
+use crate::{ItemLookupEnv, ItemReader, TraitImplSelfHead};
 
 /// A use-site view. Candidate answers have the same error channel as its semantic source.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ItemLookupQuery<'item> {
     lookup_env: &'item ItemLookupEnv,
-    candidates: Arc<CandidateLookup<'item>>,
+    items: ItemReader<'item>,
+    use_site: CrateRef,
     cancellation: CancellationToken,
-}
-
-impl fmt::Debug for ItemLookupQuery<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ItemLookupQuery").finish_non_exhaustive()
-    }
 }
 
 impl Cancelable for ItemLookupQuery<'_> {
@@ -58,29 +47,15 @@ impl<'item> ItemLookupQuery<'item> {
             .expect("use-site crate has lookup environment");
         Ok(Self {
             lookup_env,
-            candidates: Arc::new(move |question| items.0.lookup_candidates(use_site, question)),
+            items,
+            use_site,
             cancellation: cancellation.clone(),
         })
     }
 
-    /// Kernel fixtures already own their indexes and have no query runtime to acquire them from.
-    pub fn from_indexes(
-        lookup_env: &'item ItemLookupEnv,
-        indexes: Vec<&'item ItemLookupIndex>,
-        cancellation: CancellationToken,
-    ) -> Self {
-        Self {
-            lookup_env,
-            candidates: Arc::new(move |question| {
-                Ok(question.answer(indexes.iter().flat_map(|index| index.shards_for(question))))
-            }),
-            cancellation,
-        }
-    }
-
     fn ask(&self, question: LookupQuestion) -> Result<LookupAnswer, ReadError> {
         rg_std::check_cancel!(self, "lookup candidates");
-        let answer = (self.candidates)(&question)?;
+        let answer = self.items.0.lookup_candidates(self.use_site, &question)?;
         rg_std::check_cancel!(self, "lookup candidates");
         Ok(answer)
     }
@@ -100,21 +75,20 @@ impl<'item> ItemLookupQuery<'item> {
         Some(trait_ref)
     }
 
-    /// Returns the exact visible function carrying one compiler language identity.
+    /// Find a function by its compiler language identity, including associated functions.
     pub fn lang_function(&self, lang_item: LangItem) -> Option<FunctionRef> {
-        let SemanticItemRef::Function(function_ref) = self.lookup_env.lang_item(lang_item)? else {
-            return None;
-        };
-        Some(function_ref)
+        match self.lookup_env.lang_item(lang_item)? {
+            SemanticItemRef::Function(function) => Some(function),
+            _ => None,
+        }
     }
 
-    /// Returns the exact visible type alias carrying one compiler language identity.
+    /// Find an associated type such as `Deref::Target` by its compiler language identity.
     pub fn lang_type_alias(&self, lang_item: LangItem) -> Option<TypeAliasRef> {
-        let SemanticItemRef::TypeAlias(type_alias_ref) = self.lookup_env.lang_item(lang_item)?
-        else {
-            return None;
-        };
-        Some(type_alias_ref)
+        match self.lookup_env.lang_item(lang_item)? {
+            SemanticItemRef::TypeAlias(alias) => Some(alias),
+            _ => None,
+        }
     }
 
     /// Expands visible inherent impls to their function items through the caller's query source.

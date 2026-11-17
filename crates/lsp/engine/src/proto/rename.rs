@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use gen_lsp_types::{PrepareRenamePlaceholder, PrepareRenameResult, TextEdit, Uri, WorkspaceEdit};
 use rg_analysis::{RenameEdit, RenameTarget};
-use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_lsp_proto::path_to_file_uri;
 use rg_project::ProjectSnapshot;
 
@@ -11,12 +10,11 @@ use crate::proto::{position, text_edit};
 
 pub(crate) fn prepare_rename(
     snapshot: ProjectSnapshot<'_>,
-    package: PackageSlot,
     target: RenameTarget,
 ) -> anyhow::Result<PrepareRenameResult> {
     Ok(PrepareRenameResult::PrepareRenamePlaceholder(
         PrepareRenamePlaceholder {
-            range: range_for_file(snapshot, package, target.file_id, target.span)?,
+            range: position::range(snapshot.sources().line_index(target.file_id)?, target.span),
             placeholder: target.placeholder,
         },
     ))
@@ -31,14 +29,7 @@ pub(crate) fn workspace_edit(
 
     for edit in edits {
         rg_std::check_cancel!(cancellation, "rename edit conversion");
-        let path = snapshot
-            .file_path(edit.crate_ref.package, edit.file_id)
-            .with_context(|| {
-                format!(
-                    "while attempting to find file path for rename edit in package {:?}, file {:?}",
-                    edit.crate_ref.package, edit.file_id
-                )
-            })?;
+        let path = snapshot.sources().path(edit.file_id)?;
         let uri = path_to_file_uri(path).with_context(|| {
             format!(
                 "while attempting to convert file path `{}` to URI for rename edit in package {:?}, file {:?}",
@@ -47,9 +38,7 @@ pub(crate) fn workspace_edit(
                 edit.file_id
             )
         })?;
-        let line_index = snapshot
-            .file_line_index(edit.crate_ref.package, edit.file_id)?
-            .context("while attempting to find file for rename edit conversion")?;
+        let line_index = snapshot.sources().line_index(edit.file_id)?;
         let text_edit = text_edit::new(
             line_index,
             position::range(line_index, edit.span),
@@ -66,17 +55,4 @@ pub(crate) fn workspace_edit(
         changes: Some(changes),
         ..Default::default()
     })
-}
-
-fn range_for_file(
-    snapshot: ProjectSnapshot<'_>,
-    package_slot: PackageSlot,
-    file_id: FileId,
-    span: Span,
-) -> anyhow::Result<gen_lsp_types::Range> {
-    let line_index = snapshot
-        .file_line_index(package_slot, file_id)?
-        .context("while attempting to find file for rename range conversion")?;
-
-    Ok(position::range(line_index, span))
 }

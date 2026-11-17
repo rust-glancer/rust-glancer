@@ -8,17 +8,21 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgOptions;
-use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef};
 use rg_item_tree::ItemTrees;
-use rg_parse::{CargoTarget, ModuleFileContext};
+use rg_parse::ModuleFileContext;
 use rg_text::{Name, RustEdition};
+use rg_workspace::CargoTarget;
 
 use super::{
     MacroSourceFileResolutions,
     crates::{CrateBuilder, ExternPreludeBuilder, KnownModuleFiles},
-    macros::{MacroCallOrigin, TextualMacroScopes},
+    macros::{MacroCallOrigin, MacroScopeData},
 };
-use crate::{DefMapBuilder, ModuleBuilder, ModuleDocumentation, ModuleOrigin, Visibility};
+use crate::{
+    DefMapBuilder, GeneratedItemStore, GeneratedSourceStoreId, ModuleBuilder, ModuleDocumentation,
+    ModuleOrigin, Visibility,
+};
 
 mod declarations;
 pub(crate) use self::declarations::DeclarationCollector;
@@ -27,6 +31,7 @@ pub(crate) use self::declarations::DeclarationCollector;
 pub(super) fn collect_crate(
     crate_ref: CrateRef,
     target: &CargoTarget,
+    root_file_id: FileId,
     edition: RustEdition,
     cfg_options: CfgOptions,
     item_tree_package: &ItemTrees,
@@ -35,14 +40,14 @@ pub(super) fn collect_crate(
 ) -> anyhow::Result<CrateBuilder> {
     let resolutions = MacroSourceFileResolutions::default();
     let root_file = item_tree_package
-        .file(target.root_file)
+        .file(root_file_id)
         .context("target root file should be lowered")?;
     let mut builder = DefMapBuilder::new(DefMapRef::Crate(crate_ref));
     // A target root has neither a declaration name nor a parent. All descendants use the
     // shared collector, just like files and declarations discovered by macro expansion.
     let mut root = ModuleBuilder::new(
         ModuleOrigin::Root {
-            file_id: target.root_file,
+            file_id: root_file_id,
         },
         Visibility::Public,
         None,
@@ -51,7 +56,6 @@ pub(super) fn collect_crate(
     let root_module = builder.alloc_module(root);
     let mut state = CrateBuilder {
         crate_ref,
-        cargo_target: target.id,
         crate_name: target.name.clone(),
         root_module,
         edition,
@@ -59,11 +63,11 @@ pub(super) fn collect_crate(
         target_kind: target.kind.clone(),
         known_module_files,
         def_map_builder: builder,
+        generated_items: GeneratedItemStore::new(GeneratedSourceStoreId::Target),
         extern_prelude: ExternPreludeBuilder::new(roots),
         prelude: None,
-        macro_definitions: HashMap::new(),
-        textual_macro_scopes: TextualMacroScopes::default(),
-        macro_use_imports: Vec::new(),
+        member_inputs: HashMap::new(),
+        macro_scopes: MacroScopeData::default(),
         macro_directives: Vec::new(),
         macro_source_file_requests: Vec::new(),
         pending_generated_modules: Vec::new(),
@@ -78,7 +82,7 @@ pub(super) fn collect_crate(
         MacroCallOrigin::Source,
         None,
     )
-    .collect_module_file(root_module, target.root_file, context)
+    .collect_module_file(root_module, root_file_id, context)
     .with_context(|| format!("collect crate scope for {}", target.name))?;
     Ok(state)
 }

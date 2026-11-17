@@ -3,9 +3,9 @@ use rg_ir_model::{
     BodyKey, BodyRef, ConstRef, CrateRef, DefMapRef, FunctionRef, ItemStoreRef, LocalDefRef,
     ModuleRef, SavedBodyOwner, SemanticItemRef, StaticRef,
 };
-use rg_parse::ParseDb;
 use rg_semantic_ir::{
-    AssociatedItemStore, ItemStoreQuery, SemanticItemSource, SemanticItemView,
+    AssociatedItemStore, ItemStoreQuery, SemanticItemSource, SemanticItemView, SourceSelection,
+    body_owners,
     testonly::{SemanticIrFixture, SemanticIrView},
 };
 use rg_source::ReadError;
@@ -54,10 +54,6 @@ impl<'db> BodyIrView<'db> {
         self.semantic
     }
 
-    pub fn parse_db(&self) -> &'db ParseDb {
-        self.semantic.parse_db()
-    }
-
     pub fn body_reader(&self) -> BodyReader<'db> {
         self.bodies.clone()
     }
@@ -69,7 +65,7 @@ impl<'db> BodyIrView<'db> {
     /// Demand every owner in the selected target, including each owner's nested bodies.
     pub fn bodies(&self, target: CrateRef) -> Vec<(BodyRef, BodyView<'_>)> {
         self.bodies
-            .bodies(target, None)
+            .bodies(target, SourceSelection::All)
             .expect("fixture bodies should load")
     }
 
@@ -91,11 +87,7 @@ impl<'db> BodyIrView<'db> {
     /// can select an item from the declarations and construct its BodyKey directly.
     pub fn body_key(&self, target: CrateRef, name: &str) -> BodyKey {
         let items = self.semantic.all_items(DefMapRef::Crate(target));
-        let declarations = rg_semantic_ir::target_declarations(self.semantic.db(), target)
-            .expect("fixture declarations should load");
-        let owners = declarations
-            .body_owners
-            .value_ref(self.semantic.db())
+        let owners = body_owners(self.semantic.db(), target, SourceSelection::All)
             .expect("fixture body owners should load");
         let mut matching = owners.iter().filter(|owner| {
             let store = owner.store_ref();
@@ -185,10 +177,28 @@ impl<'a> SemanticItemSource<'a> for &'a BodyIrView<'_> {
         }
     }
 
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic.items().scope_items(origin),
+            DefMapRef::Body(_) => (&self.bodies).scope_items(origin),
+        }
+    }
+
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         match origin {
             DefMapRef::Crate(_) => self.semantic.items().all_items(origin),
             DefMapRef::Body(_) => (&self.bodies).all_items(origin),
+        }
+    }
+
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic.items().source_items(origin, selection),
+            DefMapRef::Body(_) => (&self.bodies).source_items(origin, selection),
         }
     }
 }

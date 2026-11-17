@@ -3,39 +3,34 @@
 //! Crate and body-local declarations use different source stores. The reader lets both use
 //! the same lowering rules.
 
-use std::{collections::HashSet, marker::PhantomData};
+use std::marker::PhantomData;
 
 use anyhow::Context as _;
 use rg_def_map::{DefMap, ItemSource, LocalDefKind};
 use rg_ir_model::{
-    AssocItemId, ItemId, ItemOwner, ItemStoreId, LocalDefRef, LocalImplRef, ModuleRef, StaticId,
-    TraitId,
+    AssocItemId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, StaticId, TraitId,
 };
 use rg_item_tree::{
-    ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId, StaticItem, TraitItem,
-    TypeAliasItem,
+    ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, StaticItem, TraitItem, TypeAliasItem,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use crate::item::{
-    AssociatedItemStore, AssociatedItemStoreBuilder, ConstData, ConstSignature, EnumData,
-    FunctionData, FunctionSignature, ImplData, ItemStore, ItemStoreBuilder, StaticData, StructData,
-    TraitData, TypeAliasData, TypeAliasSignature, UnionData,
+    AssociatedItemStoreBuilder, ConstData, ConstSignature, EnumData, FunctionData,
+    FunctionSignature, ImplData, ItemStore, ItemStoreBuilder, StaticData, StructData, TraitData,
+    TypeAliasData, TypeAliasSignature, UnionData,
 };
 
 /// Reads item-tree-shaped payloads from the storage layer named by an `ItemSource`.
 pub trait ItemStoreSourceReader<'item> {
     fn item(&self, source: ItemSource) -> anyhow::Result<&'item ItemNode>;
-
-    fn associated_macro_expansion(&self, _source: ItemSource) -> Option<&[ItemSource]> {
-        None
-    }
 }
 
 /// Lowers a collected DefMap into item-shaped semantic storage.
 ///
-/// This structure is intentionally generic enough to allow reuse across crate and body lowering.
+/// This lowerer constructs scope declarations and owner headers. Member lowering is a separate
+/// operation, whether a saved query performs it lazily or a body collector performs it eagerly.
 pub struct ItemStoreLowerer<'def_map, 'item, R> {
     def_map: &'def_map DefMap,
     reader: R,
@@ -56,7 +51,14 @@ where
         }
     }
 
+    /// Lower module declarations and trait/impl headers without constructing associated stores.
+    /// A saved target can publish these headers while each member store remains unrequested.
     pub fn lower(mut self) -> anyhow::Result<ItemStore> {
+        self.lower_scope()?;
+        Ok(self.items.build())
+    }
+
+    fn lower_scope(&mut self) -> anyhow::Result<()> {
         // DefMap local definitions provide the stable item identity. The source reader supplies the
         // syntax-shaped payload from Cargo-target item trees, generated sources, or body-local
         // arenas.
@@ -115,7 +117,7 @@ where
             }
         }
 
-        Ok(self.items.build())
+        Ok(())
     }
 
     fn lower_local_item(
@@ -129,7 +131,7 @@ where
         // declarations that carry signature facts or item identities for queries.
         let item_id = match &item.kind {
             ItemKind::Const(const_item) => {
-                let data = Self::lower_const(
+                let data = ConstData::from_item(
                     Some(local_def),
                     source,
                     ItemOwner::Module(owner),
@@ -152,7 +154,7 @@ where
                 ItemId::Enum(id)
             }
             ItemKind::Function(fn_def) => {
-                let data = Self::lower_function(
+                let data = FunctionData::from_item(
                     Some(local_def),
                     source,
                     ItemOwner::Module(owner),
@@ -181,7 +183,7 @@ where
                 ItemId::Trait(self.lower_trait(local_def, source, owner, item, trait_item))
             }
             ItemKind::TypeAlias(type_alias) => {
-                let data = Self::lower_type_alias(
+                let data = TypeAliasData::from_item(
                     Some(local_def),
                     source,
                     ItemOwner::Module(owner),
@@ -220,7 +222,7 @@ where
     ) -> TraitId {
         // Allocate the header in the enclosing scope first. Its ID also names the member store,
         // so members can point back to this header for their inherited generics.
-        let trait_id = self.items.traits.alloc(TraitData {
+        self.items.traits.alloc(TraitData {
             local_def,
             source,
             owner,
@@ -231,12 +233,7 @@ where
             super_traits: trait_item.super_traits.clone(),
             is_unsafe: trait_item.is_unsafe,
             is_auto: trait_item.is_auto,
-        });
-        let assoc_items =
-            self.lower_assoc_items(source, &trait_item.items, ItemOwner::Trait(trait_id));
-        self.items
-            .set_members(ItemStoreId::Trait(trait_id), assoc_items);
-        trait_id
+        })
     }
 
     fn lower_impl(
@@ -248,7 +245,7 @@ where
     ) {
         // Impl header paths are stored as syntax here; a separate pass can fill resolved self/trait
         // ids once all stores needed by the chosen resolution scope exist.
-        let impl_id = self.items.impls.alloc(ImplData {
+        self.items.impls.alloc(ImplData {
             local_impl,
             source,
             owner,
@@ -260,150 +257,6 @@ where
             is_unsafe: impl_item.is_unsafe,
             polarity: impl_item.polarity,
         });
-        // This block's ImplId names its member store. Each member's own ID is local to that store.
-        let assoc_items =
-            self.lower_assoc_items(source, &impl_item.items, ItemOwner::Impl(impl_id));
-        self.items
-            .set_members(ItemStoreId::Impl(impl_id), assoc_items);
-    }
-
-    fn lower_assoc_items(
-        &mut self,
-        parent_source: ItemSource,
-        item_ids: &[ItemTreeId],
-        owner: ItemOwner,
-    ) -> AssociatedItemStore {
-        let mut assoc_items = AssociatedItemStoreBuilder::default();
-        let mut active_expansions = HashSet::new();
-
-        // Each owner starts a fresh arena. A member expansion can add items here without
-        // allocating IDs in another trait, impl, or the enclosing lexical scope.
-        for item_id in item_ids {
-            let source = parent_source.with_item(*item_id);
-            self.lower_assoc_source(source, owner, &mut assoc_items, &mut active_expansions);
-        }
-
-        assoc_items.build()
-    }
-
-    /// Lowers one associated source, recursively replacing retained macro calls with their output.
-    ///
-    /// If `methods!()` expands to `fn direct(&self) {}` and `nested!()`, then `nested!()` expands
-    /// to `fn nested(&self) {}`, this walk emits the two functions in source order and no macro
-    /// placeholder.
-    fn lower_assoc_source(
-        &mut self,
-        source: ItemSource,
-        owner: ItemOwner,
-        assoc_items: &mut AssociatedItemStoreBuilder,
-        active_expansions: &mut HashSet<ItemSource>,
-    ) {
-        let Ok(item) = self.reader.item(source) else {
-            return;
-        };
-
-        if matches!(item.kind, ItemKind::MacroCall(_)) {
-            // Included source can be reused by separate impls, so a global visited set would drop
-            // valid associated items. Only reject a source already present in this expansion's
-            // ancestry: `include!("methods.rs")` inside that same file then becomes a skipped
-            // cyclic edge instead of unbounded recursion.
-            if !active_expansions.insert(source) {
-                return;
-            }
-            // Clone the small sparse replacement list before recursing so mutable semantic
-            // lowering does not retain a borrow into the transient expansion store.
-            let generated_items = self
-                .reader
-                .associated_macro_expansion(source)
-                .unwrap_or_default()
-                .to_vec();
-            for generated in generated_items {
-                self.lower_assoc_source(generated, owner, assoc_items, active_expansions);
-            }
-            active_expansions.remove(&source);
-            return;
-        }
-
-        let member = match &item.kind {
-            ItemKind::Const(declaration) => {
-                let data = Self::lower_const(None, source, owner, item, declaration);
-                AssocItemId::Const(assoc_items.alloc_const(data))
-            }
-            ItemKind::Function(declaration) => {
-                let data = Self::lower_function(None, source, owner, item, declaration);
-                AssocItemId::Function(assoc_items.alloc_function(data))
-            }
-            ItemKind::TypeAlias(declaration) => {
-                let data = Self::lower_type_alias(None, source, owner, item, declaration);
-                AssocItemId::TypeAlias(assoc_items.alloc_type_alias(data))
-            }
-            _ => return,
-        };
-        self.items.register_lang_item(
-            item.lang_item,
-            member.semantic_ref(owner.item_store(self.def_map.own_ref())),
-        );
-    }
-
-    fn lower_function(
-        local_def: Option<LocalDefRef>,
-        source: ItemSource,
-        owner: ItemOwner,
-        item: &ItemNode,
-        declaration: &FunctionItem,
-    ) -> FunctionData {
-        FunctionData {
-            local_def,
-            source,
-            location: item.location,
-            name_location: item.name_location,
-            owner,
-            name: item.name.clone().unwrap_or_else(Name::missing),
-            visibility: item.visibility.clone(),
-            docs: item.docs.clone(),
-            signature: FunctionSignature::from_item(declaration),
-        }
-    }
-
-    fn lower_type_alias(
-        local_def: Option<LocalDefRef>,
-        source: ItemSource,
-        owner: ItemOwner,
-        item: &ItemNode,
-        declaration: &TypeAliasItem,
-    ) -> TypeAliasData {
-        TypeAliasData {
-            local_def,
-            source,
-            location: item.location,
-            name_location: item.name_location,
-            owner,
-            name: item.name.clone().unwrap_or_else(Name::missing),
-            visibility: item.visibility.clone(),
-            docs: item.docs.clone(),
-            signature: TypeAliasSignature::from_item(declaration),
-        }
-    }
-
-    fn lower_const(
-        local_def: Option<LocalDefRef>,
-        source: ItemSource,
-        owner: ItemOwner,
-        item: &ItemNode,
-        declaration: &ConstItem,
-    ) -> ConstData {
-        ConstData {
-            local_def,
-            source,
-            location: item.location,
-            name_location: item.name_location,
-            owner,
-            name: item.name.clone().unwrap_or_else(Name::missing),
-            visibility: item.visibility.clone(),
-            docs: item.docs.clone(),
-            signature: ConstSignature::from_item(declaration),
-            initializer_location: declaration.initializer_location,
-        }
     }
 
     fn lower_static(
@@ -426,6 +279,98 @@ where
             ty: declaration.ty.clone(),
             mutability: declaration.mutability,
             initializer_location: declaration.initializer_location,
+        })
+    }
+}
+
+impl FunctionData {
+    pub(crate) fn from_item(
+        local_def: Option<LocalDefRef>,
+        source: ItemSource,
+        owner: ItemOwner,
+        item: &ItemNode,
+        declaration: &FunctionItem,
+    ) -> Self {
+        Self {
+            local_def,
+            source,
+            location: item.location,
+            name_location: item.name_location,
+            owner,
+            name: item.name.clone().unwrap_or_else(Name::missing),
+            visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
+            signature: FunctionSignature::from_item(declaration),
+        }
+    }
+}
+
+impl TypeAliasData {
+    pub(crate) fn from_item(
+        local_def: Option<LocalDefRef>,
+        source: ItemSource,
+        owner: ItemOwner,
+        item: &ItemNode,
+        declaration: &TypeAliasItem,
+    ) -> Self {
+        Self {
+            local_def,
+            source,
+            location: item.location,
+            name_location: item.name_location,
+            owner,
+            name: item.name.clone().unwrap_or_else(Name::missing),
+            visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
+            signature: TypeAliasSignature::from_item(declaration),
+        }
+    }
+}
+
+impl ConstData {
+    pub(crate) fn from_item(
+        local_def: Option<LocalDefRef>,
+        source: ItemSource,
+        owner: ItemOwner,
+        item: &ItemNode,
+        declaration: &ConstItem,
+    ) -> Self {
+        Self {
+            local_def,
+            source,
+            location: item.location,
+            name_location: item.name_location,
+            owner,
+            name: item.name.clone().unwrap_or_else(Name::missing),
+            visibility: item.visibility.clone(),
+            docs: item.docs.clone(),
+            signature: ConstSignature::from_item(declaration),
+            initializer_location: declaration.initializer_location,
+        }
+    }
+}
+
+impl AssociatedItemStoreBuilder {
+    /// Allocate IDs only for declarations. Macro calls consume no slots; their expanded
+    /// declarations must be supplied separately. Members have no module-level binding, so the
+    /// lowered data has no `local_def` even though it has its own semantic member ID.
+    pub fn lower(
+        &mut self,
+        source: ItemSource,
+        owner: ItemOwner,
+        item: &ItemNode,
+    ) -> Option<AssocItemId> {
+        Some(match &item.kind {
+            ItemKind::Function(declaration) => AssocItemId::Function(self.alloc_function(
+                FunctionData::from_item(None, source, owner, item, declaration),
+            )),
+            ItemKind::Const(declaration) => AssocItemId::Const(
+                self.alloc_const(ConstData::from_item(None, source, owner, item, declaration)),
+            ),
+            ItemKind::TypeAlias(declaration) => AssocItemId::TypeAlias(self.alloc_type_alias(
+                TypeAliasData::from_item(None, source, owner, item, declaration),
+            )),
+            _ => return None,
         })
     }
 }

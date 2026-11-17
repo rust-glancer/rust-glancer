@@ -1,7 +1,6 @@
-use anyhow::Context as _;
 use gen_lsp_types::{DocumentHighlight, DocumentHighlightKind, Location};
 use rg_analysis::ReferenceLocation;
-use rg_ir_model::{FileId, PackageSlot, Span};
+use rg_ir_model::Span;
 use rg_lsp_proto::path_to_file_uri;
 use rg_project::ProjectSnapshot;
 
@@ -11,19 +10,15 @@ pub(crate) fn location_for_reference(
     snapshot: ProjectSnapshot<'_>,
     reference: &ReferenceLocation,
 ) -> anyhow::Result<Option<Location>> {
-    let Some(path) = snapshot.file_path(reference.crate_ref.package, reference.file_id) else {
-        return Ok(None);
-    };
+    let path = snapshot.sources().path(reference.file_id)?;
     let Ok(uri) = path_to_file_uri(path) else {
         return Ok(None);
     };
 
-    let range = range_for_file(
-        snapshot,
-        reference.crate_ref.package,
-        reference.file_id,
+    let range = position::range(
+        snapshot.sources().line_index(reference.file_id)?,
         reference.span,
-    )?;
+    );
 
     Ok(Some(Location { uri, range }))
 }
@@ -38,17 +33,4 @@ pub(crate) fn document_highlight_for_current_document(
         // Read/write classification is independent from source freshness and remains deferred.
         kind: Some(DocumentHighlightKind::Read),
     }
-}
-
-fn range_for_file(
-    snapshot: ProjectSnapshot<'_>,
-    package_slot: PackageSlot,
-    file_id: FileId,
-    span: Span,
-) -> anyhow::Result<gen_lsp_types::Range> {
-    let line_index = snapshot
-        .file_line_index(package_slot, file_id)?
-        .context("while attempting to find file for LSP range conversion")?;
-
-    Ok(position::range(line_index, span))
 }

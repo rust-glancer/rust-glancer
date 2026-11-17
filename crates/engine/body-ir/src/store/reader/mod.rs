@@ -12,7 +12,7 @@ use rg_ir_model::{
 use rg_item_tree::SourceLocations;
 use rg_semantic_ir::{
     AssociatedItemStore, BodyOwnerData, SavedDeclarationSourceView, SemanticItemSource,
-    SemanticItemView, TargetDeclarationReader,
+    SemanticItemView, SourceSelection, TargetDeclarationReader,
 };
 use rg_source::{QueryContext, ReadError};
 
@@ -145,27 +145,28 @@ impl<'db> BodyReader<'db> {
         Ok(files.into_vec())
     }
 
-    /// Enumerate bodies from one file, or every body when `file` is absent.
-    ///
-    /// File-scoped callers acquire only owners in the selected file.
+    /// Acquire bodies from the selected source surface. Written selection keeps file-local
+    /// outlines lazy; exhaustive selection also follows every include interpretation.
     pub fn bodies(
         &self,
         crate_ref: CrateRef,
-        file: Option<FileId>,
+        selection: SourceSelection,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
-        self.bodies_matching(crate_ref, file, &|_| true)
+        self.bodies_matching(crate_ref, selection, &|_| true)
     }
 
-    /// Discover saved owners visible in this view before computing them. A changed current file
-    /// masks its saved owners; its prepared bodies are added separately by `bodies_matching`.
+    /// Discover saved owners on the selected source surface without lowering their bodies.
+    /// A changed current file masks its saved owners; its prepared bodies are added separately
+    /// by `bodies_matching`.
     pub fn owners(
         &self,
         crate_ref: CrateRef,
-    ) -> Result<impl Iterator<Item = &BodyOwnerData> + Clone, ReadError> {
+        selection: SourceSelection,
+    ) -> Result<impl Iterator<Item = BodyOwnerData> + Clone, ReadError> {
         Ok(self
             .saved
-            .owners(crate_ref)?
-            .iter()
+            .owners(crate_ref, selection)?
+            .into_iter()
             .filter(move |owner| !self.current.masks_file(crate_ref, owner.file)))
     }
 
@@ -179,7 +180,12 @@ impl<'db> BodyReader<'db> {
         owner_start: Option<u32>,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
         let mut selected = Vec::new();
-        for owner in self.owners(crate_ref)?.filter(|owner| owner.file == file) {
+        for owner in self
+            .saved
+            .owners(crate_ref, SourceSelection::at(file, offset))?
+            .into_iter()
+            .filter(|_| !self.current.masks_file(crate_ref, file))
+        {
             let span = self
                 .declaration_location(crate_ref, owner.source, owner.location)?
                 .span;
@@ -187,20 +193,34 @@ impl<'db> BodyReader<'db> {
                 selected.push(owner.owner);
             }
         }
-        self.bodies_matching(crate_ref, Some(file), &|owner| {
-            selected.contains(&owner.owner)
-        })
+        let saved = self
+            .saved
+            .bodies(crate_ref, SourceSelection::at(file, offset), &|owner| {
+                selected.contains(&owner.owner)
+            })?;
+        Ok(self.merge_current_bodies(crate_ref, Some(file), saved))
     }
 
+    /// Select owner metadata before inference. Reference scans use this to reject bodies whose
+    /// source cannot mention the searched declaration.
     pub fn bodies_matching(
         &self,
         crate_ref: CrateRef,
-        file: Option<FileId>,
+        selection: SourceSelection,
         selected: &dyn Fn(&BodyOwnerData) -> bool,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
-        let mut saved = self.saved.bodies(crate_ref, file, &|owner| {
+        let saved = self.saved.bodies(crate_ref, selection, &|owner| {
             !self.current.masks_file(crate_ref, owner.file) && selected(owner)
         })?;
+        Ok(self.merge_current_bodies(crate_ref, selection.file(), saved))
+    }
+
+    fn merge_current_bodies<'a>(
+        &'a self,
+        crate_ref: CrateRef,
+        file: Option<FileId>,
+        mut saved: Vec<(BodyRef, BodyView<'a>)>,
+    ) -> Vec<(BodyRef, BodyView<'a>)> {
         saved.retain(|(body_ref, body)| {
             !self.current.contains_body(*body_ref)
                 && !self.current.masks_file(crate_ref, body.source().file_id)
@@ -215,7 +235,7 @@ impl<'db> BodyReader<'db> {
             saved.push((current.body_ref(), current.view()));
         }
 
-        Ok(saved)
+        saved
     }
 
     /// Select a body by its saved owner and local ID, or by its request-local identity.
@@ -259,9 +279,8 @@ impl<'db> BodyReader<'db> {
             && krate == key.krate
             && self
                 .saved
-                .owners(krate)?
-                .iter()
-                .any(|data| data.owner == key.owner && data.file == file)
+                .owner_data(key)?
+                .is_some_and(|data| data.file == file)
         {
             return Ok(true);
         }
@@ -270,11 +289,9 @@ impl<'db> BodyReader<'db> {
 
     pub(crate) fn saved_prepared_bodies(
         &self,
-        krate: CrateRef,
-        file: FileId,
-        selected: &dyn Fn(&BodyOwnerData) -> bool,
+        owners: &[BodyKey],
     ) -> Result<Vec<(BodyRef, &BodyData)>, ReadError> {
-        self.saved.prepared_bodies(krate, file, selected)
+        self.saved.prepared_bodies(owners)
     }
 
     pub(crate) fn saved_prepared_owner(
@@ -376,7 +393,6 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
         };
         Ok(self
             .body_local_items(body)?
-            .map(BodyLocalItems::item_store)
             .and_then(|items| items.associated_items(store)))
     }
 
@@ -386,8 +402,7 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
         };
         Ok(self
             .body_local_items(body)?
-            .map(BodyLocalItems::item_store)
-            .and_then(|items| items.semantic_item_view(item)))
+            .and_then(|items| items.item(item)))
     }
 
     fn item_for_local_def(
@@ -407,15 +422,42 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
             }))
     }
 
-    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         let DefMapRef::Body(body) = origin else {
             return Ok(Vec::new());
         };
         Ok(self
             .body_local_items(body)?
             .map(BodyLocalItems::item_store)
-            .map(|items| items.semantic_items().collect())
+            .map(|items| items.scope_items().collect())
             .unwrap_or_default())
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        let DefMapRef::Body(body) = origin else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .body_local_items(body)?
+            .map(|items| items.all_items().collect())
+            .unwrap_or_default())
+    }
+
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        // Local stores are already prepared; the scan checks exact ranges.
+        Ok(self
+            .all_items(origin)?
+            .into_iter()
+            .filter(|item| {
+                selection
+                    .file()
+                    .is_none_or(|file| item.source().file_id == file)
+            })
+            .collect())
     }
 }
 

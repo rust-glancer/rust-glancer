@@ -7,7 +7,7 @@ use rg_item_tree::{ItemNode, ItemTreeId};
 use super::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
     BodySourceMap, BodySourceStore, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
-    facts::{BodyFacts, BodyResolution, CallFacts, ExprFacts},
+    facts::{BodyFacts, BodyResolution, CallFacts},
 };
 
 /// Read view joining one prepared body, its inferred facts, and its source locations.
@@ -145,10 +145,6 @@ impl<'a> BodyView<'a> {
         self.body.exprs()
     }
 
-    pub fn expr_facts(self) -> &'a [ExprFacts] {
-        self.facts.exprs.as_slice()
-    }
-
     pub fn binding(self, binding: BindingId) -> Option<&'a BindingData> {
         self.body.binding(binding)
     }
@@ -186,10 +182,6 @@ impl<'a> BodyView<'a> {
 
     pub fn expr(self, expr: ExprId) -> Option<&'a ExprData> {
         self.body.expr(expr)
-    }
-
-    pub fn expr_fact(self, expr: ExprId) -> Option<&'a ExprFacts> {
-        self.facts.exprs.get(expr)
     }
 
     /// Return the durable target selected for this call expression after inference.

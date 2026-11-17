@@ -1,11 +1,13 @@
 use std::time::Duration;
 #[cfg(test)]
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[cfg(test)]
-use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot, Span};
-#[cfg(test)]
-use rg_parse::{ParseDb, TargetFileManifest};
+use rg_ir_model::{FileId, PackageSlot, Span};
 #[cfg(test)]
 use rg_workspace::WorkspaceLoweringConfig;
 use rg_workspace::WorkspaceMetadata;
@@ -31,11 +33,12 @@ pub fn fixture_database(workspace: &WorkspaceMetadata) -> rg_source::QueryDataba
     )
 }
 
-/// End-to-end fixture for tests that need parsed files and item trees.
+/// Item trees and their source locations collected from fixture targets.
 #[cfg(test)]
 pub(crate) struct ItemTreeFixture {
     _fixture: CrateFixture,
-    parse: ParseDb,
+    workspace: WorkspaceMetadata,
+    interner: ajika::Interner,
     trees: Vec<ItemTrees>,
     locations: Vec<HashMap<FileId, Arc<DeclarationSourceStore<Span>>>>,
 }
@@ -51,60 +54,48 @@ impl ItemTreeFixture {
             WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
                 .expect("fixture workspace metadata should build")
         };
-        Self::build_from_crate(fixture, &workspace)
-    }
-
-    fn build_from_crate(fixture: CrateFixture, workspace: &WorkspaceMetadata) -> Self {
-        let mut database = fixture_database(workspace);
-        let inputs = database.inputs().clone();
-        let (parse, trees, locations) = database
+        let mut database = fixture_database(&workspace);
+        let (trees, locations) = database
             .run(|db| {
-                let mut manifests = Vec::new();
                 let mut trees = Vec::new();
                 let mut locations = Vec::new();
-                for (slot, package) in workspace.packages().iter().enumerate() {
+                for slot in 0..workspace.packages().len() {
                     let mut item_trees = ItemTrees::default();
                     let mut file_locations = HashMap::new();
-                    for (id, _) in package.analyzed_targets().enumerate() {
-                        let krate = CrateRef {
-                            package: PackageSlot(slot),
-                            crate_id: CrateId(id),
-                        };
+                    for (krate, _) in workspace.targets_for_package(PackageSlot(slot)) {
                         let sources = target_sources(db, krate)?;
                         for &file in &sources.files {
                             let declarations = file_declarations(db, krate.package, file)?;
                             item_trees.extend_files([declarations.items.value(db)?]);
                             file_locations.insert(file, declarations.sources.value(db)?);
                         }
-                        manifests.push((
-                            krate,
-                            TargetFileManifest {
-                                root: sources.root,
-                                files: sources.files.clone(),
-                            },
-                        ));
                     }
                     trees.push(item_trees);
                     locations.push(file_locations);
                 }
-                let parse = ParseDb::from_target_manifests(
-                    workspace,
-                    &inputs,
-                    manifests.iter().map(|(krate, manifest)| (*krate, manifest)),
-                )?;
-                Ok((parse, trees, locations))
+                Ok((trees, locations))
             })
             .expect("fixture sources and declarations should build");
         Self {
             _fixture: fixture,
-            parse,
+            workspace,
+            interner: database.interner(),
             trees,
             locations,
         }
     }
 
-    pub fn parse_db(&self) -> &ParseDb {
-        &self.parse
+    pub fn workspace(&self) -> &WorkspaceMetadata {
+        &self.workspace
+    }
+
+    pub fn file_path(&self, file: FileId) -> PathBuf {
+        file.path(&self.interner)
+            .expect("fixture source path should resolve")
+    }
+
+    pub fn file_id(&self, path: &Path) -> FileId {
+        FileId::for_path(&self.interner, path).expect("fixture source identity should resolve")
     }
 
     pub fn locations(&self, package: usize, file: FileId) -> &DeclarationSourceStore<Span> {

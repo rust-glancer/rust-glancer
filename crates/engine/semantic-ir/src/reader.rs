@@ -1,12 +1,14 @@
-//! Semantic item reads over one configured target directory.
+//! Semantic item reads over configured targets.
+
+use std::sync::Arc;
 
 use rg_ir_model::{CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_source::ReadError;
 use rg_std::CancellationToken;
 
 use crate::{
-    AssociatedItemStore, ItemLookupEnv, LangItemIndex, LookupAnswer, LookupQuestion,
-    SemanticItemSource, SemanticItemView, SymbolNameData,
+    AssociatedItemStore, ItemLookupEnv, LookupAnswer, LookupQuestion, SemanticItemSource,
+    SemanticItemView, SourceSelection, SymbolNameData, SymbolNameIndex,
 };
 
 /// Acquire item, language-item and lookup payloads independently, or enumerate their targets.
@@ -21,15 +23,30 @@ pub trait CrateItemSource: Sync {
         &self,
         definition: LocalDefRef,
     ) -> Result<Option<SemanticItemRef>, ReadError>;
+    /// Read module-owned declarations and owner headers without acquiring associated stores.
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
+    /// Enumerate every declaration, opening all associated stores in a saved target. Use this
+    /// for whole-target operations; a file or cursor scan should select through `source_items`.
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
-    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError>;
+    /// Select written containers or every interpretation of a file, as requested explicitly by
+    /// `selection`. Consumers still check exact ranges after acquisition.
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
     fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError>;
     fn lookup_candidates(
         &self,
         use_site: CrateRef,
         question: &LookupQuestion,
     ) -> Result<LookupAnswer, ReadError>;
-    fn symbol_names(&self, krate: CrateRef) -> Result<&[SymbolNameData], ReadError>;
+    /// Discover a batch of target name tables. The batch lets saved readers compute independent
+    /// targets concurrently; shared tables keep the result compact until filtering is finished.
+    /// A target may return several tables, separating written summaries from discovered macro
+    /// names. Requesting these tables can expand member macros, but does not open macro-free
+    /// member stores. The search consumer opens those only when their written names match.
+    fn symbol_names(&self, crates: &[CrateRef]) -> Result<Vec<Arc<SymbolNameIndex>>, ReadError>;
     fn crates(&self) -> Vec<CrateRef>;
 }
 
@@ -61,16 +78,55 @@ impl<'a> ItemReader<'a> {
         self.0.item_for_local_def(definition)
     }
 
+    pub fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        self.0.scope_items(origin)
+    }
+
     pub fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         self.0.all_items(origin)
     }
 
-    pub(crate) fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        self.0.lang_items(krate)
+    pub fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        self.0.source_items(origin, selection)
     }
 
-    pub fn symbol_names(&self, krate: CrateRef) -> Result<&'a [SymbolNameData], ReadError> {
-        self.0.symbol_names(krate)
+    /// Search names before acquiring signatures. Macro owners contribute discovered names;
+    /// an ordinary owner is opened only when its written-name summary matches the predicate.
+    pub fn search_symbols(
+        &self,
+        crates: &[CrateRef],
+        query: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<SymbolNameData>, ReadError> {
+        let needle = query.to_lowercase();
+        let matches = |name: &str| name.to_lowercase().contains(&needle);
+        let mut selected = Vec::new();
+        for table in self.0.symbol_names(crates)? {
+            for candidate in &table.declarations {
+                rg_std::check_cancel!(cancellation, "workspace symbol discovery");
+                if matches(candidate.name.as_str()) {
+                    selected.push(candidate.clone());
+                }
+            }
+            for summary in &table.members {
+                rg_std::check_cancel!(cancellation, "workspace member discovery");
+                if !summary.names.iter().any(|name| matches(name.as_str())) {
+                    continue;
+                }
+                // Syntax order cannot predict IDs: preceding expansions can allocate members.
+                if let Some(members) = self.associated_items(summary.owner)? {
+                    selected.extend(
+                        SymbolNameData::for_members(summary.owner, members)
+                            .filter(|candidate| matches(candidate.name.as_str())),
+                    );
+                }
+            }
+        }
+        Ok(selected)
     }
 
     pub fn included_crates(
@@ -101,7 +157,18 @@ impl<'a> SemanticItemSource<'a> for &ItemReader<'a> {
         ItemReader::item_for_local_def(self, definition)
     }
 
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        ItemReader::scope_items(self, origin)
+    }
+
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         ItemReader::all_items(self, origin)
+    }
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        ItemReader::source_items(self, origin, selection)
     }
 }

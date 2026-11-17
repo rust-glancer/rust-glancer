@@ -1,12 +1,13 @@
 //! Selects one crate interpretation for editor queries and exposes saved source text.
+//!
+//! File membership comes from declaration outputs. Startup knows module sources; an include
+//! reached by lazy member expansion is routed through the same captured source inputs.
 
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
-use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
-use rg_parse::LineIndex;
-#[cfg(test)]
-use rg_parse::ParseDb;
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
+use rg_parse::SavedSourceReader;
+use rg_semantic_ir::{complete_source_ownership, target_declarations};
 use rg_std::MemorySize;
 use rg_text::RustEdition;
 
@@ -15,8 +16,8 @@ use super::ProjectSnapshot;
 /// Analysis-ready context for one filesystem path.
 ///
 /// A shared module can belong to several crates. Editor queries use the first owner in saved
-/// package/target order, which keeps file routing stable when other targets share the path.
-/// Unreachable parsed files have no semantic context.
+/// package/target order, preferring a known written context before discovering include owners.
+/// Exhaustive operations use every owning crate instead of this editor selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
     pub crate_ref: CrateRef,
@@ -24,22 +25,19 @@ pub struct FileContext {
 }
 
 impl<'a> ProjectSnapshot<'a> {
-    #[cfg(test)]
-    pub(crate) fn parse_db(&self) -> &'a ParseDb {
-        self.state.parse_db()
-    }
-
-    /// Returns the source path if the file belongs to the package.
-    pub fn file_path(&self, package: PackageSlot, file: FileId) -> Option<&Path> {
-        self.state.parse_db().package(package.0)?.file_path(file)
+    /// Physical source access uses only the file identity. A file can have several crate
+    /// interpretations; selecting one belongs to routing and semantic queries, not text reads.
+    pub fn sources(&self) -> SavedSourceReader<'a> {
+        SavedSourceReader::new(self.query_context())
     }
 
     /// Returns whether a package belongs to the analyzed workspace.
     pub fn package_is_workspace_member(&self, package: PackageSlot) -> bool {
         self.state
-            .parse_db()
-            .package(package.0)
-            .is_some_and(|package| package.is_workspace_member())
+            .workspace()
+            .packages()
+            .get(package.0)
+            .is_some_and(|package| package.is_workspace_member)
     }
 
     /// Returns the Rust edition declared for a package in the current workspace metadata.
@@ -51,100 +49,52 @@ impl<'a> ProjectSnapshot<'a> {
             .map(|package| package.edition)
     }
 
-    /// Returns source text for a byte span from the same snapshot that backs this project view.
-    pub fn file_text_for_span(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-        span: Span,
-    ) -> anyhow::Result<Option<String>> {
-        let Some(parsed_file) = self
-            .state
-            .parse_db()
-            .package(package.0)
-            .and_then(|package| package.parsed_file(file))
-        else {
-            return Ok(None);
-        };
-        parsed_file.text_for_span(span)
-    }
-
-    /// Returns request-scoped source text for syntax-sensitive editor queries.
-    ///
-    /// Saved text may have been evicted after indexing; loading it here does not retain it in the
-    /// project graph once the returned `Arc` and query-local source handle are dropped.
-    pub fn file_source_text(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> anyhow::Result<Option<Arc<str>>> {
-        let Some(parsed_file) = self
-            .state
-            .parse_db()
-            .package(package.0)
-            .and_then(|package| package.parsed_file(file))
-        else {
-            return Ok(None);
-        };
-        Ok(Some(
-            parsed_file
-                .source_text()
-                .context("load parsed file source")?,
-        ))
-    }
-
-    /// Returns the line index for a file in the package.
-    pub fn file_line_index(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> anyhow::Result<Option<&LineIndex>> {
-        let Some(parsed_file) = self
-            .state
-            .parse_db()
-            .package(package.0)
-            .and_then(|package| package.parsed_file(file))
-        else {
-            return Ok(None);
-        };
-        Ok(Some(parsed_file.line_index()?))
-    }
-
-    /// Returns the selected analysis context for a saved filesystem path.
-    pub fn file_context_for_path(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> anyhow::Result<Option<FileContext>> {
-        let path = path.as_ref();
-        let canonical_path = path
-            .canonicalize()
-            .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
-        self.file_context_for_source_path(&canonical_path)
-    }
-
     /// Returns the selected analysis context for an already-selected project-source identity.
     pub fn file_context_for_source_path(
         &self,
         source_path: &Path,
     ) -> anyhow::Result<Option<FileContext>> {
-        for file in self.state.parse_db().file_refs_for_path(source_path) {
-            if let Some(crate_ref) = self.state.crates_for_file(file.package, file.file).next() {
-                return Ok(Some(FileContext {
-                    crate_ref,
-                    file: file.file,
-                }));
+        let file = FileId::for_path(&self.query_context().interner(), source_path)?;
+        if let Some(crate_ref) = self.state.sources.first_module_crate(file) {
+            return Ok(Some(FileContext { crate_ref, file }));
+        }
+        for &crate_ref in &self.state.targets {
+            let target = target_declarations(self.query_context(), crate_ref)?;
+            if !target
+                .source_ownership
+                .value_ref(self.query_context())?
+                .known_owners(file)
+                .is_empty()
+            {
+                return Ok(Some(FileContext { crate_ref, file }));
             }
         }
-
+        for &crate_ref in &self.state.targets {
+            if !complete_source_ownership(self.query_context(), crate_ref)?
+                .owners(file)
+                .is_empty()
+            {
+                return Ok(Some(FileContext { crate_ref, file }));
+            }
+        }
         Ok(None)
     }
 
-    /// Returns crate contexts in this package whose module trees contain the file.
+    /// Return every target interpretation, including owners discovered through member includes.
     pub fn crates_for_file(
         &self,
         package: PackageSlot,
         file: FileId,
     ) -> anyhow::Result<Vec<CrateRef>> {
-        Ok(self.state.crates_for_file(package, file).collect())
+        let mut crates = Vec::new();
+        for (crate_ref, _) in self.state.workspace().targets_for_package(package) {
+            if !complete_source_ownership(self.query_context(), crate_ref)?
+                .owners(file)
+                .is_empty()
+            {
+                crates.push(crate_ref);
+            }
+        }
+        Ok(crates)
     }
 }

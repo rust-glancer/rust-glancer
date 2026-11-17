@@ -312,7 +312,6 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
                 Some(location) => CapturedTargetLocation::Ready(location),
                 None => CapturedTargetLocation::Unavailable,
             }),
-            CapturedNavigationSource::Unavailable => Ok(CapturedTargetLocation::Unavailable),
             CapturedNavigationSource::Open(open) => {
                 let CapturedOpenNavigationSource { path, source } = open.as_ref();
                 Ok(Self::location_for_open_target(
@@ -371,10 +370,7 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
         crate_ref: CrateRef,
         file: FileId,
     ) -> anyhow::Result<CapturedNavigationSource> {
-        let package = crate_ref.package;
-        let Some(saved_path) = self.snapshot.file_path(package, file) else {
-            return Ok(CapturedNavigationSource::Unavailable);
-        };
+        let saved_path = self.snapshot.sources().path(file)?;
         let Some(document) = self
             .documents
             .iter()
@@ -399,8 +395,7 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
 enum CapturedNavigationSource {
     /// The editor has no live coordinate space for this saved file.
     Unopened,
-    /// The selected project cannot provide the source needed to prove a safe location.
-    Unavailable,
+    /// The editor supplies current coordinates and their relationship to saved source.
     Open(Box<CapturedOpenNavigationSource>),
 }
 

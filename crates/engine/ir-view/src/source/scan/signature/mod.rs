@@ -29,7 +29,7 @@ use rg_ir_model::{
     CrateRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, Path, Span,
 };
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemSource as _, SourceSelection, TypePathContext};
 
 use self::{
     collector::{
@@ -125,8 +125,7 @@ impl SignatureSourceCandidate {
 pub(crate) struct SignatureSourceScanner<'view, 'db> {
     db: &'view IndexedViewDb<'db>,
     origin: DefMapRef,
-    file_id: Option<FileId>,
-    offset: Option<u32>,
+    selection: SourceSelection,
 }
 
 impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
@@ -139,8 +138,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         Self {
             db,
             origin: DefMapRef::Crate(crate_ref),
-            file_id: Some(file_id),
-            offset: Some(offset),
+            selection: SourceSelection::at(file_id, offset),
         }
     }
 
@@ -153,8 +151,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         Self {
             db,
             origin,
-            file_id: Some(file_id),
-            offset: Some(offset),
+            selection: SourceSelection::at(file_id, offset),
         }
     }
 
@@ -180,7 +177,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SignatureCompletionSite>> {
-        let items = ItemStoreQuery::new(db).semantic_items_for_origin(origin)?;
+        let items = db.source_items(origin, SourceSelection::at(file_id, offset))?;
         let collector = SignatureItemWalker::new(
             db,
             &items,
@@ -217,7 +214,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SignatureCompletionSite>> {
-        let items = ItemStoreQuery::new(db).semantic_items_for_origin(origin)?;
+        let items = db.source_items(origin, SourceSelection::at(file_id, offset))?;
         let collector = SignatureItemWalker::new(
             db,
             &items,
@@ -249,7 +246,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SignatureTypePathScope>> {
-        let items = ItemStoreQuery::new(db).semantic_items_for_origin(origin)?;
+        let items = db.source_items(origin, SourceSelection::at(file_id, offset))?;
         let Some(def_map) = db.def_map_for_origin(origin)? else {
             return Ok(None);
         };
@@ -303,19 +300,18 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         Self {
             db,
             origin: DefMapRef::Crate(crate_ref),
-            file_id,
-            offset: None,
+            selection: file_id.map_or(SourceSelection::All, SourceSelection::AllInFile),
         }
     }
 
     /// Collect the source facts owned by each semantic item family in the selected store.
     pub(crate) fn scan(self) -> anyhow::Result<Vec<SignatureSourceCandidate>> {
-        let items = ItemStoreQuery::new(self.db).semantic_items_for_origin(self.origin)?;
+        let items = self.db.source_items(self.origin, self.selection)?;
         let collector = SignatureItemWalker::new(
             self.db,
             &items,
             self.origin,
-            SignatureOccurrenceCollector::new(self.file_id, self.offset),
+            SignatureOccurrenceCollector::new(self.selection.file(), self.selection.offset()),
         )
         .scan()?;
         Ok(collector.finish())

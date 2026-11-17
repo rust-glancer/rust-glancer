@@ -1,6 +1,6 @@
 //! Symbol enumeration over indexed declaration trees.
 
-use std::fmt::Write as _;
+use std::{collections::HashSet, fmt::Write as _};
 
 use anyhow::{Context as _, Result};
 use rg_def_map::DefMapSource;
@@ -8,7 +8,7 @@ use rg_ir_model::{
     CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey, FileId, ModuleId,
     ModuleRef, SemanticItemRef, Span, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemSource as _, SemanticItemView, SourceSelection};
 use rg_source::ReadError;
 
 use crate::{
@@ -147,21 +147,30 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Ok((!path.is_empty()).then_some(path))
     }
 
-    /// Return module-owned items, optionally restricted to one file.
-    fn module_owned_items(
-        &self,
-        crate_ref: CrateRef,
-        file_id: Option<FileId>,
-    ) -> Result<Vec<IndexedItem>> {
+    /// Return module-owned items in one file.
+    fn module_owned_items(&self, crate_ref: CrateRef, file_id: FileId) -> Result<Vec<IndexedItem>> {
         let mut items = Vec::new();
-        for item in
-            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Crate(crate_ref))?
-        {
-            rg_std::check_cancel!(self.db, "symbol item collection");
-            if item.module_owner().is_none() {
+        let declarations = self.db.source_items(
+            DefMapRef::Crate(crate_ref),
+            SourceSelection::written_file(file_id),
+        )?;
+        let containers: HashSet<_> = declarations
+            .iter()
+            .filter(|item| item.source().file_id == file_id)
+            .filter_map(|item| match item.item() {
+                SemanticItemRef::Trait(owner) => Some(owner.member_store()),
+                SemanticItemRef::Impl(owner) => Some(owner.member_store()),
+                _ => None,
+            })
+            .collect();
+        // Members whose header is here are rendered under that header. An included member file
+        // has no written header, so its declarations become the roots of this file's outline.
+        for item in declarations {
+            if containers.contains(&item.item().store()) {
                 continue;
             }
-            if file_id.is_some_and(|file_id| item.source().file_id != file_id) {
+            rg_std::check_cancel!(self.db, "symbol item collection");
+            if item.source().file_id != file_id {
                 continue;
             }
             if let Some(item) = self.semantic_item(item)? {
@@ -394,7 +403,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             }
         }
 
-        for item in index.module_owned_items(crate_ref, Some(file_id))? {
+        for item in index.module_owned_items(crate_ref, file_id)? {
             if let Some(symbol) = self
                 .source_outline_item(&item, Some(file_id))
                 .context("project module outline item")?
@@ -437,30 +446,31 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
     /// Search compact names before acquiring declarations for rendering the matches.
     pub fn workspace_symbols(&self, query: &str) -> Result<Vec<IndexedSymbolEntry>> {
-        let needle = query.to_lowercase();
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
-        for krate in index.included_crates()? {
-            for candidate in self.db.semantic_ir.symbol_names(krate)? {
-                rg_std::check_cancel!(self.db, "workspace symbol discovery");
-                if !candidate.name.to_lowercase().contains(&needle) {
-                    continue;
+        let candidates = self.db.semantic_ir.search_symbols(
+            &index.included_crates()?,
+            query,
+            self.db.cancellation(),
+        )?;
+        for candidate in candidates {
+            let declaration_ref = candidate.declaration;
+            let container_ref = candidate.container;
+            rg_std::check_cancel!(self.db, "workspace symbol rendering");
+            let Some(declaration) = self.declaration(declaration_ref)? else {
+                continue;
+            };
+            let container = if let Some(container_ref) = container_ref {
+                match self.declaration(container_ref)? {
+                    Some(parent) => self.child_container_name(&parent)?,
+                    None => None,
                 }
-                let Some(declaration) = self.declaration(candidate.declaration)? else {
-                    continue;
-                };
-                let container = if let Some(container) = candidate.container {
-                    match self.declaration(container)? {
-                        Some(parent) => self.child_container_name(&parent)?,
-                        None => None,
-                    }
-                } else if let DeclarationRef::Module(module) = candidate.declaration {
-                    index.module_container_name(module)?
-                } else {
-                    None
-                };
-                symbols.push(IndexedSymbolEntry::new(declaration, container));
-            }
+            } else if let DeclarationRef::Module(module) = declaration_ref {
+                index.module_container_name(module)?
+            } else {
+                None
+            };
+            symbols.push(IndexedSymbolEntry::new(declaration, container));
         }
         Ok(symbols)
     }

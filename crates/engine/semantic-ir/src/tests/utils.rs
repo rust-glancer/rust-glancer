@@ -6,9 +6,8 @@ use rg_ir_model::{
     PackageSlot, Path, SemanticItemRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
-use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_std::UniqueVec;
-use rg_workspace::TargetKind;
+use rg_workspace::{CargoTarget, Package, TargetKind, WorkspaceMetadata};
 
 use crate::{
     ItemLookupQuery, ItemReader, ItemResolutionQuery, ItemStoreQuery, SemanticItemView,
@@ -103,15 +102,15 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        Self::sorted_packages(self.project.parse_db())
+        Self::sorted_packages(self.project.workspace())
             .into_iter()
             .map(|(package_slot, package)| {
                 let crate_dumps = Self::sorted_targets(package)
                     .into_iter()
-                    .map(|target| {
+                    .map(|(target_id, target)| {
                         let crate_ref = CrateRef {
                             package: PackageSlot(package_slot),
-                            crate_id: CrateId(target.id.0),
+                            crate_id: CrateId(target_id),
                         };
                         CrateSemanticIrSnapshot {
                             project: self.project,
@@ -125,21 +124,21 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                format!("package {}\n\n{crate_dumps}", package.package_name())
+                format!("package {}\n\n{crate_dumps}", package.name)
             })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
 
-    fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
-        let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
-        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+    fn sorted_packages(workspace: &WorkspaceMetadata) -> Vec<(usize, &Package)> {
+        let mut packages = workspace.packages().iter().enumerate().collect::<Vec<_>>();
+        packages.sort_by(|left, right| left.1.name.cmp(&right.1.name));
         packages
     }
 
-    fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
-        let mut targets = package.targets().iter().collect::<Vec<_>>();
-        targets.sort_by(|left, right| {
+    fn sorted_targets(package: &Package) -> Vec<(usize, &CargoTarget)> {
+        let mut targets = package.analyzed_targets().enumerate().collect::<Vec<_>>();
+        targets.sort_by(|(_, left), (_, right)| {
             (
                 left.kind.sort_order(),
                 left.name.as_str(),
@@ -174,13 +173,9 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_query(&self, query: &SemanticQuery) -> String {
-        let (package, target) = self
+        let (crate_ref, target) = self
             .project
             .target(query.package_name, query.target_kind.clone());
-        let crate_ref = CrateRef {
-            package,
-            crate_id: CrateId(target.id.0),
-        };
         let module_id = self.module_id(crate_ref, query.module_path);
         let path = Self::parse_path(query.path);
         let definitions = self.project.definitions();
@@ -441,24 +436,19 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let crate_ref = module_ref.origin.origin_crate();
         let package = self
             .project
-            .parse_db()
+            .workspace()
             .packages()
             .get(crate_ref.package.0)
             .expect("package slot should exist while rendering query");
-        let target = package
-            .target(
-                self.project
-                    .definitions()
-                    .crate_data(crate_ref)
-                    .expect("fixture declarations should load")
-                    .expect("semantic crate should exist while rendering")
-                    .cargo_target(),
-            )
-            .expect("target id should exist while rendering query");
+        let target = self
+            .project
+            .workspace()
+            .target(crate_ref)
+            .expect("fixture target should exist");
 
         format!(
             "{}[{}]::{}",
-            package.package_name(),
+            package.name,
             target.kind,
             self.module_path(module_ref),
         )

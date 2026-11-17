@@ -12,6 +12,7 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{
     AssociatedItemStore, ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView,
+    SourceSelection,
 };
 use rg_source::ReadError;
 use rg_std::{CancellationToken, Shrink as _, UniqueVec};
@@ -110,7 +111,6 @@ impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource
             DefMapRef::Crate(_) => self.semantic_ir.associated_items(store),
             DefMapRef::Body(body) => Ok(self
                 .body_local_items(body)
-                .map(BodyLocalItems::item_store)
                 .and_then(|items| items.associated_items(store))),
         }
     }
@@ -120,8 +120,7 @@ impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource
             DefMapRef::Crate(_) => self.semantic_ir.item(item),
             DefMapRef::Body(body) => Ok(self
                 .body_local_items(body)
-                .map(BodyLocalItems::item_store)
-                .and_then(|items| items.semantic_item_view(item))),
+                .and_then(|items| items.item(item))),
         }
     }
 
@@ -142,14 +141,44 @@ impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource
         }
     }
 
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'source>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic_ir.scope_items(origin),
+            DefMapRef::Body(body) => Ok(self
+                .body_local_items(body)
+                .map(BodyLocalItems::item_store)
+                .map(|items| items.scope_items().collect())
+                .unwrap_or_default()),
+        }
+    }
+
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'source>>, ReadError> {
         match origin {
             DefMapRef::Crate(_) => self.semantic_ir.all_items(origin),
             DefMapRef::Body(body) => Ok(self
                 .body_local_items(body)
-                .map(BodyLocalItems::item_store)
-                .map(|items| items.semantic_items().collect())
+                .map(|items| items.all_items().collect())
                 .unwrap_or_default()),
+        }
+    }
+
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'source>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic_ir.source_items(origin, selection),
+            DefMapRef::Body(body) => Ok(self
+                .body_local_items(body)
+                .into_iter()
+                .flat_map(BodyLocalItems::all_items)
+                .filter(|item| {
+                    selection
+                        .file()
+                        .is_none_or(|file| item.source().file_id == file)
+                })
+                .collect()),
         }
     }
 }

@@ -11,23 +11,23 @@ use std::{
 };
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
-use rg_ir_model::{CrateRef, DefId, FileId, LocalDefId, ModuleId, ModuleRef};
-use rg_parse::{CargoTargetId, ModuleFileContext};
+use rg_ir_model::{CrateRef, DefId, FileId, ModuleId, ModuleRef};
+use rg_parse::ModuleFileContext;
 use rg_std::NativeOsString;
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
 
 use super::{
     macros::{
-        MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-        MacroUseImport, PendingGeneratedModule, PendingInclude, PendingMacroExpansionLimitReport,
-        TextualMacroScopes,
+        AssociatedItemInput, AssociatedItemOwner, MacroCallOrigin, MacroCallSite, MacroDirective,
+        MacroDirectiveState, MacroScopeData, PendingGeneratedModule, PendingInclude,
+        PendingMacroExpansionLimitReport,
     },
     output::CrateBuildOutput,
 };
 use crate::{
-    CrateData, DefMapBuilder, ItemScopeBuilder, MacroExpansionLimitReport, MacroSourceFileRequest,
-    NameBinding, Namespace,
+    CrateData, DefMapBuilder, GeneratedItemStore, ItemScopeBuilder, MacroExpansionLimitReport,
+    MacroSourceFileRequest, NameBinding, Namespace,
 };
 
 /// Collects one crate's declarations and build-only macro work before freezing.
@@ -36,7 +36,6 @@ use crate::{
 /// Crate-wide context and pending macro work stay here.
 pub(crate) struct CrateBuilder {
     pub(crate) crate_ref: CrateRef,
-    pub(crate) cargo_target: CargoTargetId,
     pub(crate) crate_name: String,
     pub(crate) root_module: ModuleId,
     pub(crate) edition: RustEdition,
@@ -49,12 +48,11 @@ pub(crate) struct CrateBuilder {
     /// source files. Frozen DefMaps retain only the selected `definition_file` ids.
     pub(crate) known_module_files: Arc<KnownModuleFiles>,
     pub(crate) def_map_builder: DefMapBuilder,
+    pub(crate) generated_items: GeneratedItemStore,
     pub(crate) extern_prelude: ExternPreludeBuilder,
     pub(crate) prelude: Option<ModuleRef>,
-    pub(crate) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
-    pub(crate) textual_macro_scopes: TextualMacroScopes,
-    /// Legacy macro imports sorted by declaration order, including generated declarations.
-    pub(crate) macro_use_imports: Vec<MacroUseImport>,
+    pub(crate) member_inputs: HashMap<AssociatedItemOwner, AssociatedItemInput>,
+    pub(crate) macro_scopes: MacroScopeData,
     pub(crate) macro_directives: Vec<MacroDirective>,
     /// Requests from the latest expansion batch, cleared after source loading.
     pub(crate) macro_source_file_requests: Vec<MacroSourceFileRequest>,
@@ -70,8 +68,9 @@ pub(crate) struct CrateBuilder {
 }
 
 impl CrateBuilder {
-    /// Move settled data into the result and discard build-only queues and textual macro state.
+    /// Move settled data into the result and discard build-only work queues.
     /// Generated declarations remain separate because Semantic IR still needs their item syntax.
+    /// Deferred owners retain the textual scope needed to resolve their unexpanded member calls.
     pub(crate) fn finish(self, package_name: &str) -> CrateBuildOutput {
         let macro_expansion_limit =
             self.macro_expansion_limit
@@ -88,20 +87,20 @@ impl CrateBuilder {
             .iter()
             .find(|value| value.key() == "target_pointer_width")
             .and_then(|value| value.value().parse().ok());
-        let (def_map, generated_items) = self.def_map_builder.into_parts();
         let data = CrateData::new(
-            self.cargo_target,
             self.target_kind,
             target_pointer_width,
             self.crate_name,
             Some(self.root_module),
             self.extern_prelude.freeze(),
             self.prelude,
-            def_map,
+            self.def_map_builder.build(),
         );
         CrateBuildOutput {
             data,
-            generated_items,
+            generated_items: self.generated_items,
+            macro_scopes: self.macro_scopes,
+            member_inputs: self.member_inputs,
             macro_expansion_limit,
         }
     }

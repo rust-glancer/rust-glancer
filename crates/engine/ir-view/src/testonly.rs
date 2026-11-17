@@ -3,7 +3,6 @@ use rg_ir_model::{
     DefMapRef, FunctionRef, GenericParamRef, ItemOwner, ModuleRef, TraitDefRef, TypeDefId,
     TypeDefRef,
 };
-use rg_parse::ParseDb;
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
@@ -13,13 +12,12 @@ use rg_ty::{
 use crate::{IndexedViewDb, ty::IndexedType};
 
 /// Show the compiler type details needed by inference snapshots using the same readers as the query.
-pub fn render_indexed_type(db: &IndexedViewDb<'_>, parse: &ParseDb, ty: &IndexedType) -> String {
-    TypeRenderer { db, parse }.render_ty(ty.raw())
+pub fn render_indexed_type(db: &IndexedViewDb<'_>, ty: &IndexedType) -> String {
+    TypeRenderer { db }.render_ty(ty.raw())
 }
 
 struct TypeRenderer<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
-    parse: &'a ParseDb,
 }
 
 impl TypeRenderer<'_, '_> {
@@ -289,26 +287,21 @@ impl TypeRenderer<'_, '_> {
         }
 
         let crate_ref = module_ref.origin.origin_crate();
-        let package = self
-            .parse
-            .packages()
-            .get(crate_ref.package.0)
-            .expect("package slot should exist while rendering view fixture module");
-        let cargo_target = self
+        let package_name = self
+            .db
+            .package_name(crate_ref.package)
+            .expect("fixture package should exist");
+        let data = self
             .db
             .def_map
             .crate_data(crate_ref)
             .expect("fixture declarations should load")
-            .expect("semantic crate should exist while rendering view fixture module")
-            .cargo_target();
-        let target = package
-            .target(cargo_target)
-            .expect("target id should exist while rendering view fixture module");
+            .expect("fixture target should exist");
 
         format!(
             "{}[{}]::{}",
-            package.package_name(),
-            target.kind,
+            package_name,
+            data.target_kind(),
             self.module_path(module_ref),
         )
     }

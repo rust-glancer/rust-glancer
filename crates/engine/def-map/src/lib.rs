@@ -43,8 +43,9 @@ pub use self::{
         ExpandedBodyMacro,
     },
     build::{
-        CrateBuildOutput, CrateDependencies, ImportCollectionEnv, ImportCollectionOutput,
-        ImportCollector, ModuleImportInput, ResolvedModuleImports,
+        AssociatedItemInput, AssociatedItemOwner, CrateBuildOutput, CrateDependencies,
+        ExpandedAssociatedItems, ImportCollectionEnv, ImportCollectionOutput, ImportCollector,
+        MacroScopeData, ModuleImportInput, ResolvedModuleImports,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     item_scope::{ItemScope, ItemScopeBuilder, NameBindings, NameBindingsView},
@@ -68,8 +69,8 @@ pub use self::{
     },
     source::{
         BodyItemSourceRef, GeneratedExpansionLocations, GeneratedItemRef, GeneratedItemStore,
-        GeneratedLocation, GeneratedLocations, GeneratedSourceId, GeneratedSourceStore, ItemSource,
-        ItemSourceKind,
+        GeneratedLocation, GeneratedLocations, GeneratedSourceId, GeneratedSourceStore,
+        GeneratedSourceStoreId, ItemSource, ItemSourceKind,
     },
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };

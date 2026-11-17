@@ -14,7 +14,6 @@ use std::{
     path::{Component, Path},
 };
 
-use rg_parse::ParseDb;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::SavedFileChange;
@@ -28,7 +27,7 @@ pub(super) enum WorkspaceGraphChanges {
 impl WorkspaceGraphChanges {
     pub(super) fn check(
         workspace: &WorkspaceMetadata,
-        parse: &ParseDb,
+        known_source: bool,
         cargo_metadata_config: &CargoMetadataConfig,
         change: &SavedFileChange,
     ) -> Self {
@@ -62,17 +61,16 @@ impl WorkspaceGraphChanges {
         // A deleted auto-discovered target has to leave the Cargo graph before its root can
         // be queried again. Ordinary modules can disappear without changing Cargo metadata.
         if !path.is_file()
-            && parse.workspace_packages().any(|package| {
-                package.targets().iter().any(|target| {
-                    target.src_path.starts_with(path)
-                        || package.file_path(target.root_file) == Some(path)
-                })
+            && workspace.workspace_packages().any(|package| {
+                package
+                    .analyzed_targets()
+                    .any(|target| target.src_path.starts_with(path))
             })
         {
             return Self::Changed;
         }
 
-        if path.extension() != Some(OsStr::new("rs")) || parse.contains_file_path(path) {
+        if path.extension() != Some(OsStr::new("rs")) || known_source {
             return Self::Unchanged;
         }
 

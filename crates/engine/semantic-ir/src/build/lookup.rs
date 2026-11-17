@@ -5,7 +5,10 @@ use std::{iter, sync::Arc};
 use rg_ir_model::CrateRef;
 use rg_source::QueryContext;
 
-use crate::{ItemLookupShard, LookupAnswer, LookupKeys, LookupQuestion, target_declarations};
+use crate::{
+    CrateItemSource, ItemLookupShard, LookupAnswer, LookupKeys, LookupQuestion,
+    TargetDeclarationReader, target_declarations,
+};
 
 /// This operation-local preparation shares repeated visibility and lookup-key reads. Every
 /// candidate answer observes this query, then acquires its selected shards through its own frame.
@@ -28,9 +31,9 @@ fn lookup_preparation(
     use_site: CrateRef,
 ) -> ajika::Result<LookupPreparation> {
     let declarations = target_declarations(db, use_site)?;
-    let env = declarations.lookup_env.value_ref(db)?;
+    let visible = declarations.visible_crates.value_ref(db)?;
     let mut indexes = Vec::new();
-    for &krate in env.visible_crates() {
+    for &krate in visible {
         db.check_cancelled()?;
         let declarations = target_declarations(db, krate)?;
         indexes.push(PreparedLookupIndex {
@@ -48,7 +51,8 @@ pub(super) fn lookup_candidates(
     question: LookupQuestion,
 ) -> ajika::Result<LookupAnswer> {
     let preparation = lookup_preparation(db, use_site)?;
-    let mut answer = question.answer(iter::empty());
+    let reader = TargetDeclarationReader::for_target(db, use_site)?;
+    let mut answer = question.answer(iter::empty(), |_| Ok(None))?;
     for target in &preparation.indexes {
         db.check_cancelled()?;
         let selected = question.shards(&target.keys);
@@ -59,7 +63,7 @@ pub(super) fn lookup_candidates(
         for &shard in &selected {
             shards.push(target.shards[shard].value_ref(db)?);
         }
-        answer.extend(question.answer(shards.into_iter()));
+        answer.extend(question.answer(shards.into_iter(), |owner| reader.associated_items(owner))?);
     }
     Ok(answer)
 }

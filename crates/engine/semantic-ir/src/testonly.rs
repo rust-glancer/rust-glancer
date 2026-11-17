@@ -1,19 +1,15 @@
 use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMap, DefinitionReader,
 };
-use rg_ir_model::{CrateId, CrateRef, DefMapRef, PackageSlot};
-use rg_parse::{CargoTarget, ParseDb};
+use rg_ir_model::{CrateRef, DefMapRef, PackageSlot};
 use rg_source::{QueryContext, QueryDatabase};
-use rg_workspace::{TargetKind, WorkspaceMetadata, testonly::WorkspaceFixture};
+use rg_workspace::{CargoTarget, TargetKind, WorkspaceMetadata, testonly::WorkspaceFixture};
 
-use crate::{
-    CrateItemSource, ItemReader, SemanticItemView, TargetDeclarationReader, target_declarations,
-};
+use crate::{CrateItemSource, ItemReader, SemanticItemView, TargetDeclarationReader};
 
 /// In-memory queries over fixture sources. The providers own declaration construction.
 pub struct SemanticIrFixture {
     database: QueryDatabase,
-    parse: ParseDb,
     targets: Vec<CrateRef>,
     workspace: WorkspaceFixture,
 }
@@ -36,27 +32,8 @@ impl SemanticIrFixture {
         let targets = database
             .update_inputs(|update| CrateDependencies::write_inputs(workspace.metadata(), update))
             .expect("fixture target inputs should install");
-        let inputs = database.inputs().clone();
-        // Source routing comes from the same declarations used by later fixture queries.
-        let parse = database
-            .run(|db| {
-                let metadata = targets
-                    .iter()
-                    .map(|&target| target_declarations(db, target)?.metadata.value_ref(db))
-                    .collect::<Result<Vec<_>, _>>()?;
-                ParseDb::from_target_manifests(
-                    workspace.metadata(),
-                    &inputs,
-                    targets
-                        .iter()
-                        .copied()
-                        .zip(metadata.iter().map(|metadata| &metadata.sources)),
-                )
-            })
-            .expect("fixture source routing should build");
         Self {
             database,
-            parse,
             targets,
             workspace,
         }
@@ -71,7 +48,6 @@ impl SemanticIrFixture {
                 Ok(observe(SemanticIrView {
                     db,
                     declarations: &declarations,
-                    parse: &self.parse,
                     workspace: self.workspace.metadata(),
                     targets: &self.targets,
                 }))
@@ -84,7 +60,6 @@ impl SemanticIrFixture {
 pub struct SemanticIrView<'db> {
     db: &'db QueryContext<'db>,
     declarations: &'db TargetDeclarationReader<'db>,
-    parse: &'db ParseDb,
     workspace: &'db WorkspaceMetadata,
     targets: &'db [CrateRef],
 }
@@ -104,10 +79,6 @@ impl<'db> SemanticIrView<'db> {
 
     pub fn items(&self) -> ItemReader<'db> {
         ItemReader(self.declarations)
-    }
-
-    pub fn parse_db(&self) -> &'db ParseDb {
-        self.parse
     }
 
     pub fn workspace(&self) -> &'db WorkspaceMetadata {
@@ -133,33 +104,29 @@ impl<'db> SemanticIrView<'db> {
 
     pub fn package_slot_by_name(&self, name: &str) -> PackageSlot {
         PackageSlot(
-            self.parse
+            self.workspace
                 .packages()
                 .iter()
-                .position(|package| package.package_name() == name)
+                .position(|package| package.name == name)
                 .unwrap_or_else(|| panic!("fixture package {name} should exist")),
         )
     }
 
-    pub fn target(&self, name: &str, kind: TargetKind) -> (PackageSlot, &'db CargoTarget) {
+    pub fn target(&self, name: &str, kind: TargetKind) -> (CrateRef, &'db CargoTarget) {
         let slot = self.package_slot_by_name(name);
-        let mut targets = self.parse.packages()[slot.0]
-            .targets()
-            .iter()
-            .filter(|target| target.kind == kind);
+        let mut targets = self
+            .workspace
+            .targets_for_package(slot)
+            .filter(|(_, target)| target.kind == kind);
         let target = targets.next().expect("fixture target should exist");
         assert!(
             targets.next().is_none(),
             "fixture target selection should be unique"
         );
-        (slot, target)
+        target
     }
 
     pub fn crate_ref(&self, name: &str, kind: TargetKind) -> CrateRef {
-        let (package, target) = self.target(name, kind);
-        CrateRef {
-            package,
-            crate_id: CrateId(target.id.0),
-        }
+        self.target(name, kind).0
     }
 }

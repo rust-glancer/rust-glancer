@@ -4,7 +4,7 @@
 //! answer, the runtime owns the rest of the expansion lifecycle: compile the definition, reuse or
 //! prepare cached expansion work, execute pending work, and update the expansion cache.
 
-use std::time::Duration;
+use std::{sync::Mutex, time::Duration};
 
 use anyhow::Context as _;
 use rg_ir_model::LocalDefRef;
@@ -156,6 +156,59 @@ impl MacroExpansionRuntime {
 impl Default for MacroExpansionRuntime {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Operation-local sharing for independent owners expanding macros in parallel.
+///
+/// Resolution still happens in each caller's query frame. Only compilation and expansion results
+/// are shared; the expensive matcher runs outside the cache lock.
+/// Callers must keep the runtime within one source revision: compiled definitions are keyed by
+/// their IDs, and the same ID can have a different macro body after an edit. The runtime itself
+/// has no query context or source reads with which to detect that change.
+pub struct SharedMacroExpansionRuntime(Mutex<MacroExpansionRuntime>);
+
+impl SharedMacroExpansionRuntime {
+    pub fn new() -> Self {
+        Self(Mutex::new(MacroExpansionRuntime::new()))
+    }
+
+    /// Reuse cached work or expand on the calling thread. Parallelism comes from the callers;
+    /// this path does not start another worker pool.
+    pub fn expand(&self, request: MacroExpansionRequest<'_>) -> Option<ExpansionSyntax> {
+        let prepared = self
+            .0
+            .lock()
+            .expect("macro cache lock poisoned")
+            .prepare_expansion(request);
+        match prepared.expansion {
+            PreparedMacroExpansion::Syntax(syntax) => Some(syntax),
+            PreparedMacroExpansion::Failed => None,
+            PreparedMacroExpansion::Pending(pending) => {
+                // Release the cache lock while matching. Two callers can compute the same miss,
+                // but publishing either result is safe: both used the same expansion inputs.
+                let expanded = pending.work.expand_syntax();
+                self.0
+                    .lock()
+                    .expect("macro cache lock poisoned")
+                    .cache
+                    .insert_expansion(expanded.key, expanded.generated_syntax.clone());
+                expanded.generated_syntax
+            }
+        }
+    }
+}
+
+impl Default for SharedMacroExpansionRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for SharedMacroExpansionRuntime {
+    fn eq(&self, other: &Self) -> bool {
+        // A transient service has identity, not a semantic answer to compare across revisions.
+        std::ptr::eq(self, other)
     }
 }
 

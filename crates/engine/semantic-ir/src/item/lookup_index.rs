@@ -1,9 +1,13 @@
-//! Build the complete candidate index for one semantic crate.
+//! Build header and written-name candidate hints for one semantic crate.
 //!
 //! Candidates belong to their own ItemStore; visible dependencies keep their own indexes.
 //! Construction writes candidates directly into shards, then derives the keys used to select
 //! those shards. Production publishes keys and shards independently and drops the complete index.
 //! In-memory callers use the same key selection against their owned shards.
+//!
+//! For `impl Bag { fn len(&self) { ... } }`, the name index records which impl may provide `len`.
+//! It does not need to construct that function's signature. An impl containing `methods!()` also
+//! enters the macro fallback lists, since an unseen expansion may provide any requested name.
 
 use std::{
     array,
@@ -12,13 +16,17 @@ use std::{
 };
 
 use rg_ir_model::{
-    AssocItemId, FunctionRef, ImplRef, Mutability, PrimitiveTy, TraitImplRef, TypeDefRef,
+    AssocItemId, ImplRef, ItemStoreId, ItemStoreRef, Mutability, PrimitiveTy, TraitImplRef,
+    TypeDefRef,
 };
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::lookup_shard::{IndexedImplRef, IndexedTraitImplRef};
-use crate::{ItemLookupShard, ItemStore, LookupKeys, LookupQuestion};
+use super::{
+    AssociatedItemHints,
+    lookup_shard::{IndexedImplRef, IndexedTraitImplRef},
+};
+use crate::{AssociatedItemStore, ItemLookupShard, ItemStore, LookupKeys, LookupQuestion};
 
 // Broad candidate lists use shard zero. Keyed tables share the hash used by lookup questions.
 const SHARD_COUNT: usize = 16;
@@ -81,6 +89,43 @@ impl ItemLookupIndex {
     pub fn build_from_store(
         store: &ItemStore,
         self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+        members: &HashMap<ItemStoreId, AssociatedItemStore>,
+    ) -> Self {
+        Self::build(store, self_heads, |owner| {
+            let mut hints = AssociatedItemHints::default();
+            if let Some(members) = members.get(&owner.id) {
+                for item in members.items() {
+                    match item {
+                        AssocItemId::Function(id) => hints
+                            .functions
+                            .extend(members.function_data(*id).map(|data| data.name.clone())),
+                        AssocItemId::Const(id) => hints
+                            .consts
+                            .extend(members.const_data(*id).map(|data| data.name.clone())),
+                        AssocItemId::TypeAlias(_) => hints.has_types = true,
+                    }
+                }
+            }
+            hints
+        })
+    }
+
+    /// Saved targets supply hints from immediate member syntax. Building this index must not
+    /// acquire the member stores it will later help select.
+    pub(crate) fn build_from_headers(
+        store: &ItemStore,
+        self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+        mut hints: HashMap<ItemStoreId, AssociatedItemHints>,
+    ) -> Self {
+        Self::build(store, self_heads, |owner| {
+            hints.remove(&owner.id).unwrap_or_default()
+        })
+    }
+
+    fn build(
+        store: &ItemStore,
+        self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+        mut hints_for: impl FnMut(ItemStoreRef) -> AssociatedItemHints,
     ) -> Self {
         let mut shards: [ItemLookupShard; SHARD_COUNT] =
             array::from_fn(|_| ItemLookupShard::default());
@@ -89,66 +134,41 @@ impl ItemLookupIndex {
         // name `convert` should select `Convert` before its impl headers are compared with value's
         // type. `value./* completion */` instead starts from every trait containing a function.
         for (trait_ref, _) in store.traits_with_refs() {
-            let Some(members) = store.associated_items(trait_ref.member_store()) else {
-                continue;
-            };
-            if !members.items().is_empty() {
+            let hints = hints_for(trait_ref.member_store());
+            if hints.has_macros
+                || hints.has_types
+                || !hints.consts.is_empty()
+                || !hints.functions.is_empty()
+            {
                 shards[0].traits_with_associated_items.push(trait_ref);
             }
+            if hints.has_macros || !hints.functions.is_empty() {
+                shards[0].traits_with_functions.push(trait_ref);
+            }
+            if hints.has_macros {
+                shards[0].traits_with_macros.push(trait_ref);
+            }
             let trait_shard = Self::shard_for(&trait_ref);
-            // Empty entries distinguish a known trait with no candidates from an unknown trait.
-            shards[trait_shard]
-                .trait_functions_by_trait
-                .entry(trait_ref)
-                .or_default();
+            shards[trait_shard].declared_traits.push(trait_ref);
             shards[trait_shard]
                 .trait_impls_by_trait
                 .entry(trait_ref)
                 .or_default();
-            shards[trait_shard]
-                .trait_functions_by_trait_and_name
-                .entry(trait_ref)
-                .or_default();
-            for item in members.items() {
-                match item {
-                    AssocItemId::Function(id) => {
-                        let function_ref = FunctionRef::new(trait_ref.member_store(), *id);
-                        shards[trait_shard]
-                            .trait_functions_by_trait
-                            .get_mut(&trait_ref)
-                            .expect("trait functions initialized above")
-                            .push(function_ref);
-                        shards[0].traits_with_functions.push(trait_ref);
-                        if let Some(function_data) = members.function_data(*id) {
-                            shards[Self::shard_for(&function_data.name)]
-                                .traits_by_item_name
-                                .entry(function_data.name.clone())
-                                .or_default()
-                                .functions
-                                .push(trait_ref);
-                            shards[trait_shard]
-                                .trait_functions_by_trait_and_name
-                                .get_mut(&trait_ref)
-                                .expect("trait function names initialized above")
-                                .entry(function_data.name.clone())
-                                .or_default()
-                                .push(function_ref);
-                        }
-                    }
-                    AssocItemId::Const(id) => {
-                        if let Some(const_data) = members.const_data(*id) {
-                            shards[Self::shard_for(&const_data.name)]
-                                .traits_by_item_name
-                                .entry(const_data.name.clone())
-                                .or_default()
-                                .consts
-                                .push(trait_ref);
-                        }
-                    }
-                    // Associated type completion uses the trait-wide surface above. Named type
-                    // projection follows written trait bounds, so it needs no reverse name index.
-                    AssocItemId::TypeAlias(_) => {}
-                }
+            for name in hints.functions {
+                shards[Self::shard_for(&name)]
+                    .traits_by_item_name
+                    .entry(name)
+                    .or_default()
+                    .functions
+                    .push(trait_ref);
+            }
+            for name in hints.consts {
+                shards[Self::shard_for(&name)]
+                    .traits_by_item_name
+                    .entry(name)
+                    .or_default()
+                    .consts
+                    .push(trait_ref);
             }
         }
 
@@ -167,7 +187,7 @@ impl ItemLookupIndex {
                         .or_default()
                         .push(impl_ref);
                     shard
-                        .inherent_functions_by_type_and_name
+                        .inherent_function_owners_by_type_and_name
                         .entry(self_ty)
                         .or_default();
                 } else if impl_data.resolved_self_ty.is_empty() {
@@ -179,31 +199,30 @@ impl ItemLookupIndex {
                     continue;
                 }
 
-                // Nominal functions share their receiver's shard; structural functions route by
-                // name. Both families can answer named lookup before callers open impl headers.
-                let Some(members) = store.associated_items(impl_ref.member_store()) else {
-                    continue;
-                };
-                for item in members.items() {
-                    if let AssocItemId::Function(id) = item {
-                        let function_ref = FunctionRef::new(impl_ref.member_store(), *id);
-                        let Some(function_data) = members.function_data(*id) else {
-                            continue;
-                        };
-                        let functions_by_name = if let Some(self_ty) = self_ty {
-                            shards[Self::shard_for(&self_ty)]
-                                .inherent_functions_by_type_and_name
-                                .get_mut(&self_ty)
-                                .expect("inherent receiver initialized above")
-                        } else {
-                            &mut shards[Self::shard_for(&function_data.name)]
-                                .structural_inherent_functions_by_name
-                        };
-                        functions_by_name
-                            .entry(function_data.name.clone())
+                // Written names select owners, not member IDs. Macro-bearing owners stay in
+                // a separate fallback lane because their output names do not exist yet.
+                let hints = hints_for(impl_ref.member_store());
+                if hints.has_macros {
+                    if let Some(self_ty) = self_ty {
+                        shards[Self::shard_for(&self_ty)]
+                            .inherent_macro_impls_by_type
+                            .entry(self_ty)
                             .or_default()
-                            .push(function_ref);
+                            .push(impl_ref);
+                    } else {
+                        shards[0].structural_macro_impls.push(impl_ref);
                     }
+                }
+                for name in hints.functions {
+                    let owners = if let Some(self_ty) = self_ty {
+                        shards[Self::shard_for(&self_ty)]
+                            .inherent_function_owners_by_type_and_name
+                            .entry(self_ty)
+                            .or_default()
+                    } else {
+                        &mut shards[Self::shard_for(&name)].structural_function_owners_by_name
+                    };
+                    owners.entry(name).or_default().push(impl_ref);
                 }
             } else {
                 let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {

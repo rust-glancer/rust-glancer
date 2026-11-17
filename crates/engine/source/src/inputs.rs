@@ -40,10 +40,6 @@ impl SourceInput {
             .map_err(ajika::Error::application)
     }
 
-    pub fn captured(inputs: &ajika::Inputs, file: FileId) -> Option<Arc<SourceEntry>> {
-        inputs.peek(Self::CAPTURE, &file)?.ok()
-    }
-
     pub fn evict_saved_text(inputs: &ajika::Inputs) {
         for (_, entry) in inputs.entries(Self::CAPTURE) {
             if let Ok(entry) = entry {
@@ -52,30 +48,9 @@ impl SourceInput {
         }
     }
 
-    /// Release captures of readable files that no target names anymore. Unreadable captures
-    /// may still explain why an optional include was skipped, so retain those observations.
-    pub fn retire_detached_sources(
-        database: &mut crate::QueryDatabase,
-        retained: impl Fn(FileId) -> bool,
-    ) -> ajika::Result<()> {
-        let detached = database
-            .inputs()
-            .entries(Self::CAPTURE)
-            .into_iter()
-            .filter_map(|(file, entry)| (entry.is_ok() && !retained(file)).then_some(file))
-            .collect::<Vec<_>>();
-        if !detached.is_empty() {
-            database.update_inputs(|update| {
-                for file in detached {
-                    Self::at(file).forget_all(update);
-                }
-                Ok(())
-            })?;
-        }
-        Ok(())
-    }
-
     /// Refresh affected source captures and path probes, including paths previously observed absent.
+    /// Read changed captures at this host boundary so publication can compare source revisions
+    /// without demanding any semantic owner. Forgetting them would hide edits to lazy includes.
     pub fn refresh_saved_paths(
         inputs: &ajika::Inputs,
         update: &mut ajika::InputUpdate,
@@ -92,18 +67,18 @@ impl SourceInput {
                 Err(_) => affected(&file.path(interner)?),
             };
             if changed {
-                Self::at(file).forget_all(update);
+                Self::at(file).set_capture(update, Self::read_capture(file, interner)?)?;
             }
         }
 
         let mut presence_changed = false;
         for (key, resolved) in inputs.entries(SourcePresence::RESOLVED_FILE) {
             let canonical = resolved.map(|file| file.path(interner)).transpose()?;
-            // A rename notification can name only the destination. Retire a known source
-            // that disappeared so a module can select its alternate path in this candidate.
+            // A rename notification can name only the destination. Capture disappearance too,
+            // so a module can select its alternate path in this candidate.
             let disappeared = canonical.as_ref().is_some_and(|path| !path.is_file());
             if disappeared && let Some(file) = resolved {
-                Self::at(file).forget_all(update);
+                Self::at(file).set_capture(update, Self::read_capture(file, interner)?)?;
             }
             let spelling = native_path(key.clone())?;
             if disappeared || affected(&spelling) || canonical.as_deref().is_some_and(affected) {
@@ -121,6 +96,32 @@ impl SourceInput {
             }
         }
         Ok(presence_changed)
+    }
+
+    fn read_capture(
+        file: FileId,
+        interner: &ajika::Interner,
+    ) -> ajika::Result<Result<Arc<SourceEntry>, Arc<SourceError>>> {
+        let path = file.path(interner)?;
+        Ok(read_source_text(&path)
+            .map(|text| Arc::new(SourceEntry::saved(path, text)))
+            .map_err(Arc::new))
+    }
+
+    /// Compare explicit input updates before rebuilding queries. Query initialization is not a
+    /// source edit: a lazy include may be observed for the first time in either generation.
+    pub fn changed_files(
+        before: &ajika::Inputs,
+        after: &ajika::Inputs,
+    ) -> ajika::Result<Vec<FileId>> {
+        let mut changed = Vec::new();
+        for (file, capture) in after.entries(Self::CAPTURE) {
+            let previous = before.peek(Self::CAPTURE, &file);
+            if previous.as_ref().map(capture_stamp).transpose()? != Some(capture_stamp(&capture)?) {
+                changed.push(file);
+            }
+        }
+        Ok(changed)
     }
 
     /// Include observations initialized during replay when validating the candidate.
@@ -219,10 +220,7 @@ fn capture_entry(
     file: &FileId,
     cx: &dyn ajika::InputInit,
 ) -> ajika::Result<Result<Arc<SourceEntry>, Arc<SourceError>>> {
-    let path = file.path(&cx.interner())?;
-    Ok(read_source_text(&path)
-        .map(|text| Arc::new(SourceEntry::saved(path, text)))
-        .map_err(Arc::new))
+    SourceInput::read_capture(*file, &cx.interner())
 }
 
 fn capture_path(path: &NativeOsString, cx: &dyn ajika::InputInit) -> ajika::Result<Option<FileId>> {

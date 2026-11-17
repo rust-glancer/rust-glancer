@@ -51,7 +51,7 @@ pub struct Package {
     /// Generated sources recovered from one existing Cargo compilation.
     ///
     /// This remains separate from ordinary package metadata because it is an approximate snapshot
-    /// of user-produced build outputs. Parse carries it forward so `include!` path resolution can
+    /// of user-produced build outputs. Source queries use it so `include!` path resolution can
     /// use the captured compile-time environment without consulting or executing Cargo.
     pub cargo_generated_sources: Option<CargoGeneratedSources>,
     pub targets: Vec<CargoTarget>,
@@ -59,7 +59,7 @@ pub struct Package {
 }
 
 impl Package {
-    /// The filtered order defines target slots in parsing and semantic queries.
+    /// The filtered order defines crate slots in workspace inputs and semantic queries.
     pub fn analyzed_targets(&self) -> impl Iterator<Item = &CargoTarget> {
         self.targets.iter().filter(|target| {
             self.is_workspace_member
@@ -72,9 +72,5 @@ impl Package {
         self.manifest_path
             .parent()
             .expect("package manifest path should have a parent directory")
-    }
-
-    pub(crate) fn contains_path(&self, path: &Path) -> bool {
-        path.starts_with(self.root_dir())
     }
 }

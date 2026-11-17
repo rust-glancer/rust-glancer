@@ -149,7 +149,6 @@ pub(crate) fn apply_expansion_attempts(
                     attempt.origin.module,
                     file_id,
                     attempt.origin.order,
-                    attempt.origin.placement,
                     attempt.origin.module_file_context,
                 );
                 if let Ok(collected) = collected {
@@ -172,7 +171,6 @@ pub(crate) fn apply_expansion_attempts(
                     file_id,
                     &items,
                     attempt.origin.order,
-                    attempt.origin.placement,
                     attempt.origin.module_file_context,
                 );
                 if let Ok(collected) = collected {
@@ -338,7 +336,6 @@ impl MacroExpansionAttempt {
                 file_id: call.file_id,
                 call_site: call.call_site,
                 order: call.order.clone(),
-                placement: call.placement,
                 dollar_crate: None,
                 parent_call: call_id,
                 module_file_context: Arc::clone(&call.module_file_context),
@@ -372,8 +369,8 @@ impl MacroExpansionAttempt {
 
         // Then resolve against the current scope snapshot. Unresolved user macros can be retried;
         // compiler builtins are handled only after resolution identifies a builtin definition.
-        let resolver = ItemMacroResolver::new(env, state);
-        let Some(resolved) = resolver.resolve(call, &path)? else {
+        let resolver = ItemMacroResolver::new(env, state.crate_ref, &state.macro_scopes);
+        let Some(resolved) = resolver.resolve(call.module, &call.order, &path)? else {
             return Ok(Self::new(
                 call_id,
                 call,

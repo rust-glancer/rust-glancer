@@ -231,7 +231,7 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
         );
         fs::write(&path, text).expect("save initializers");
         project
-            .apply_change(SavedFileChange::fs_path(&path))
+            .apply_changes([SavedFileChange::fs_path(&path)])
             .expect("publish initializers");
         check(&project, text, expected, false);
         let profile = profile.finish();
@@ -284,7 +284,7 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
     );
     fs::write(&path, &function_edit).expect("save function body");
     project
-        .apply_change(SavedFileChange::fs_path(&path))
+        .apply_changes([SavedFileChange::fs_path(&path)])
         .expect("publish function body");
     let profile = profile.finish();
     for counter in [
@@ -329,7 +329,7 @@ pub fn caller() { let constant = ARRAY; let returned = array(); let _ = constant
         let profile = ProfileTest::start(profile_descriptors(), "def_map.construction");
         fs::write(&path, &text).expect("save type expression");
         project
-            .apply_change(SavedFileChange::fs_path(&path))
+            .apply_changes([SavedFileChange::fs_path(&path)])
             .expect("publish type expression");
         project.inspect(|snapshot| {
             let context = snapshot

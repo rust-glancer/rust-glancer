@@ -1,11 +1,14 @@
 //! Select declaration candidates from acquired lookup shards. These answers do not prove types.
 
-use rg_ir_model::{FunctionRef, ImplRef, TraitDefRef, TraitImplRef, TypeDefRef};
+use rg_ir_model::{
+    AssocItemId, FunctionRef, ImplRef, ItemStoreRef, TraitDefRef, TraitImplRef, TypeDefRef,
+};
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ItemLookupIndex, ItemLookupShard, LookupKeys, TraitImplSelfHead};
+use crate::{AssociatedItemStore, ItemLookupIndex, ItemLookupShard, LookupKeys, TraitImplSelfHead};
 
 /// A candidate question contains identities and names, never an inference table or a source span.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
@@ -54,10 +57,20 @@ impl LookupQuestion {
             Self::TraitsWithAssociatedItems => (keys.traits_with_associated_items, 0),
         };
         let mut shards = UniqueVec::new();
-        if !present {
-            return shards;
+        if present {
+            shards.push(shard);
         }
-        shards.push(shard);
+        // A missing written name does not rule out a macro-generated member. Include the broad
+        // macro-owner shard too, so `methods!()` can supply a name absent from the written index.
+        match self {
+            Self::StructuralFunctions(_) if keys.structural_macros => {
+                shards.push(0);
+            }
+            Self::TraitsWithFunctionName(_) | Self::TraitsWithConstName(_) if keys.trait_macros => {
+                shards.push(0);
+            }
+            _ => {}
+        }
         // Nominal receiver candidates are indexed by type; trait presence and blanket fallbacks
         // are indexed by trait. Read both when the keys include the nominal receiver.
         if let Self::TraitImplsForHead(_, Some(TraitImplSelfHead::Adt(ty))) = self
@@ -68,10 +81,17 @@ impl LookupQuestion {
         shards
     }
 
-    /// Union selected shards in visibility order. Missing shards are still read by the provider,
-    /// so adding the first matching declaration invalidates an earlier empty answer.
-    pub fn answer<'a>(&self, shards: impl Iterator<Item = &'a ItemLookupShard>) -> LookupAnswer {
+    /// Union selected shards in visibility order, then read members only for function answers.
+    /// Impl and trait candidate lists come from headers and hints alone; they may still need
+    /// semantic proof. The provider observes routing keys even when no shard matches, so adding
+    /// the first matching declaration invalidates an earlier empty answer.
+    pub fn answer<'a, 'item>(
+        &self,
+        shards: impl Iterator<Item = &'a ItemLookupShard>,
+        mut members: impl FnMut(ItemStoreRef) -> Result<Option<&'item AssociatedItemStore>, ReadError>,
+    ) -> Result<LookupAnswer, ReadError> {
         let mut functions = UniqueVec::new();
+        let mut function_owners = UniqueVec::new();
         let mut impls = UniqueVec::new();
         let mut traits = UniqueVec::new();
         let mut trait_impls = UniqueVec::new();
@@ -79,23 +99,35 @@ impl LookupQuestion {
         let mut known = false;
         for shard in shards {
             match self {
-                Self::InherentFunctions(ty, name) => functions.extend(
-                    shard
-                        .inherent_functions_by_type_and_name
-                        .get(ty)
-                        .and_then(|names| names.get(name))
-                        .into_iter()
-                        .flatten()
-                        .copied(),
-                ),
-                Self::StructuralFunctions(name) => functions.extend(
-                    shard
-                        .structural_inherent_functions_by_name
-                        .get(name)
-                        .into_iter()
-                        .flatten()
-                        .copied(),
-                ),
+                Self::InherentFunctions(ty, name) => {
+                    function_owners.extend(
+                        shard
+                            .inherent_function_owners_by_type_and_name
+                            .get(ty)
+                            .and_then(|names| names.get(name))
+                            .into_iter()
+                            .flatten()
+                            .chain(
+                                shard
+                                    .inherent_macro_impls_by_type
+                                    .get(ty)
+                                    .into_iter()
+                                    .flatten(),
+                            )
+                            .map(|owner| owner.member_store()),
+                    );
+                }
+                Self::StructuralFunctions(name) => {
+                    function_owners.extend(
+                        shard
+                            .structural_function_owners_by_name
+                            .get(name)
+                            .into_iter()
+                            .flatten()
+                            .chain(shard.structural_macro_impls.iter())
+                            .map(|owner| owner.member_store()),
+                    );
+                }
                 Self::StructuralImpls => {
                     impls.extend(shard.structural_inherent_impls.iter().copied())
                 }
@@ -190,31 +222,49 @@ impl LookupQuestion {
                         .traits_by_item_name
                         .get(name)
                         .into_iter()
-                        .flat_map(|refs| refs.functions.iter().copied()),
+                        .flat_map(|refs| refs.functions.iter().copied())
+                        .chain(shard.traits_with_macros.iter().copied()),
                 ),
                 Self::TraitsWithConstName(name) => traits.extend(
                     shard
                         .traits_by_item_name
                         .get(name)
                         .into_iter()
-                        .flat_map(|refs| refs.consts.iter().copied()),
+                        .flat_map(|refs| refs.consts.iter().copied())
+                        .chain(shard.traits_with_macros.iter().copied()),
                 ),
-                Self::TraitFunctions(trait_ref) => {
-                    if let Some(candidates) = shard.trait_functions_by_trait.get(trait_ref) {
+                Self::TraitFunctions(trait_ref) | Self::TraitFunctionsByName(trait_ref, _) => {
+                    if shard.declared_traits.contains(trait_ref) {
                         known = true;
-                        functions.extend(candidates.iter().copied());
-                    }
-                }
-                Self::TraitFunctionsByName(trait_ref, name) => {
-                    if let Some(names) = shard.trait_functions_by_trait_and_name.get(trait_ref) {
-                        known = true;
-                        functions.extend(names.get(name).into_iter().flatten().copied());
+                        function_owners.push(trait_ref.member_store());
                     }
                 }
             }
         }
+        let name = match self {
+            Self::InherentFunctions(_, name)
+            | Self::StructuralFunctions(name)
+            | Self::TraitFunctionsByName(_, name) => Some(name),
+            _ => None,
+        };
+        // Hints selected owners, not function IDs. Open each selected store and check the real
+        // names after macro expansion; only then can a function answer name its declaration.
+        for owner in function_owners {
+            let Some(store) = members(owner)? else {
+                continue;
+            };
+            for item in store.items() {
+                if let AssocItemId::Function(id) = item
+                    && store
+                        .function_data(*id)
+                        .is_some_and(|data| name.is_none_or(|name| *name == data.name))
+                {
+                    functions.push(FunctionRef::new(owner, *id));
+                }
+            }
+        }
         trait_impls.extend(fallback_impls);
-        match self {
+        Ok(match self {
             Self::InherentFunctions(..) | Self::StructuralFunctions(..) => {
                 LookupAnswer::Functions(Some(functions))
             }
@@ -230,7 +280,7 @@ impl LookupQuestion {
                 LookupAnswer::TraitImpls(known.then_some(trait_impls))
             }
             _ => LookupAnswer::Traits(traits),
-        }
+        })
     }
 }
 

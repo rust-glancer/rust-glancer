@@ -59,7 +59,8 @@ where
             }))
     }
 
-    /// Enumerates declarations explicitly; ordinary item reads do not require this scan.
+    /// Enumerate all declarations, including every trait and impl's members in this origin.
+    /// Use [`SemanticItemSource::scope_items`] to select owners before reading their members.
     pub fn semantic_items_for_origin(
         &self,
         origin: DefMapRef,

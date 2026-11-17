@@ -3,17 +3,19 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
-    BindingId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
-    GenericParamRef, ImplRef, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PackageSlot, PatId,
-    SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    BindingId, BodyRef, CrateId, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
+    FunctionRef, GenericParamRef, ImplRef, ItemOwner, LocalDefRef, ModuleId, ModuleRef,
+    PackageSlot, PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef,
+    identity::DeclarationRef,
 };
 use rg_item_tree::{FieldItem, SourceLocations as _};
-use rg_parse::{CargoTarget, Package, ParseDb};
+use rg_parse::SavedSourceReader;
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
     signature::SemanticSignatureQuery,
 };
+use rg_workspace::{CargoTarget, Package, WorkspaceMetadata};
 
 use crate::{
     BindingData, BodyOwner, BodySource, BodySourceItem, BodyView, ClosureCapture, ClosureKind,
@@ -69,17 +71,17 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        Self::sorted_packages(self.project.parse_db())
+        Self::sorted_packages(self.project.semantic().workspace())
             .into_iter()
             .map(|(package_slot, package)| {
                 let crate_dumps = Self::sorted_targets(package)
                     .into_iter()
-                    .map(|target| {
+                    .map(|(target_id, target)| {
                         CrateBodyIrSnapshot {
                             project: self.project,
                             crate_ref: CrateRef {
                                 package: PackageSlot(package_slot),
-                                crate_id: rg_ir_model::CrateId(target.id.0),
+                                crate_id: CrateId(target_id),
                             },
                             target_name: &target.name,
                             target_kind: target.kind.to_string(),
@@ -89,24 +91,24 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                format!("package {}\n\n{crate_dumps}", package.package_name())
+                format!("package {}\n\n{crate_dumps}", package.name)
             })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
 
     fn render_patterns(&self) -> String {
-        Self::sorted_packages(self.project.parse_db())
+        Self::sorted_packages(self.project.semantic().workspace())
             .into_iter()
             .map(|(package_slot, package)| {
                 let crate_dumps = Self::sorted_targets(package)
                     .into_iter()
-                    .map(|target| {
+                    .map(|(target_id, target)| {
                         CrateBodyIrSnapshot {
                             project: self.project,
                             crate_ref: CrateRef {
                                 package: PackageSlot(package_slot),
-                                crate_id: rg_ir_model::CrateId(target.id.0),
+                                crate_id: CrateId(target_id),
                             },
                             target_name: &target.name,
                             target_kind: target.kind.to_string(),
@@ -116,21 +118,21 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                format!("package {}\n\n{crate_dumps}", package.package_name())
+                format!("package {}\n\n{crate_dumps}", package.name)
             })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
 
-    fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
-        let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
-        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+    fn sorted_packages(workspace: &WorkspaceMetadata) -> Vec<(usize, &Package)> {
+        let mut packages = workspace.packages().iter().enumerate().collect::<Vec<_>>();
+        packages.sort_by(|left, right| left.1.name.cmp(&right.1.name));
         packages
     }
 
-    fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
-        let mut targets = package.targets().iter().collect::<Vec<_>>();
-        targets.sort_by(|left, right| {
+    fn sorted_targets(package: &Package) -> Vec<(usize, &CargoTarget)> {
+        let mut targets = package.analyzed_targets().enumerate().collect::<Vec<_>>();
+        targets.sort_by(|(_, left), (_, right)| {
             (
                 left.kind.sort_order(),
                 left.name.as_str(),
@@ -158,7 +160,9 @@ impl CrateBodyIrSnapshot<'_> {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
         // Whole-project snapshots focus on workspace targets. Dependency owners remain available
         // through the fixture for tests that explicitly select them.
-        if !self.project.parse_db().packages()[self.crate_ref.package.0].is_workspace_member() {
+        if !self.project.semantic().workspace().packages()[self.crate_ref.package.0]
+            .is_workspace_member
+        {
             dump.push_str("\nskipped");
             return dump;
         }
@@ -181,7 +185,9 @@ impl CrateBodyIrSnapshot<'_> {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
         // Whole-project snapshots focus on workspace targets. Dependency owners remain available
         // through the fixture for tests that explicitly select them.
-        if !self.project.parse_db().packages()[self.crate_ref.package.0].is_workspace_member() {
+        if !self.project.semantic().workspace().packages()[self.crate_ref.package.0]
+            .is_workspace_member
+        {
             dump.push_str("\nskipped");
             return dump;
         }
@@ -410,10 +416,10 @@ impl CrateBodyIrSnapshot<'_> {
                 let fields = fields
                     .iter()
                     .map(|field| {
-                        let shorthand = if field.syntax.is_shorthand() {
-                            "shorthand "
-                        } else {
+                        let shorthand = if field.syntax.is_explicit() {
                             ""
+                        } else {
+                            "shorthand "
                         };
                         format!("{shorthand}{}=p{}", field.key, field.pat.0)
                     })
@@ -554,17 +560,20 @@ impl CrateBodyIrSnapshot<'_> {
         let data = body
             .expr(expr)
             .expect("expr id should exist while rendering body IR");
-        let facts = body
-            .expr_fact(expr)
-            .expect("expr facts should exist while rendering body IR");
+        let resolution = body
+            .expr_resolution(expr)
+            .expect("expr resolution should exist while rendering body IR");
+        let ty = body
+            .expr_ty(expr)
+            .expect("expr type should exist while rendering body IR");
         writeln!(
             dump,
             "{}expr e{} {}{} => {} @ {}",
             Self::indent(depth),
             expr.0,
             self.render_expr_head(body, data),
-            self.render_resolution(&facts.resolution),
-            self.render_ty(&facts.ty),
+            self.render_resolution(resolution),
+            self.render_ty(ty),
             self.render_source(body.source_at(data.source)),
         )
         .expect("string writes should not fail");
@@ -1623,25 +1632,21 @@ impl CrateBodyIrSnapshot<'_> {
         };
         let package = self
             .project
-            .parse_db()
+            .semantic()
+            .workspace()
             .packages()
             .get(crate_ref.package.0)
             .expect("package slot should exist while rendering body IR module");
-        let cargo_target = self
+        let target = self
             .project
             .semantic()
-            .definitions()
-            .crate_data(crate_ref)
-            .expect("fixture declarations should load")
-            .expect("semantic crate should exist while rendering body IR module")
-            .cargo_target();
-        let target = package
-            .target(cargo_target)
-            .expect("target id should exist while rendering body IR module");
+            .workspace()
+            .target(crate_ref)
+            .expect("fixture target should exist");
 
         format!(
             "{}[{}]::{}",
-            package.package_name(),
+            package.name,
             target.kind,
             self.module_path(module_ref),
         )
@@ -1697,14 +1702,8 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_source(&self, source: BodySource) -> String {
-        let line_column = self
-            .project
-            .parse_db()
-            .package(self.crate_ref.package.0)
-            .expect("source package should exist while rendering body IR source")
-            .parsed_file(source.file_id)
-            .expect("source file should exist while rendering body IR source")
-            .line_index()
+        let line_column = SavedSourceReader::new(self.project.semantic().db())
+            .line_index(source.file_id)
             .expect("source file line index should load while rendering body IR source")
             .line_column_span(source.span);
         format!(
@@ -1717,16 +1716,8 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_source_text(&self, source: BodySource) -> String {
-        let parsed_file = self
-            .project
-            .parse_db()
-            .package(self.crate_ref.package.0)
-            .expect("source package should exist while rendering body IR text")
-            .parsed_file(source.file_id)
-            .expect("source file should exist while rendering body IR text");
-
-        parsed_file
-            .text_for_span(source.span)
+        SavedSourceReader::new(self.project.semantic().db())
+            .text_for_span(source.file_id, source.span)
             .expect("body source text should load")
             .unwrap_or_else(|| "<invalid>".to_string())
             .split_whitespace()

@@ -50,11 +50,6 @@ impl SourceEntry {
         self.descriptor.path()
     }
 
-    /// Shares the canonical path with lookup indexes so they can store it without copying it.
-    pub fn shared_path(&self) -> Arc<Path> {
-        Arc::clone(self.descriptor.path())
-    }
-
     pub fn revision(&self) -> SourceRevision {
         self.descriptor.revision()
     }

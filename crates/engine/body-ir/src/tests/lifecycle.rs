@@ -5,7 +5,9 @@ use rg_ir_model::{
     BodyId, BodyKey, BodyRef, DefMapRef, ExprId, FileId, ModuleRef, SavedBodyOwner, SemanticItemRef,
 };
 use rg_profile::test_support::ProfileTest;
-use rg_semantic_ir::{CrateItemSource as _, SemanticItemSource as _, TargetDeclarationReader};
+use rg_semantic_ir::{
+    CrateItemSource as _, SemanticItemSource as _, SourceSelection, TargetDeclarationReader,
+};
 use rg_source::{CapturedSource, QueryContext, SourceInput};
 use rg_ty::{ConstValue, GenericArg};
 use rg_workspace::{TargetKind, testonly::WorkspaceFixture};
@@ -64,7 +66,7 @@ pub fn other() {}
         .run(|db| {
             let declarations = TargetDeclarationReader::for_target(db, target)?;
             let reader = BodyReader::new(db, &declarations);
-            let owners: Vec<_> = reader.owners(target)?.copied().collect();
+            let owners: Vec<_> = reader.owners(target, SourceSelection::All)?.collect();
             let outer = declarations
                 .all_items(DefMapRef::Crate(target))?
                 .into_iter()
@@ -158,7 +160,7 @@ pub fn other() {}
 }
 
 #[test]
-fn finalized_bodies_have_aligned_structural_and_semantic_arenas() {
+fn finalized_bodies_publish_types_and_selected_calls() {
     let mut fixture = BodyIrFixture::build(
         r#"
 //- /src/lib.rs crate:body_lifecycle_fixture
@@ -177,9 +179,12 @@ pub fn use_it(value: &[u8; 3]) {
 
         let mut selected_calls = Vec::new();
         for (_, body) in bodies {
-            assert_eq!(body.exprs().len(), body.expr_facts().len());
             for (expr_idx, data) in body.exprs().iter().enumerate() {
                 let expr = ExprId(expr_idx);
+                assert!(
+                    body.expr_ty(expr).is_some(),
+                    "every expression has type facts"
+                );
                 if matches!(
                     data.kind,
                     ExprKind::Call { .. } | ExprKind::MethodCall { .. }

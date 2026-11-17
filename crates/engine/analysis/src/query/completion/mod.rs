@@ -73,13 +73,6 @@ pub struct CompletionClientCapabilities {
     pub snippet_support: bool,
 }
 
-impl CompletionClientCapabilities {
-    pub fn with_snippet_support(mut self, snippet_support: bool) -> Self {
-        self.snippet_support = snippet_support;
-        self
-    }
-}
-
 /// One source-position completion query plus the editor state needed for request-local syntax.
 ///
 /// Semantic completion can still use indexed sites without `source_text`. Supplying the exact

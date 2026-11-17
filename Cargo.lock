@@ -1987,6 +1987,7 @@ dependencies = [
  "rg_syntax",
  "rg_text",
  "rg_ty",
+ "rg_workspace",
 ]
 
 [[package]]
@@ -2114,14 +2115,11 @@ version = "0.0.0"
 dependencies = [
  "ajika",
  "anyhow",
- "rg_arena",
- "rg_cfg_eval",
  "rg_ir_model",
  "rg_source",
  "rg_std",
  "rg_syntax",
  "rg_text",
- "rg_workspace",
  "wincode",
 ]
 

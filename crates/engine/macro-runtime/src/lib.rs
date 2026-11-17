@@ -16,6 +16,6 @@ pub use self::{
     runtime::{
         CompletedMacroExpansion, DeclarativeMacroDefinition, MacroExpansionRequest,
         MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
-        PreparedMacroExpansionResult,
+        PreparedMacroExpansionResult, SharedMacroExpansionRuntime,
     },
 };

@@ -3,7 +3,9 @@ use std::{collections::HashSet, fmt, sync::Arc};
 use rg_def_map::{ItemSource, ItemSourceKind};
 use rg_ir_model::{BodyKey, BodyRef, CrateRef, FileId};
 use rg_profile::ProfileThreadContext;
-use rg_semantic_ir::{BodyOwnerData, SavedDeclarationSourceView, target_declarations};
+use rg_semantic_ir::{
+    BodyOwnerData, SavedDeclarationSourceView, SourceSelection, body_owners, saved_body_owner,
+};
 use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
@@ -13,8 +15,9 @@ use crate::{
     infer_saved_body, prepare_saved_body, saved_body,
 };
 
-/// Read saved bodies for the targets in this view. The owner catalog lets file enumeration
-/// find bodies without computing them.
+/// Read saved bodies for the targets in this view. Owner metadata identifies bodies without
+/// lowering or inferring them. Enumerating methods can still open their trait/impl member stores,
+/// so file and cursor requests narrow owners first; a known `BodyKey` goes straight to its owner.
 pub(super) struct SavedBodyReader<'db> {
     db: &'db QueryContext<'db>,
     targets: HashSet<CrateRef>,
@@ -70,7 +73,11 @@ impl<'db> SavedBodyReader<'db> {
     }
 
     pub(crate) fn files(&self, krate: CrateRef) -> Result<UniqueVec<FileId>, ReadError> {
-        Ok(self.owners(krate)?.iter().map(|owner| owner.file).collect())
+        Ok(self
+            .owners(krate, SourceSelection::All)?
+            .iter()
+            .map(|owner| owner.file)
+            .collect())
     }
 
     pub(crate) fn body(
@@ -109,20 +116,13 @@ impl<'db> SavedBodyReader<'db> {
 
     pub(crate) fn prepared_bodies(
         &self,
-        krate: CrateRef,
-        file: FileId,
-        selected: &dyn Fn(&BodyOwnerData) -> bool,
+        owners: &[BodyKey],
     ) -> Result<Vec<(BodyRef, &BodyData)>, ReadError> {
         let mut result = Vec::new();
-        for owner in self
-            .owners(krate)?
-            .iter()
-            .filter(|owner| owner.file == file && selected(owner))
-        {
-            let key = BodyKey {
-                krate,
-                owner: owner.owner,
-            };
+        for &key in owners {
+            if !self.targets.contains(&key.krate) {
+                continue;
+            }
             let prepared = prepare_saved_body(self.db, key).map_err(ReadError::Query)?;
             let Some(prepared) = prepared.as_ref() else {
                 continue;
@@ -157,28 +157,34 @@ impl<'db> SavedBodyReader<'db> {
         infer_saved_body(self.db, key).map_err(ReadError::Query)
     }
 
-    pub(crate) fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError> {
-        if !self.targets.contains(&krate) {
-            return Ok(&[]);
+    pub(crate) fn owner_data(&self, key: BodyKey) -> Result<Option<&BodyOwnerData>, ReadError> {
+        if !self.targets.contains(&key.krate) {
+            return Ok(None);
         }
-        let declarations = target_declarations(self.db, krate).map_err(ReadError::Query)?;
-        let owners = declarations
-            .body_owners
-            .value_ref(self.db)
-            .map_err(ReadError::Query)?;
-        Ok(owners.as_slice())
+        saved_body_owner(self.db, key).map_err(ReadError::Query)
+    }
+
+    pub(crate) fn owners(
+        &self,
+        krate: CrateRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<BodyOwnerData>, ReadError> {
+        if !self.targets.contains(&krate) {
+            return Ok(Vec::new());
+        }
+        body_owners(self.db, krate, selection).map_err(ReadError::Query)
     }
 
     pub(crate) fn bodies(
         &self,
         krate: CrateRef,
-        file: Option<FileId>,
+        selection: SourceSelection,
         selected: &dyn Fn(&BodyOwnerData) -> bool,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
         let keys: Vec<_> = self
-            .owners(krate)?
+            .owners(krate, selection)?
             .iter()
-            .filter(|root| file.is_none_or(|file| root.file == file) && selected(root))
+            .filter(|root| selected(root))
             .map(|root| BodyKey {
                 krate,
                 owner: root.owner,

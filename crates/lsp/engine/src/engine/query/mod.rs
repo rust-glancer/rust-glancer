@@ -129,8 +129,8 @@ impl<'a> QueryRunner<'a> {
             let Some(context) = Self::file_context(snapshot, document.source_path())? else {
                 return Err(lifecycle::SaveRequired(document.path().to_path_buf()).into());
             };
-            let saved = snapshot.file_source_text(context.crate_ref.package, context.file)?;
-            if !saved.is_some_and(|source| source.as_ref() == document.text()) {
+            let saved = snapshot.sources().text(context.file)?;
+            if saved.as_ref() != document.text() {
                 return Err(lifecycle::SaveRequired(document.path().to_path_buf()).into());
             }
         }

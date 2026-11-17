@@ -219,11 +219,6 @@ impl ModuleOrigin {
         };
         files.into_iter().flatten()
     }
-
-    /// Returns whether this module's source touches the requested file.
-    pub fn contains_file(&self, file_id: FileId) -> bool {
-        self.files().any(|candidate| candidate == file_id)
-    }
 }
 
 /// Source rule that selected an out-of-line module's definition file.

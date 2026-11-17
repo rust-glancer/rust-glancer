@@ -12,19 +12,14 @@ mod method;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyRef, ConstRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef,
-    ItemOwner, Path, ScopeId, TraitApplicability, TypeAliasRef, TypeDefId,
-    identity::DeclarationRef,
+    ConstRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef, ItemOwner,
+    TraitApplicability, TypeAliasRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
-use rg_semantic_ir::{
-    EnumVariantData, FieldData, FunctionData, ItemStoreQuery, TypePathResolution,
-};
+use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemStoreQuery};
 use rg_ty::lookup::MemberMethodOrigin as TyMemberMethodOrigin;
 
-use crate::{
-    IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView, ty::IndexedType,
-};
+use crate::{IndexedViewDb, SymbolKind, item::path::PathView, ty::IndexedType};
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -300,13 +295,6 @@ impl MemberAssociatedItem {
             Self::TypeAlias(_) | Self::Const(_) | Self::EnumVariant(_) => None,
         }
     }
-
-    pub fn enum_variant_ref(self) -> Option<EnumVariantRef> {
-        match self {
-            Self::EnumVariant(variant) => Some(variant),
-            Self::Function(_) | Self::TypeAlias(_) | Self::Const(_) => None,
-        }
-    }
 }
 
 /// One associated declaration and the confidence of the receiver or impl match.
@@ -425,43 +413,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 index,
             }));
         }
-        Ok(variants)
-    }
-
-    /// Resolve a body type path and return its enum variants.
-    pub fn enum_variant_candidates_for_body_type_path(
-        &self,
-        body: BodyRef,
-        scope: ScopeId,
-        path: &Path,
-    ) -> anyhow::Result<Vec<EnumVariantRef>> {
-        let Some(resolution) = BodyResolutionView::new(self.db)
-            .type_path_resolution(body, scope, path)
-            .context("resolve enum candidate body type path")?
-        else {
-            return Ok(Vec::new());
-        };
-        let (TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty)) = resolution
-        else {
-            return Ok(Vec::new());
-        };
-
-        let item_query = ItemStoreQuery::new(self.db);
-        let mut variants = Vec::new();
-        let TypeDefId::Enum(enum_id) = ty.id else {
-            return Ok(Vec::new());
-        };
-        let Some(data) = item_query
-            .enum_data_for_type_def(ty)
-            .context("read body enum candidate data")?
-        else {
-            return Ok(Vec::new());
-        };
-        variants.extend((0..data.variants.len()).map(|index| EnumVariantRef {
-            origin: ty.origin,
-            enum_id,
-            index,
-        }));
         Ok(variants)
     }
 }

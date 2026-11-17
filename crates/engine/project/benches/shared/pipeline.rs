@@ -5,15 +5,16 @@ use std::{
 };
 
 use rg_def_map::{
-    CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
-    GeneratedItemStore, GeneratedSourceStore,
+    AssociatedItemInput, AssociatedItemOwner, CrateData, CrateDataSource, CrateDefMapReader,
+    CrateDependencies, DefMapQuery, GeneratedItemStore,
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
-use rg_parse::{ParseDb, TargetFileManifest, saved_syntax};
+use rg_parse::{SavedSourceReader, saved_syntax};
 use rg_semantic_ir::{
-    AssociatedItemStore, CrateItemSource, ItemLookupEnv, ItemLookupIndex, ItemStore, LangItemIndex,
-    LookupAnswer, LookupQuestion, SemanticItemView, SymbolNameData, target_declarations,
+    AssociatedItemStore, CrateItemSource, ItemLookupEnv, LookupAnswer, LookupQuestion,
+    SemanticItemView, SourceSelection, SymbolNameIndex, TargetItemData, body_owners,
+    target_declarations,
 };
 use rg_source::{
     QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
@@ -67,12 +68,8 @@ impl BenchWorkspace {
         )
     }
 
-    pub(crate) fn parse_roots(
-        &self,
-        db: &QueryContext<'_>,
-        inputs: &ajika::Inputs,
-    ) -> ajika::Result<ParseDb> {
-        let mut manifests = Vec::with_capacity(self.targets.len());
+    pub(crate) fn parse_roots(&self, db: &QueryContext<'_>) -> ajika::Result<()> {
+        let sources = SavedSourceReader::new(db);
         for &krate in &self.targets {
             let path = TargetInput::at(krate).root_path(db)?;
             let file = SourcePresence::at(path)
@@ -80,23 +77,9 @@ impl BenchWorkspace {
                 .expect("benchmark target root should exist");
             let edition = PackageInput::at(krate.package).edition(db)?;
             saved_syntax(db, file, edition)?;
-            manifests.push(TargetFileManifest {
-                root: file,
-                files: vec![file],
-            });
+            sources.line_index(file)?;
         }
-        let parse = ParseDb::from_target_manifests(
-            &self.workspace,
-            inputs,
-            self.targets.iter().copied().zip(&manifests),
-        )?;
-        // The old root parse included line indexes. Build them explicitly now that routing
-        // leaves them lazy.
-        for file in parse.packages().iter().flat_map(|pkg| pkg.parsed_files()) {
-            file.line_index()
-                .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
-        }
-        Ok(parse)
+        Ok(())
     }
 
     pub(crate) fn item_trees(&self, db: &QueryContext<'_>) -> ajika::Result<Vec<Arc<FileTree>>> {
@@ -120,27 +103,29 @@ impl BenchWorkspace {
         // against completed definitions without demanding the dependency's semantic items.
         for &krate in &self.targets {
             let dependencies = DefMapQuery::new(CrateDefMapReader(&scopes.declarations));
-            let (built, trees, _) = CrateData::build_target(db, krate, &dependencies)?;
+            let (built, trees) = CrateData::build_target(db, krate, &dependencies)?;
             scopes.declarations.definitions.insert(krate, built.data);
-            scopes.targets.push((krate, trees, built.generated_items));
+            scopes.targets.push(PreparedTarget {
+                krate,
+                trees,
+                generated: built.generated_items,
+                member_inputs: built.member_inputs,
+            });
         }
         Ok(scopes)
     }
 
     pub(crate) fn body_owners(&self, db: &QueryContext<'_>) -> ajika::Result<Vec<BodyKey>> {
-        let declarations =
-            db.parallel_map(&self.targets, |db, &krate| target_declarations(db, krate))?;
+        db.parallel_map(&self.targets, |db, &krate| target_declarations(db, krate))?;
         let mut owners = Vec::new();
-        for (&krate, declarations) in self.targets.iter().zip(&declarations) {
+        for &krate in &self.targets {
             if self.workspace.packages()[krate.package.0].is_workspace_member
                 && TargetInput::at(krate)
                     .kind(db)?
                     .is_primary_analysis_target()
             {
                 owners.extend(
-                    declarations
-                        .body_owners
-                        .value(db)?
+                    body_owners(db, krate, SourceSelection::All)?
                         .iter()
                         .map(|owner| BodyKey {
                             krate,
@@ -156,37 +141,37 @@ impl BenchWorkspace {
 #[derive(Default)]
 pub(crate) struct PreparedScopes {
     declarations: Declarations,
-    targets: Vec<(CrateRef, ItemTrees, GeneratedItemStore)>,
+    targets: Vec<PreparedTarget>,
 }
 
 impl PreparedScopes {
     pub(crate) fn build_items(mut self, db: &QueryContext<'_>) -> ajika::Result<Declarations> {
-        for (krate, trees, generated) in self.targets {
-            let items = ItemStore::build_target(
+        for target in self.targets {
+            let items = TargetItemData::build(
                 db,
-                &self.declarations.definitions[&krate],
-                trees,
-                generated,
+                &self.declarations.definitions[&target.krate],
+                target.trees,
+                target.generated,
+                &target.member_inputs,
                 &self.declarations,
             )?;
-            self.declarations.items.insert(krate, items);
+            self.declarations.items.insert(target.krate, items);
         }
         Ok(self.declarations)
     }
 }
 
+struct PreparedTarget {
+    krate: CrateRef,
+    trees: ItemTrees,
+    generated: GeneratedItemStore,
+    member_inputs: HashMap<AssociatedItemOwner, AssociatedItemInput>,
+}
+
 #[derive(Default)]
 pub(crate) struct Declarations {
     definitions: HashMap<CrateRef, CrateData>,
-    items: HashMap<
-        CrateRef,
-        (
-            ItemStore,
-            ItemLookupEnv,
-            ItemLookupIndex,
-            GeneratedSourceStore,
-        ),
-    >,
+    items: HashMap<CrateRef, TargetItemData>,
 }
 
 impl CrateDataSource for Declarations {
@@ -200,18 +185,17 @@ impl CrateItemSource for Declarations {
         &self,
         store: ItemStoreRef,
     ) -> Result<Option<&AssociatedItemStore>, ReadError> {
-        Ok(store
-            .origin
-            .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
-            .and_then(|items| items.associated_items(store)))
+        let _ = store;
+        Err(ReadError::Query(ajika::Error::contract(
+            "member reads are outside the header benchmark",
+        )))
     }
 
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
         Ok(item
             .origin()
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|data| &data.items))
             .and_then(|items| items.semantic_item_view(item)))
     }
 
@@ -222,7 +206,7 @@ impl CrateItemSource for Declarations {
         Ok(definition
             .origin
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|data| &data.items))
             .and_then(|items| {
                 items
                     .item_for_local_def(definition.local_def)
@@ -230,23 +214,36 @@ impl CrateItemSource for Declarations {
             }))
     }
 
-    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
         Ok(origin
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
-            .map(|items| items.semantic_items().collect())
+            .and_then(|krate| self.items.get(&krate).map(|data| &data.items))
+            .map(|items| items.scope_items().collect())
             .unwrap_or_default())
     }
 
-    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        Ok(self
-            .items
-            .get(&krate)
-            .map(|(items, _, _, _)| items.lang_items()))
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        let _ = origin;
+        Err(ReadError::Query(ajika::Error::contract(
+            "broad reads are outside the header benchmark",
+        )))
     }
 
-    fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
-        Ok(self.items.get(&krate).map(|(_, env, _, _)| env))
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        let _ = (origin, selection);
+        Err(ReadError::Query(ajika::Error::contract(
+            "source scans are outside the header benchmark",
+        )))
+    }
+
+    fn lookup_env(&self, _krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
+        Err(ReadError::Query(ajika::Error::contract(
+            "lookup preparation is outside the header benchmark",
+        )))
     }
 
     fn lookup_candidates(
@@ -255,16 +252,18 @@ impl CrateItemSource for Declarations {
         question: &LookupQuestion,
     ) -> Result<LookupAnswer, ReadError> {
         let indexes = self.items[&use_site]
-            .1
-            .visible_crates()
+            .visible_crates
             .iter()
-            .filter_map(|krate| self.items.get(krate).map(|(_, _, index, _)| index));
-        Ok(question.answer(indexes.flat_map(|index| index.shards_for(question))))
+            .filter_map(|krate| self.items.get(krate).map(|data| &data.lookup));
+        question.answer(
+            indexes.flat_map(|index| index.shards_for(question)),
+            |owner| self.associated_items(owner),
+        )
     }
 
-    fn symbol_names(&self, _krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {
+    fn symbol_names(&self, _crates: &[CrateRef]) -> Result<Vec<Arc<SymbolNameIndex>>, ReadError> {
         // The isolated declaration-lowering benchmark does not run symbol discovery.
-        Ok(&[])
+        Ok(Vec::new())
     }
 
     fn crates(&self) -> Vec<CrateRef> {

@@ -132,7 +132,7 @@ pub fn later() -> u8 { 2 }
         let profile = ProfileTest::start(profile_descriptors(), "def_map.construction");
         fs::write(&path, &text).expect("save model");
         project
-            .apply_change(SavedFileChange::fs_path(&path))
+            .apply_changes([SavedFileChange::fs_path(&path)])
             .expect("publish save");
         check(&project, &text, expected);
         assert_eq!(
@@ -163,7 +163,7 @@ pub fn later() -> u8 { 2 }
     fs::write(&path, changed).expect("save signature");
     let profile = ProfileTest::start(profile_descriptors(), "def_map.construction");
     project
-        .apply_change(SavedFileChange::fs_path(&path))
+        .apply_changes([SavedFileChange::fs_path(&path)])
         .expect("publish signature");
     project.inspect(|snapshot| {
         let caller = snapshot

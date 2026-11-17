@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use rg_ir_model::{FileId, PackageSlot};
-use rg_parse::ParseDb;
 use rg_workspace::{SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
-use crate::{AnalysisChangeSummary, Project, SavedFileChange};
+use crate::{AnalysisChangeSummary, Project, ProjectSnapshot, SavedFileChange};
 
 /// Materialized project fixture sources plus marker metadata.
 pub struct ProjectSourceFixture {
@@ -108,12 +107,8 @@ impl ProjectFixture {
         self.source.markers()
     }
 
-    pub fn file_id_for_path(&self, relative_path: &str) -> FileId {
-        Self::file_id_for_path_in(self.project.state.parse_db(), &self.path(relative_path))
-    }
-
     pub fn package_slot_by_name(&self, package_name: &str) -> PackageSlot {
-        Self::package_slot_by_name_in(self.project.state.parse_db(), package_name)
+        Self::package_slot_by_name_in(self.project.workspace(), package_name)
     }
 
     pub fn apply_saved_fixture(&mut self, spec: &str) -> AnalysisChangeSummary {
@@ -128,35 +123,30 @@ impl ProjectFixture {
             .expect("fixture save changes should apply as one source generation")
     }
 
-    pub fn file_id_for_path_in(parse: &ParseDb, path: &Path) -> FileId {
-        let canonical_path = path
+    pub fn file_id_for_path_in(snapshot: ProjectSnapshot<'_>, path: &Path) -> FileId {
+        let path = path
             .canonicalize()
-            .expect("fixture source path should canonicalize");
-
-        parse
-            .packages()
-            .iter()
-            .flat_map(|package| package.parsed_files())
-            .find(|file| file.path() == canonical_path.as_path())
-            .unwrap_or_else(|| panic!("fixture file {} should be parsed", path.display()))
-            .file_id()
+            .expect("fixture path should canonicalize");
+        FileId::for_path(&snapshot.query_context().interner(), &path)
+            .expect("fixture file identity")
     }
 
-    pub fn package_slot_by_name_in(parse: &ParseDb, package_name: &str) -> PackageSlot {
-        parse
+    pub fn package_slot_by_name_in(
+        workspace: &WorkspaceMetadata,
+        package_name: &str,
+    ) -> PackageSlot {
+        workspace
             .packages()
             .iter()
             .enumerate()
-            .find_map(|(idx, package)| {
-                (package.package_name() == package_name).then_some(PackageSlot(idx))
-            })
-            .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
+            .find_map(|(idx, package)| (package.name == package_name).then_some(PackageSlot(idx)))
+            .unwrap_or_else(|| panic!("fixture package {package_name} should exist"))
     }
 }
 
 impl Project {
     /// Keep fixture observations inside the same operation used by application requests.
-    pub(crate) fn inspect<R>(&self, observe: impl FnOnce(crate::ProjectSnapshot<'_>) -> R) -> R {
+    pub(crate) fn inspect<R>(&self, observe: impl FnOnce(ProjectSnapshot<'_>) -> R) -> R {
         self.with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
             Ok(observe(snapshot))
         })

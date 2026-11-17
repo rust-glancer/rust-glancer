@@ -7,26 +7,19 @@ use std::collections::BTreeMap;
 
 use anyhow::Context as _;
 use rg_def_map::CrateDependencies;
-use rg_ir_model::PackageSlot;
+use rg_ir_model::FileId;
 use rg_source::{SourceInput, SourcePresence};
 use rg_std::{NormalizedPathBuf, UniqueVec};
 use rg_workspace::WorkspaceMetadata;
 
-pub use self::input::{AnalysisChangeSummary, ChangedFile, SavedFileChange};
+pub use self::input::{AnalysisChangeSummary, SavedFileChange};
 use self::workspace_graph::WorkspaceGraphChanges;
-use crate::{Project, ProjectMemoryPurgePoint, indexing::build_state, state::ProjectState};
+use crate::{Project, ProjectMemoryPurgePoint, indexing::build_state};
 
 impl Project {
     pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
         self.publish_changes(&[], true)?;
         Ok(())
-    }
-
-    pub fn apply_change(
-        &mut self,
-        change: SavedFileChange,
-    ) -> anyhow::Result<AnalysisChangeSummary> {
-        self.apply_changes([change])
     }
 
     pub fn apply_changes(
@@ -59,14 +52,25 @@ impl Project {
             return Ok(AnalysisChangeSummary::default());
         }
 
-        let graph_changed = saved.values().any(|change| {
-            WorkspaceGraphChanges::check(
+        let interner = self
+            .database
+            .get_mut()
+            .expect("project query runtime")
+            .interner();
+        let mut graph_changed = false;
+        for change in saved.values() {
+            let file = FileId::for_path(&interner, change.path())?;
+            if WorkspaceGraphChanges::check(
                 self.workspace(),
-                self.state.parse_db(),
+                self.state.sources.contains_collected_file(file),
                 &self.cargo_metadata_config,
                 change,
             ) == WorkspaceGraphChanges::Changed
-        });
+            {
+                graph_changed = true;
+                break;
+            }
+        }
         let mut changes = saved.into_values().collect::<Vec<_>>();
         changes.extend(spellings.into_iter().map(SavedFileChange::FsPath));
         self.publish_changes(&changes, graph_changed)
@@ -99,6 +103,10 @@ impl Project {
         // Input changes advance the revision, so later queries will observe the updated state anyway.
         let accepted = database.inputs().clone();
         let interner = database.interner();
+        let changed_paths = changes
+            .iter()
+            .map(|change| FileId::for_path(&interner, change.path()))
+            .collect::<ajika::Result<Vec<_>>>()?;
         let (targets, presence_changed) = database.update_inputs(|update| {
             let (targets, presence_changed) = if graph_changed {
                 update.forget_all(SourceInput::CAPTURE);
@@ -119,19 +127,22 @@ impl Project {
             }
             Ok((targets, presence_changed))
         })?;
-        let result = build_state(database, workspace, targets);
+        // Source publication is independent of module discovery. A lazy include can change
+        // without appearing in the published source index at all.
+        let result =
+            SourceInput::changed_files(&accepted, database.inputs()).and_then(|source_changes| {
+                build_state(database, workspace, targets)
+                    .map(|candidate| (candidate, source_changes))
+            });
         match result {
-            Ok(candidate) => {
+            Ok((candidate, source_changes)) => {
                 let summary = if graph_changed {
-                    let changed_files = changes
-                        .iter()
-                        .flat_map(|change| candidate.parse.file_refs_for_path(change.path()))
-                        .map(|file| ChangedFile {
-                            package: file.package,
-                            file: file.file,
-                        })
-                        .collect::<UniqueVec<_>>()
-                        .into_vec();
+                    let mut changed_files = source_changes.into_iter().collect::<UniqueVec<_>>();
+                    changed_files.extend(
+                        changed_paths
+                            .into_iter()
+                            .filter(|&file| candidate.sources.contains_collected_file(file)),
+                    );
                     let changed_crates = candidate
                         .targets
                         .iter()
@@ -143,13 +154,15 @@ impl Project {
                         })
                         .collect::<Vec<_>>();
                     AnalysisChangeSummary {
-                        changed_files,
+                        changed_files: changed_files.into_vec(),
                         changed_crates,
                     }
                 } else {
-                    Self::summarize_changes(&self.state, &candidate)
+                    candidate
+                        .sources
+                        .changes_from(&self.state.sources, &source_changes)
                 };
-                // A path can change its referent while both files stay in the target manifest.
+                // A path can change its referent while both files stay in the target.
                 // A successful request must observe the new lookup even in that case.
                 if graph_changed || presence_changed || !summary.is_empty() {
                     self.state = candidate;
@@ -167,41 +180,5 @@ impl Project {
         }
         database.replace_inputs(accepted);
         Ok(AnalysisChangeSummary::default())
-    }
-
-    fn summarize_changes(before: &ProjectState, after: &ProjectState) -> AnalysisChangeSummary {
-        let mut changed_files = UniqueVec::new();
-        let mut changed_crates = UniqueVec::new();
-        for (slot, (old, new)) in before
-            .parse
-            .packages()
-            .iter()
-            .zip(after.parse.packages())
-            .enumerate()
-        {
-            let package = PackageSlot(slot);
-            for file in old.parsed_files().chain(new.parsed_files()) {
-                let id = file.file_id();
-                if old.parsed_file(id).map(|file| file.source_revision())
-                    != new.parsed_file(id).map(|file| file.source_revision())
-                {
-                    changed_files.push(ChangedFile { package, file: id });
-                    changed_crates.extend(before.crates_for_file(package, id));
-                    changed_crates.extend(after.crates_for_file(package, id));
-                }
-            }
-        }
-        // A shared file can leave one target while remaining in the same package's source union.
-        changed_crates.extend(
-            after
-                .targets
-                .iter()
-                .copied()
-                .filter(|krate| before.module_files.get(krate) != after.module_files.get(krate)),
-        );
-        AnalysisChangeSummary {
-            changed_files: changed_files.into_vec(),
-            changed_crates: changed_crates.into_vec(),
-        }
     }
 }

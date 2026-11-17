@@ -68,12 +68,13 @@ impl<'a, 'db> PathView<'a, 'db> {
             current = parent;
         }
 
+        let package_name;
         let root_name = match crate_data {
             Some(crate_data) => crate_data.name(),
-            None => self
-                .db
-                .package_name(crate_ref.package)
-                .context("load package name for module path")?,
+            None => {
+                package_name = self.db.package_name(crate_ref.package)?;
+                &package_name
+            }
         };
         let mut path = self.syntax.identifier(root_name).to_string();
         for name in names.iter().rev() {

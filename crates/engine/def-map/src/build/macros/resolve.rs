@@ -4,13 +4,12 @@
 //! macro-namespace lookup so locally imported macros can shadow builtin names.
 
 use anyhow::Result;
-use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefRef, ModuleRef, Path};
+use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, Path};
 use rg_text::Name;
 
-use super::{ItemOrder, MacroCallSite};
+use super::{ItemOrder, MacroScopeData};
 use crate::{
     CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, NameBinding, NameResolver,
-    build::crates::CrateBuilder,
 };
 
 /// Macro definition resolved through the ordinary macro namespace.
@@ -29,49 +28,56 @@ pub(super) struct ResolvedMacroDefinition<'a> {
 /// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
-    state: &'a CrateBuilder,
+    crate_ref: CrateRef,
+    scopes: &'a MacroScopeData,
 }
 
 impl<'a, E> ItemMacroResolver<'a, E>
 where
     E: CrateResolutionEnv + MacroDefinitionEnv + ?Sized,
 {
-    pub(super) fn new(env: &'a E, state: &'a CrateBuilder) -> Self {
-        Self { env, state }
+    pub(super) fn new(env: &'a E, crate_ref: CrateRef, scopes: &'a MacroScopeData) -> Self {
+        Self {
+            env,
+            crate_ref,
+            scopes,
+        }
     }
 
     /// Find the selected macro definition visible at a call.
     pub(super) fn resolve(
         &self,
-        call: &MacroCallSite,
+        module: ModuleId,
+        order: &ItemOrder,
         path: &Path,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         if let Some(name) = path.relative_single_name() {
             // Unqualified calls have special `macro_rules!` textual visibility before they behave
             // like ordinary macro-namespace lookups.
-            return self.resolve_single_name_macro(call, name);
+            return self.resolve_single_name_macro(module, order, name);
         }
 
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
         let binding = NameResolver::new(self.env)
-            .macro_binding(ModuleRef::krate(self.state.crate_ref, call.module), path)?;
-        self.resolve_scope_macro_binding(call, binding)
+            .macro_binding(ModuleRef::krate(self.crate_ref, module), path)?;
+        self.resolve_scope_macro_binding(module, order, binding)
     }
 
     /// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
     fn resolve_single_name_macro(
         &self,
-        call: &MacroCallSite,
+        module: ModuleId,
+        order: &ItemOrder,
         name: &Name,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         // Textual `macro_rules!` scope shadows ordinary macro bindings. This covers the
         // source-order behavior that cannot be represented by a normal module-scope map.
-        if let Some(resolved) = self.resolve_textual_macro_rules(call, name)? {
+        if let Some(resolved) = self.resolve_textual_macro_rules(module, order, name)? {
             return Ok(Some(resolved));
         }
 
-        if let Some(resolved) = self.resolve_scope_macro(call, name)? {
+        if let Some(resolved) = self.resolve_scope_macro(module, order, name)? {
             return Ok(Some(resolved));
         }
 
@@ -81,12 +87,13 @@ where
     /// Resolves macros from the current module or selected standard prelude.
     fn resolve_scope_macro(
         &self,
-        call: &MacroCallSite,
+        module: ModuleId,
+        order: &ItemOrder,
         name: &Name,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         let importing_module = ModuleRef {
-            origin: DefMapRef::Crate(self.state.crate_ref),
-            module: call.module,
+            origin: DefMapRef::Crate(self.crate_ref),
+            module,
         };
         let bindings = NameResolver::new(self.env).visible_unqualified_macro_bindings(
             importing_module,
@@ -94,34 +101,36 @@ where
             name,
         )?;
 
-        let module_scope = self.resolve_scope_macro_binding(call, bindings.module_scope)?;
+        let module_scope =
+            self.resolve_scope_macro_binding(module, order, bindings.module_scope)?;
         if module_scope.is_some() {
             return Ok(module_scope);
         }
 
-        self.resolve_scope_macro_binding(call, bindings.standard_prelude)
+        self.resolve_scope_macro_binding(module, order, bindings.standard_prelude)
     }
 
-    /// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
+    /// Searches retained textual `macro_rules!` scopes for the definition visible at this call.
     fn resolve_textual_macro_rules(
         &self,
-        call: &MacroCallSite,
+        module: ModuleId,
+        order: &ItemOrder,
         name: &Name,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-        let mut module = call.module;
-        let mut boundary = &call.order;
+        let mut module = module;
+        let mut boundary = order;
 
         loop {
             // In the current module, use the latest declaration that appears before the call. When
             // we climb to a parent, `boundary` becomes the child module declaration instead.
             if let Some(local_def) = self
-                .state
+                .scopes
                 .textual_macro_scopes
                 .latest_before(module, name, boundary)
             {
                 return self.macro_record_for_def(
                     DefId::Local(LocalDefRef {
-                        origin: DefMapRef::Crate(self.state.crate_ref),
+                        origin: DefMapRef::Crate(self.crate_ref),
                         local_def,
                     }),
                     true,
@@ -131,14 +140,14 @@ where
             // A parent module contributes only declarations that appeared before the child module
             // was declared, matching the textual file view used by `macro_rules!`.
             let Some(parent) = self.env.parent_module(ModuleRef {
-                origin: DefMapRef::Crate(self.state.crate_ref),
+                origin: DefMapRef::Crate(self.crate_ref),
                 module,
             })?
             else {
                 return Ok(None);
             };
             let Some(parent_boundary) = self
-                .state
+                .scopes
                 .textual_macro_scopes
                 .module_declaration_order(module)
             else {
@@ -157,13 +166,13 @@ where
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         // `#[macro_use] extern crate` conflicts prefer the last declaration. Collection keeps
         // source order even when a macro emits an import after written items were collected.
-        for macro_use in self.state.macro_use_imports.iter().rev() {
+        for macro_use in self.scopes.macro_use_imports.iter().rev() {
             if !macro_use.selector.allows(name) {
                 continue;
             }
 
             let import_owner = ModuleRef {
-                origin: DefMapRef::Crate(self.state.crate_ref),
+                origin: DefMapRef::Crate(self.crate_ref),
                 module: macro_use.module,
             };
             if let Some(binding) = NameResolver::new(self.env).visible_macro_binding(
@@ -185,14 +194,15 @@ where
 
     fn resolve_scope_macro_binding(
         &self,
-        call: &MacroCallSite,
+        module: ModuleId,
+        order: &ItemOrder,
         binding: Option<NameBinding>,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         let Some(binding) = binding else {
             return Ok(None);
         };
         Ok(self.macro_record_for_binding(&binding)?.filter(|resolved| {
-            Self::macro_definition_is_visible_by_order(resolved, self.state.crate_ref, call)
+            Self::macro_definition_is_visible_by_order(resolved, self.crate_ref, module, order)
         }))
     }
 
@@ -215,8 +225,8 @@ where
         };
         // Textual order matters only inside the active crate. External definitions belong to
         // completed dependencies, whose source-order worklists have already been discarded.
-        let order = if payload.def_ref.origin == DefMapRef::Crate(self.state.crate_ref) {
-            self.state
+        let order = if payload.def_ref.origin == DefMapRef::Crate(self.crate_ref) {
+            self.scopes
                 .macro_definitions
                 .get(&payload.def_ref.local_def)
                 .map(|record| &record.order)
@@ -235,14 +245,17 @@ where
     fn macro_definition_is_visible_by_order(
         macro_: &ResolvedMacroDefinition<'_>,
         crate_ref: CrateRef,
-        call: &MacroCallSite,
+        module: ModuleId,
+        order: &ItemOrder,
     ) -> bool {
         if !macro_.direct_only {
             return true;
         }
 
         !(macro_.definition.def_ref.origin == DefMapRef::Crate(crate_ref)
-            && macro_.definition.local_def.module == call.module
-            && macro_.order.is_some_and(|order| order > &call.order))
+            && macro_.definition.local_def.module == module
+            && macro_
+                .order
+                .is_some_and(|definition_order| definition_order > order))
     }
 }

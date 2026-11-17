@@ -4,15 +4,15 @@
 //! IDs. Generated declarations also need the connection back to input tokens: their parsed syntax
 //! is temporary, and its offsets are not positions that an editor can navigate to or edit.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use rg_arena::Arena;
-use rg_ir_model::{BodyRef, FileId, PackageSlot, SourceId};
+use rg_ir_model::{BodyRef, FileId, ImplId, PackageSlot, SourceId, TraitId};
 use rg_item_tree::{DeclarationSourceStore, ItemNode, ItemTreeId, ItemTreeRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-/// Stable identifier of one macro expansion payload produced during crate construction.
+/// Stable identifier of one macro expansion within its owning source store.
 ///
 /// The id remains part of compact source provenance after the payload is discarded, just as an
 /// [`ItemTreeRef`] remains useful after the transient ItemTree phase has finished.
@@ -33,15 +33,49 @@ impl rg_arena::ArenaId for GeneratedSourceId {
     }
 }
 
-/// Crate-local source identity for one generated item.
+/// Identifies the query output that owns generated sources within one configured target.
+///
+/// This is independent of semantic ownership. A module macro producing `impl S { fn f() {} }`
+/// stores both declarations' source in `Target`, even though `f` belongs to the impl's member store.
+/// Only expansions performed while collecting that impl's members use `ImplMembers`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum GeneratedSourceStoreId {
+    Target,
+    TraitMembers(TraitId),
+    ImplMembers(ImplId),
+}
+
+/// Source identity for one generated item within a target or member expansion store.
 ///
 /// During Semantic IR lowering this addresses [`GeneratedItemStore`]. Later phases retain it only
 /// as provenance and use the semantic declaration data copied during lowering.
+///
+/// Two independently expanded impls can both allocate `GeneratedSourceId(0)`. `source_store` selects
+/// which owner's expansion table to open before `source` and `item` select entries inside it.
+/// The producing store supplies this identity; semantic lowering must preserve it when assigning
+/// declarations to their semantic owners.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct GeneratedItemRef {
-    pub source: GeneratedSourceId,
-    pub item: ItemTreeId,
+    source_store: GeneratedSourceStoreId,
+    source: GeneratedSourceId,
+    item: ItemTreeId,
+}
+
+impl GeneratedItemRef {
+    pub fn source_store(self) -> GeneratedSourceStoreId {
+        self.source_store
+    }
+
+    pub fn source(self) -> GeneratedSourceId {
+        self.source
+    }
+
+    pub fn item(self) -> ItemTreeId {
+        self.item
+    }
 }
 
 /// Body-local reference to one item-tree-shaped source payload.
@@ -114,14 +148,13 @@ impl ItemSource {
                 file_id: source.file_id,
                 item,
             }),
-            ItemSourceKind::Generated(source) => ItemSourceKind::Generated(GeneratedItemRef {
-                source: source.source,
-                item,
-            }),
-            ItemSourceKind::Synthetic(source) => ItemSourceKind::Synthetic(GeneratedItemRef {
-                source: source.source,
-                item,
-            }),
+            // Selecting a child changes only its item slot, never the source's allocation owner.
+            ItemSourceKind::Generated(source) => {
+                ItemSourceKind::Generated(GeneratedItemRef { item, ..source })
+            }
+            ItemSourceKind::Synthetic(source) => {
+                ItemSourceKind::Synthetic(GeneratedItemRef { item, ..source })
+            }
             ItemSourceKind::Body(source) => ItemSourceKind::Body(BodyItemSourceRef {
                 body: source.body,
                 item,
@@ -172,22 +205,35 @@ impl GeneratedSourceData {
     }
 }
 
-/// Crate-local generated declarations retained only between DefMap and Semantic IR construction.
+/// Generated declarations retained until their meaning has been copied into Semantic IR.
 ///
 /// Macro expansion needs item-tree-shaped declarations while it discovers modules, definitions,
 /// imports, and associated items. Those declarations are substantially larger than the resulting
-/// semantic facts, so this store travels beside the frozen DefMap instead of becoming part of it.
-#[derive(Debug, Clone, Default, MemorySize, Shrink)]
+/// semantic facts, so they stay in this temporary store. Target collection and each member query
+/// have separate stores. A store constructs references with its own identity so callers cannot
+/// accidentally label a source with the semantic owner of one of its declarations.
+#[derive(Debug, Clone, MemorySize, Shrink)]
 pub struct GeneratedItemStore {
+    id: GeneratedSourceStoreId,
     sources: Arena<GeneratedSourceId, GeneratedSourceData>,
-    /// Generated associated items keyed by the macro call they replace.
-    ///
-    /// For `impl User { methods!(); }`, the call source maps to its generated functions, types,
-    /// consts, and any retained nested macro calls.
-    associated_macro_expansions: HashMap<ItemSource, Vec<ItemSource>>,
 }
 
 impl GeneratedItemStore {
+    pub(crate) fn new(id: GeneratedSourceStoreId) -> Self {
+        Self {
+            id,
+            sources: Arena::new(),
+        }
+    }
+
+    pub(crate) fn item_ref(&self, source: GeneratedSourceId, item: ItemTreeId) -> GeneratedItemRef {
+        GeneratedItemRef {
+            source_store: self.id,
+            source,
+            item,
+        }
+    }
+
     /// Keep provenance after Semantic IR has copied the generated declaration meaning. Preserve
     /// expansion slot order so existing [`GeneratedSourceId`] values still select the same source.
     pub fn into_sources(self) -> GeneratedSourceStore {
@@ -201,10 +247,6 @@ impl GeneratedItemStore {
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.sources.is_empty() && self.associated_macro_expansions.is_empty()
-    }
-
     pub(crate) fn alloc_source(&mut self, source: GeneratedSourceData) -> GeneratedSourceId {
         self.sources.alloc(source)
     }
@@ -213,25 +255,14 @@ impl GeneratedItemStore {
         self.sources.get(source)
     }
 
-    pub(crate) fn insert_associated_macro_expansion(
-        &mut self,
-        call: ItemSource,
-        generated_items: Vec<ItemSource>,
-    ) {
-        self.associated_macro_expansions
-            .insert(call, generated_items);
-    }
-
     pub fn item(&self, item: GeneratedItemRef) -> Option<&ItemNode> {
+        // Expansion slots overlap between stores; a valid local index is not enough.
+        if item.source_store != self.id {
+            return None;
+        }
         self.sources
             .get(item.source)
             .and_then(|source| source.item(item.item))
-    }
-
-    pub fn associated_macro_expansion(&self, call: ItemSource) -> Option<&[ItemSource]> {
-        self.associated_macro_expansions
-            .get(&call)
-            .map(Vec::as_slice)
     }
 }
 
@@ -315,7 +346,7 @@ pub enum GeneratedLocations {
     Inherited(ItemSource),
 }
 
-/// Source mappings retained for a target after generated item payloads have been released.
+/// Source mappings retained by a target or member query after generated items have been released.
 ///
 /// [`GeneratedSourceId`] selects an expansion or inherited source here; [`SourceId`] selects an
 /// occurrence inside that source. Keeping this store separate from declaration meaning lets a

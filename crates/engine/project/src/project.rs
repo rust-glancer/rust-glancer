@@ -53,6 +53,9 @@ impl Project {
                 })
             })
         });
+        // Member queries can capture include files after startup. Drop their reloadable bytes
+        // when the request ends, keeping the exact revision for subsequent reads.
+        SourceInput::evict_saved_text(database.inputs());
         database.set_services(QueryServices::default());
         Ok(result?)
     }

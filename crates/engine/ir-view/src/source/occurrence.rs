@@ -16,7 +16,6 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
-use rg_parse::Package;
 use rg_semantic_ir::TypePathContext;
 use rg_syntax::SourceFile;
 
@@ -334,14 +333,14 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     /// Find caller-written format templates through macro expansion, without loading bodies.
     pub fn format_string_spans(
         &self,
-        package: &Package,
         crate_ref: CrateRef,
         file: FileId,
         syntax: &SourceFile,
         range: Option<Span>,
     ) -> anyhow::Result<Vec<Span>> {
+        let config = self.db.crate_config(crate_ref)?;
         BodyMacroExpander::new(&self.db.def_map, self.db.cancellation().clone())
-            .format_string_spans(package, crate_ref, file, syntax, range)
+            .format_string_spans(&config, crate_ref, file, syntax, range)
     }
 
     /// Returns the named source spelling selected by an expression, when the expression has one.

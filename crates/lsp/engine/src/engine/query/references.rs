@@ -13,7 +13,7 @@ use std::{path::Path, time::Instant};
 
 use anyhow::Context as _;
 use rg_analysis::{ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget};
-use rg_ir_model::{CrateRef, PackageSlot};
+use rg_ir_model::CrateRef;
 use rg_lsp_proto::{DocumentPositionSnapshot, GlobalPositionSnapshot};
 use rg_project::{FileContext, ProjectSnapshot};
 use rg_std::UniqueVec;
@@ -162,18 +162,10 @@ impl QueryRunner<'_> {
             else {
                 return Ok(None);
             };
-            if !Self::rename_target_matches_source(
-                snapshot,
-                context.crate_ref.package,
-                &rename_target,
-            )? {
+            if !Self::rename_target_matches_source(snapshot, &rename_target)? {
                 return Ok(None);
             }
-            let response = Some(rename_proto::prepare_rename(
-                snapshot,
-                context.crate_ref.package,
-                rename_target,
-            )?);
+            let response = Some(rename_proto::prepare_rename(snapshot, rename_target)?);
 
             tracing::trace!(
                 path = %path.display(),
@@ -227,11 +219,7 @@ impl QueryRunner<'_> {
             else {
                 return Ok(None);
             };
-            if !Self::rename_target_matches_source(
-                snapshot,
-                context.crate_ref.package,
-                &rename_result.target,
-            )? {
+            if !Self::rename_target_matches_source(snapshot, &rename_result.target)? {
                 return Ok(None);
             }
             let edits = rename_result.edits;
@@ -322,11 +310,11 @@ impl QueryRunner<'_> {
     /// Check that the selected declaration still contains the placeholder seen by analysis.
     fn rename_target_matches_source(
         snapshot: ProjectSnapshot<'_>,
-        package: PackageSlot,
         target: &RenameTarget,
     ) -> anyhow::Result<bool> {
         Ok(snapshot
-            .file_text_for_span(package, target.file_id, target.span)
+            .sources()
+            .text_for_span(target.file_id, target.span)
             .context("read rename target source")?
             .is_some_and(|text| text == target.placeholder))
     }
@@ -354,7 +342,8 @@ impl QueryRunner<'_> {
             }
 
             let Some(text) = snapshot
-                .file_text_for_span(edit.crate_ref.package, edit.file_id, edit.span)
+                .sources()
+                .text_for_span(edit.file_id, edit.span)
                 .context("read rename edit source")?
             else {
                 tracing::debug!(

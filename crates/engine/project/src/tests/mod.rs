@@ -7,6 +7,7 @@ mod file_queries;
 mod format_captures;
 mod generated_modules;
 mod initializers;
+mod lazy_members;
 mod member_identity;
 mod utils;
 
@@ -17,7 +18,7 @@ use std::{
 
 use expect_test::expect;
 use rg_analysis::ReferenceQuery;
-use rg_ir_model::{PackageSlot, Span};
+use rg_ir_model::Span;
 use rg_source::CapturedSource;
 
 use self::utils::{HostFixture, HostObservation};
@@ -62,26 +63,33 @@ pub struct Before;
     std::fs::write(&path, captured.text()).expect("disk should contain the proposed saved value");
 
     let summary = project
-        .apply_change(SavedFileChange::captured(captured.clone()))
+        .apply_changes([SavedFileChange::captured(captured.clone())])
         .expect("matching captured source should publish");
 
     assert_ne!(project.generation_id(), previous_generation);
     let canonical = path
         .canonicalize()
         .expect("published fixture source should canonicalize");
-    let entry = project.state.parse_db().packages()[0]
-        .parsed_files()
-        .find(|file| file.path() == canonical)
-        .expect("published captured source should remain available");
+    let file_id =
+        project.inspect(|snapshot| ProjectFixture::file_id_for_path_in(snapshot, &canonical));
     assert_eq!(summary.changed_files.len(), 1);
-    assert_eq!(entry.source_revision(), captured.revision());
-    assert_eq!(
-        entry
-            .source_text()
-            .expect("published captured source should reload from matching disk")
-            .as_ref(),
-        "pub struct Captured;\n"
-    );
+    project.inspect(|snapshot| {
+        assert_eq!(
+            snapshot
+                .sources()
+                .revision(file_id)
+                .expect("saved revision"),
+            captured.revision()
+        );
+        assert_eq!(
+            snapshot
+                .sources()
+                .text(file_id)
+                .expect("published captured source should reload from matching disk")
+                .as_ref(),
+            "pub struct Captured;\n"
+        );
+    });
 }
 
 #[test]
@@ -101,14 +109,14 @@ pub struct Published;
     let path = fixture.path("src/lib.rs");
     let mut project = fixture.build_project();
     let published_generation = project.generation_id();
-    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+    let file_id = project.inspect(|snapshot| ProjectFixture::file_id_for_path_in(snapshot, &path));
 
     let captured = CapturedSource::new(&path, "pub struct Proposed;\n")
         .expect("existing fixture source should capture");
     std::fs::write(&path, "pub struct Newer;\n")
         .expect("disk should advance beyond the captured proposal");
     let error = project
-        .apply_change(SavedFileChange::captured(captured))
+        .apply_changes([SavedFileChange::captured(captured)])
         .expect_err("a newer disk value must reject the captured candidate");
 
     let canonical = path
@@ -122,12 +130,13 @@ pub struct Published;
     assert_eq!(project.generation_id(), published_generation);
 
     // Restore the disk proof for the still-published generation, then verify that the failed
-    // proposal never leaked into its ParseDb.
+    // proposal never leaked into its saved source inputs.
     std::fs::write(&path, "pub struct Published;\n")
         .expect("published fixture source should be restored");
     let text = project.inspect(|snapshot| {
         snapshot
-            .file_text_for_span(PackageSlot(0), file_id, Span { start: 0, end: 21 })
+            .sources()
+            .text_for_span(file_id, Span { start: 0, end: 21 })
             .expect("published source should load after rejected proposal")
             .expect("published source span should exist")
     });
@@ -191,7 +200,7 @@ pub struct AlreadySaved;
         .expect("existing fixture source should capture");
 
     let summary = project
-        .apply_change(SavedFileChange::captured(captured))
+        .apply_changes([SavedFileChange::captured(captured)])
         .expect("unchanged captured save should be accepted");
 
     assert_eq!(summary, AnalysisChangeSummary::default());
@@ -228,7 +237,7 @@ pub struct Published;
 }
 
 #[test]
-fn saved_module_rename_retires_historical_source() {
+fn saved_module_rename_updates_source_routing() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -263,17 +272,19 @@ pub struct Before;
 
     assert_eq!(summary.changed_files.len(), 3);
     assert!(
-        !project.state.parse_db().contains_file_path(&old_canonical),
-        "renamed module source should leave the package file table",
+        project.inspect(|snapshot| snapshot
+            .file_context_for_source_path(&old_canonical)
+            .expect("old file routing")
+            .is_none()),
+        "the old module path should no longer have an owning crate",
     );
 
-    // A later save proves that the retired path cannot poison every candidate forked from this
-    // generation.
+    // A subsequent save must accept the new source layout too.
     std::fs::write(&new, "pub struct After;\n")
         .expect("renamed module should accept a later saved edit");
     project
-        .apply_change(SavedFileChange::fs_path(&new))
-        .expect("later save should not validate the retired module path");
+        .apply_changes([SavedFileChange::fs_path(&new)])
+        .expect("later save should accept the renamed module");
 }
 
 #[test]
@@ -292,15 +303,13 @@ pub struct Before;
     );
     let path = fixture.path("src/lib.rs");
     let project = fixture.build_project();
-    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+    let file_id = project.inspect(|snapshot| ProjectFixture::file_id_for_path_in(snapshot, &path));
     std::fs::write(&path, "\n\npub struct After;\n")
         .expect("newer fixture source should be written");
 
     let error = project
         .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
-            snapshot
-                .file_line_index(PackageSlot(0), file_id)
-                .map(|index| index.cloned())
+            Ok(snapshot.sources().line_index(file_id)?.clone())
         })
         .expect_err("line index reload should reject a newer source revision");
     assert!(
@@ -418,7 +427,7 @@ pub struct AlreadyApplied;
         .clear();
 
     let summary = project
-        .apply_change(SavedFileChange::fs_path(fixture.path("src/lib.rs")))
+        .apply_changes([SavedFileChange::fs_path(fixture.path("src/lib.rs"))])
         .expect("an unchanged watcher replay should be accepted");
 
     assert_eq!(summary, AnalysisChangeSummary::default());
@@ -628,7 +637,7 @@ recurse!();
     std::fs::write(&source_path, "pub struct Finished;\n")
         .expect("fixture source should accept a finite replacement");
     let change = project
-        .apply_change(SavedFileChange::fs_path(source_path))
+        .apply_changes([SavedFileChange::fs_path(source_path)])
         .expect("finite replacement should rebuild the affected package");
     assert_eq!(change.changed_crates.len(), 1);
     assert!(
@@ -691,12 +700,12 @@ pub struct Independent;
     );
     let project = fixture.build_project();
     project.inspect(|snapshot| {
-        let dep_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "dep");
-        let app_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "app");
-        let dep_file = ProjectFixture::file_id_for_path_in(
-            snapshot.parse_db(),
-            &fixture.path("crates/dep/src/lib.rs"),
-        );
+        let dep_package =
+            ProjectFixture::package_slot_by_name_in(snapshot.state.workspace(), "dep");
+        let app_package =
+            ProjectFixture::package_slot_by_name_in(snapshot.state.workspace(), "app");
+        let dep_file =
+            ProjectFixture::file_id_for_path_in(snapshot, &fixture.path("crates/dep/src/lib.rs"));
         let dep_target = snapshot
             .crates_for_file(dep_package, dep_file)
             .expect("dep target lookup should succeed")
@@ -714,11 +723,13 @@ pub struct Independent;
             .into_iter()
             .map(|target| {
                 snapshot
-                    .parse_db()
-                    .package(target.package.0)
+                    .state
+                    .workspace()
+                    .packages()
+                    .get(target.package.0)
                     .expect("reference search target package should exist")
-                    .package_name()
-                    .to_owned()
+                    .name
+                    .clone()
             })
             .collect::<BTreeSet<_>>();
 
@@ -731,7 +742,7 @@ pub struct Independent;
 }
 
 #[test]
-fn reparses_known_file_in_place() {
+fn saved_declaration_changes_refresh_workspace_symbols() {
     let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
@@ -744,7 +755,6 @@ edition = "2024"
 pub struct User;
 "#,
     );
-    let before_file_id = fixture.file_id_for_path("src/lib.rs");
 
     fixture.check(
         &[HostObservation::workspace_symbols("User")],
@@ -765,7 +775,7 @@ pub struct Account;
         ],
         expect![[r#"
             changed files
-            - host_update_fixture src/lib.rs
+            - src/lib.rs
 
             changed targets
             - host_update_fixture[lib]
@@ -776,12 +786,6 @@ pub struct Account;
             workspace symbols `User`
             - <none>
         "#]],
-    );
-
-    let after_file_id = fixture.file_id_for_path("src/lib.rs");
-    assert_eq!(
-        after_file_id, before_file_id,
-        "known file reparses should keep the package-local FileId stable"
     );
 }
 
@@ -817,8 +821,8 @@ mod api;
         ],
         expect![[r#"
             changed files
-            - host_new_module_fixture src/api.rs
-            - host_new_module_fixture src/lib.rs
+            - src/api.rs
+            - src/lib.rs
 
             changed targets
             - host_new_module_fixture[lib]
@@ -984,7 +988,7 @@ pub struct NewType;
         &[HostObservation::workspace_symbols("NewType")],
         expect![[r#"
             changed files
-            - new_pkg crates/new_pkg/src/lib.rs
+            - crates/new_pkg/src/lib.rs
 
             changed targets
             - app[lib]
@@ -1045,7 +1049,7 @@ pub struct NewType;
         &[HostObservation::workspace_symbols("NewType")],
         expect![[r#"
             changed files
-            - new_pkg crates/new_pkg/src/lib.rs
+            - crates/new_pkg/src/lib.rs
 
             changed targets
             - app[lib]
@@ -1126,7 +1130,7 @@ fn smoke() {}
         )],
         expect![[r#"
             changed files
-            - autotarget_fixture tests/smoke.rs
+            - tests/smoke.rs
 
             changed targets
             - autotarget_fixture[lib]
@@ -1166,7 +1170,7 @@ fn changed_smoke() {}
         &[],
         expect![[r#"
             changed files
-            - autotarget_update_fixture tests/smoke.rs
+            - tests/smoke.rs
 
             changed targets
             - autotarget_update_fixture[test]
@@ -1313,7 +1317,7 @@ pub struct Root;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]
@@ -1331,7 +1335,7 @@ pub struct Api;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/api.rs
+            - crates/dep/src/api.rs
 
             changed targets
             - dep[lib]
@@ -1406,8 +1410,8 @@ pub struct Root;
         ],
         expect![[r#"
             changed files
-            - dep crates/dep/src/api.rs
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/api.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]
@@ -1547,7 +1551,7 @@ pub struct Renamed;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]
@@ -1623,7 +1627,7 @@ pub struct Renamed;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]

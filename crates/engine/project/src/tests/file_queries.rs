@@ -6,7 +6,10 @@ use rg_ir_model::{BodyKey, PrimitiveTy, Span, UnsignedIntTy};
 use rg_semantic_ir::target_declarations;
 use rg_std::CancellationToken;
 
-use crate::{Project, SavedFileChange, testonly::ProjectSourceFixture};
+use crate::{
+    SavedFileChange,
+    testonly::{ProjectFixture, ProjectSourceFixture},
+};
 
 #[test]
 fn queries_bodies_in_primary_and_secondary_targets() {
@@ -92,7 +95,12 @@ fn main() {
         .path("src/included.rs")
         .canonicalize()
         .expect("generated include exists");
-    assert!(cold.state.parse_db().contains_file_path(&included));
+    assert!(cold.inspect(|snapshot| {
+        snapshot
+            .file_context_for_source_path(&included)
+            .expect("source routing")
+            .is_some()
+    }));
     let file = cold.inspect(|snapshot| {
         snapshot
             .file_context_for_path(fixture.path("src/main.rs"))
@@ -101,7 +109,12 @@ fn main() {
     drop(cold);
 
     let warm = fixture.build_project();
-    assert!(warm.state.parse_db().contains_file_path(&included));
+    assert!(warm.inspect(|snapshot| {
+        snapshot
+            .file_context_for_source_path(&included)
+            .expect("source routing")
+            .is_some()
+    }));
     let path = fixture.path("src/main.rs");
     let text = std::fs::read_to_string(&path).expect("read binary source");
     let (definitions, body) = warm.inspect(|snapshot| {
@@ -132,8 +145,11 @@ fn main() {
             .expect("imported type definition");
         assert_eq!(targets.len(), 1);
         assert_eq!(
-            snapshot.file_path(targets[0].crate_ref.package, targets[0].file_id),
-            Some(included.as_path())
+            snapshot
+                .sources()
+                .path(targets[0].file_id)
+                .expect("source path"),
+            included.as_path()
         );
 
         let spans = text
@@ -203,17 +219,17 @@ fn main() {
 }
 
 #[test]
-fn saves_update_one_targets_membership_without_displacing_the_sibling() {
-    let fixture = ProjectSourceFixture::build(
+fn shared_source_changes_and_routing_follow_each_target() {
+    let mut fixture = ProjectFixture::build(
         r#"
 //- /Cargo.toml
 [package]
-name = "targets"
+name = "shared_source_routing"
 version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-mod shared;
+pub mod shared;
 mod new_child;
 
 //- /src/main.rs
@@ -221,53 +237,77 @@ mod shared;
 fn main() {}
 
 //- /src/shared.rs
-pub struct Shared;
+pub struct Before;
 "#,
     );
-    let mut project = fixture.build_project();
-    let shared = Project::inspect(&project, |snapshot| {
-        snapshot
-            .file_context_for_path(fixture.path("src/shared.rs"))
-            .expect("route shared source")
-            .expect("shared source belongs to both targets")
-    });
-    let owners = |project: &Project| {
-        project.inspect(|snapshot| {
+    let (library, binary, shared) = fixture.project().inspect(|snapshot| {
+        let context = |path| {
             snapshot
-                .crates_for_file(shared.crate_ref.package, shared.file)
-                .expect("find target owners")
-        })
-    };
-    let before = owners(&project);
-    assert_eq!(before.len(), 2);
+                .file_context_for_path(fixture.path(path))
+                .expect("route source")
+                .expect("source belongs to a target")
+        };
+        (
+            context("src/lib.rs"),
+            context("src/main.rs"),
+            context("src/shared.rs"),
+        )
+    });
+    assert_eq!(shared.crate_ref, library.crate_ref);
 
-    let root = fixture.path("src/lib.rs");
-    let child = fixture.path("src/new_child.rs");
-    std::fs::write(&root, "mod new_child;\n").expect("update library root");
-    std::fs::write(&child, "pub struct NewChild;\n").expect("create new module");
-    project
-        .apply_changes([
-            SavedFileChange::fs_path(&root),
-            SavedFileChange::fs_path(&child),
-        ])
-        .expect("publish changed membership");
+    // One physical edit affects both interpretations and appears only once in the summary.
+    let summary = fixture.apply_saved_fixture(
+        r#"
+//- /src/shared.rs
+pub struct After;
+"#,
+    );
+    assert_eq!(summary.changed_files, vec![shared.file]);
+    assert_eq!(summary.changed_crates.len(), 2);
+    assert!(summary.changed_crates.contains(&library.crate_ref));
+    assert!(summary.changed_crates.contains(&binary.crate_ref));
 
-    let after = owners(&project);
-    assert_eq!(after.len(), 1);
-    assert!(before.contains(&after[0]));
-    project.inspect(|snapshot| {
+    // Replace the library's shared module with a newly created child. The binary still
+    // owns the unchanged shared file, so routing must move to that interpretation.
+    let summary = fixture.apply_saved_fixture(
+        r#"
+//- /src/lib.rs
+mod new_child;
+
+//- /src/new_child.rs
+pub struct NewChild;
+"#,
+    );
+    assert_eq!(summary.changed_crates, vec![library.crate_ref]);
+    assert_eq!(summary.changed_files.len(), 3);
+    assert!(summary.changed_files.contains(&library.file));
+    assert!(summary.changed_files.contains(&shared.file));
+    fixture.project().inspect(|snapshot| {
         let new_child = snapshot
-            .file_context_for_path(&child)
+            .file_context_for_path(fixture.path("src/new_child.rs"))
             .expect("route new module")
             .expect("new module should be indexed");
-        assert_ne!(after[0], new_child.crate_ref);
+        assert_eq!(new_child.crate_ref, library.crate_ref);
+        assert!(summary.changed_files.contains(&new_child.file));
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/shared.rs"))
+            .expect("route remaining source")
+            .expect("binary still owns the shared file");
+        assert_eq!(context.file, shared.file);
+        assert_eq!(context.crate_ref, binary.crate_ref);
         assert_eq!(
             snapshot
-                .file_context_for_path(fixture.path("src/main.rs"))
-                .expect("route binary root")
-                .expect("binary root")
-                .crate_ref,
-            after[0]
+                .crates_for_file(library.crate_ref.package, shared.file)
+                .expect("find remaining owners"),
+            vec![binary.crate_ref]
+        );
+        assert_eq!(
+            snapshot
+                .sources()
+                .text(shared.file)
+                .expect("saved text")
+                .as_ref(),
+            "pub struct After;\n"
         );
     });
 }
@@ -294,7 +334,7 @@ fn main() {}
     let tool = fixture.path("src/bin/tool.rs");
     std::fs::remove_file(&tool).expect("remove autodiscovered target");
     project
-        .apply_change(SavedFileChange::fs_path(tool))
+        .apply_changes([SavedFileChange::fs_path(tool)])
         .expect("reload Cargo metadata after deleting a target");
     project.inspect(|snapshot| {
         let analysis = snapshot.analysis();

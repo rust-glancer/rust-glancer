@@ -8,14 +8,17 @@ use crate::memory::MemoryControl;
 
 // Read a local binding through the published snapshot so this also checks cache-backed bodies.
 fn assert_saved_body_type(project: &ProjectCoordinator, path: &std::path::Path) {
-    let source = std::fs::read_to_string(path).expect("fixture source should exist");
+    let path = path
+        .canonicalize()
+        .expect("fixture source should canonicalize");
+    let source = std::fs::read_to_string(&path).expect("fixture source should exist");
     let offset = source.rfind("value").expect("fixture has a local value") as u32;
     project
         .saved_project()
         .expect("saved project should be available")
         .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
             let context = snapshot
-                .file_context_for_path(path)
+                .file_context_for_source_path(&path)
                 .expect("fixture context should load")
                 .expect("fixture source should be indexed");
             let analysis = snapshot.analysis();

@@ -106,24 +106,6 @@ impl TypeRef {
         path.as_def_map_path()
     }
 
-    /// Returns the simple associated path shape `T::Assoc`.
-    ///
-    /// This is syntax-only: for `S::Item`, this returns `S` and `Item`, but the caller still has
-    /// to decide whether `S` is actually one of the relevant type parameters.
-    pub fn as_type_param_assoc_path(&self) -> Option<(&Name, &Name)> {
-        if let Self::Path(path) = self
-            && path.anchor.is_none()
-            && !path.absolute
-            && let [param_segment, assoc_segment] = path.segments.as_slice()
-            && param_segment.args.is_empty()
-            && assoc_segment.args.is_empty()
-        {
-            return Some((&param_segment.name, &assoc_segment.name));
-        }
-
-        None
-    }
-
     /// Returns true when this type syntax contains explicit generic arguments anywhere inside it.
     pub fn has_generic_args(&self) -> bool {
         match self {
@@ -458,18 +440,6 @@ impl TypeBound {
             | Self::Lifetime(_)
             | Self::Unsupported(_) => None,
         }
-    }
-
-    /// Returns true for `?Trait`, which relaxes a compiler-provided default instead of requiring
-    /// a predicate from the solver.
-    pub fn is_relaxed_trait(&self) -> bool {
-        matches!(
-            self,
-            Self::Trait {
-                modifier: TraitBoundModifier::Maybe,
-                ..
-            }
-        )
     }
 
     /// Returns true when this bound contains explicit generic arguments anywhere inside it.

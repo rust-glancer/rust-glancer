@@ -5,14 +5,18 @@
 //! collection changes the builder that owns their payload. Written items stay borrowed.
 //!
 //! Real module contents start their own file order. Included fragments and expansion output instead
-//! extend the invocation's order and retain its module or associated-item placement. Those inputs
+//! extend the invocation's order and retain its module. Those inputs
 //! are carried explicitly; a physical filename does not decide semantic ownership.
+//!
+//! Traits and impls stop this traversal at their headers. Their member declarations are retained
+//! as separate inputs, so collecting `impl Bag { include!("methods.rs"); }` does not read that
+//! include file. A later query for this impl's members performs that work.
 
 use std::{borrow::Cow, collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
+    CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, LocalImplId, ModuleId, ModuleRef,
 };
 use rg_item_tree::{
     EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ImportAlias, ItemKind, ItemNode,
@@ -24,16 +28,16 @@ use rg_text::Name;
 use rg_workspace::TargetKind;
 
 use crate::{
-    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
-    ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
+    GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath, ItemSource,
+    ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
     MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
     NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
         crates::CrateBuilder,
         macros::{
-            GeneratedOrigin, ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite,
-            MacroDefinitionRecord, MacroUseImport, PendingGeneratedModule,
+            AssociatedItemInput, AssociatedItemOwner, GeneratedOrigin, ItemOrder, MacroCallOrigin,
+            MacroCallSite, MacroDefinitionRecord, MacroUseImport, PendingGeneratedModule,
         },
     },
     profile::metric,
@@ -81,32 +85,19 @@ impl<'a> DeclarationCollector<'a> {
         file: FileId,
         context: Arc<ModuleFileContext>,
     ) -> Result<bool> {
-        self.collect_file_items(
-            module,
-            file,
-            ItemOrder::real,
-            MacroCallPlacement::ModuleItems,
-            context,
-        )?;
+        self.collect_file_items(module, file, ItemOrder::real, context)?;
         Ok(self.changed)
     }
 
-    /// Splice a real include at its invocation, keeping its source refs and placement.
+    /// Splice a real include at its invocation, keeping its source refs.
     pub(crate) fn collect_file(
         mut self,
         module: ModuleId,
         file: FileId,
         order: ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<bool> {
-        self.collect_file_items(
-            module,
-            file,
-            |index| order.generated_child(index),
-            placement,
-            context,
-        )?;
+        self.collect_file_items(module, file, |index| order.generated_child(index), context)?;
         Ok(self.changed)
     }
 
@@ -118,7 +109,6 @@ impl<'a> DeclarationCollector<'a> {
         file: FileId,
         items: &[ItemTreeId],
         order: ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<bool> {
         // This subset still belongs to the active file. A child module pointing back to that
@@ -134,7 +124,6 @@ impl<'a> DeclarationCollector<'a> {
                 .into()
             }),
             |index| order.generated_child(index),
-            placement,
             context,
         )?;
         Ok(self.changed)
@@ -148,24 +137,19 @@ impl<'a> DeclarationCollector<'a> {
         self.changed = true;
         let items = self
             .state
-            .def_map_builder
-            .generated_source(generated_source)
+            .generated_items
+            .source(generated_source)
             .expect("new generated source should exist")
             .top_level
-            .clone();
+            .iter()
+            .map(|&item| self.state.generated_items.item_ref(generated_source, item))
+            .collect::<Vec<_>>();
         self.collect_items(
             origin.module,
-            items.into_iter().map(|item| {
-                ItemSource::generated(
-                    origin.file_id,
-                    GeneratedItemRef {
-                        source: generated_source,
-                        item,
-                    },
-                )
-            }),
+            items
+                .into_iter()
+                .map(|item| ItemSource::generated(origin.file_id, item)),
             |index| origin.order.generated_child(index),
-            origin.placement,
             origin.module_file_context,
         )?;
         Ok(self.changed)
@@ -198,9 +182,8 @@ impl<'a> DeclarationCollector<'a> {
             ),
             ItemSourceKind::Generated(source) => Cow::Owned(
                 self.state
-                    .def_map_builder
-                    .generated_source(source.source)
-                    .and_then(|data| data.item(source.item))
+                    .generated_items
+                    .item(source)
                     .expect("generated item should exist while collecting declarations")
                     .clone(),
             ),
@@ -216,7 +199,6 @@ impl<'a> DeclarationCollector<'a> {
         module: ModuleId,
         file: FileId,
         order_for: impl Fn(usize) -> ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<()> {
         if !self.active_files.insert(file) {
@@ -236,23 +218,20 @@ impl<'a> DeclarationCollector<'a> {
                 .into()
             }),
             order_for,
-            placement,
             context,
         );
         self.active_files.remove(&file);
         result
     }
 
-    /// Apply the same cfg and declaration rules to every source; associated output stays in its owner.
+    /// Apply the same cfg and declaration rules to written and generated module items.
     fn collect_items(
         &mut self,
         module: ModuleId,
         items: impl IntoIterator<Item = ItemSource>,
         order_for: impl Fn(usize) -> ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<()> {
-        let mut associated_items = Vec::new();
         for (index, source) in items.into_iter().enumerate() {
             let item = self.item(source);
             if !self.is_item_enabled(&item) {
@@ -260,40 +239,10 @@ impl<'a> DeclarationCollector<'a> {
             }
             self.changed = true;
             let order = order_for(index);
-            match placement {
-                MacroCallPlacement::ModuleItems => {
-                    if matches!(source.kind, ItemSourceKind::Generated(_)) {
-                        metric::GENERATED_ITEMS_SEEN.inc();
-                    }
-                    self.collect_item(module, &item, source, order, Arc::clone(&context))?;
-                }
-                MacroCallPlacement::AssociatedItems { .. } => match &item.kind {
-                    ItemKind::Const(_) | ItemKind::Function(_) | ItemKind::TypeAlias(_) => {
-                        associated_items.push(source)
-                    }
-                    ItemKind::MacroCall(call) => {
-                        associated_items.push(source);
-                        self.collect_macro_call(
-                            module,
-                            &item,
-                            source,
-                            call,
-                            order,
-                            MacroCallPlacement::AssociatedItems {
-                                call_source: source,
-                            },
-                            Arc::clone(&context),
-                        );
-                    }
-                    // Other declarations do not produce supported associated-item facts.
-                    _ => {}
-                },
+            if matches!(source.kind, ItemSourceKind::Generated(_)) {
+                metric::GENERATED_ITEMS_SEEN.inc();
             }
-        }
-        if let MacroCallPlacement::AssociatedItems { call_source } = placement {
-            self.state
-                .def_map_builder
-                .insert_associated_macro_expansion(call_source, associated_items);
+            self.collect_item(module, &item, source, order, Arc::clone(&context))?;
         }
         Ok(())
     }
@@ -317,24 +266,18 @@ impl<'a> DeclarationCollector<'a> {
             ItemKind::Use(use_item) => self.collect_use(module, item, source, use_item),
             ItemKind::Enum(enum_item) => self.collect_enum(module, item, source, enum_item),
             ItemKind::Impl(impl_item) => {
-                self.collect_local_impl(module, item, source);
-                self.collect_associated_macro_calls(
+                let owner = self.collect_local_impl(module, item, source);
+                self.capture_associated_items(
+                    AssociatedItemOwner::Impl(owner),
                     module,
                     source,
                     &impl_item.items,
-                    &order,
-                    &context,
+                    order,
                 );
             }
-            ItemKind::MacroCall(call) => self.collect_macro_call(
-                module,
-                item,
-                source,
-                call,
-                order,
-                MacroCallPlacement::ModuleItems,
-                context,
-            ),
+            ItemKind::MacroCall(call) => {
+                self.collect_macro_call(module, item, source, call, order, context)
+            }
             ItemKind::MacroDefinition(definition) => {
                 self.collect_macro_definition(module, item, source, definition, order)
             }
@@ -353,16 +296,15 @@ impl<'a> DeclarationCollector<'a> {
                 }
             }
             ItemKind::Trait(trait_item) => {
-                if self
-                    .collect_local_def(module, item, source, NameBindingProvenance::Direct)
-                    .is_some()
+                if let Some(owner) =
+                    self.collect_local_def(module, item, source, NameBindingProvenance::Direct)
                 {
-                    self.collect_associated_macro_calls(
+                    self.capture_associated_items(
+                        AssociatedItemOwner::Trait(owner),
                         module,
                         source,
                         &trait_item.items,
-                        &order,
-                        &context,
+                        order,
                     );
                 }
             }
@@ -382,7 +324,6 @@ impl<'a> DeclarationCollector<'a> {
         source: ItemSource,
         call: &MacroCallItem,
         order: ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) {
         let Some(input) = &call.input else {
@@ -391,8 +332,8 @@ impl<'a> DeclarationCollector<'a> {
         let (source, dollar_crate) = match source.kind {
             ItemSourceKind::Generated(generated) => (
                 self.state
-                    .def_map_builder
-                    .generated_source(generated.source)
+                    .generated_items
+                    .source(generated.source())
                     .expect("generated call source should exist")
                     .origin_source,
                 self.dollar_crate,
@@ -412,7 +353,6 @@ impl<'a> DeclarationCollector<'a> {
                 file_id: item.file_id,
                 call_site: input.call_site,
                 order,
-                placement,
                 module_file_context: context,
             },
             self.origin,
@@ -542,6 +482,7 @@ impl<'a> DeclarationCollector<'a> {
             ),
         );
         self.state
+            .macro_scopes
             .textual_macro_scopes
             .record_module_declaration(child, order.clone());
         match &module_item.source {
@@ -561,7 +502,6 @@ impl<'a> DeclarationCollector<'a> {
                             ItemOrder::real(index)
                         }
                     },
-                    MacroCallPlacement::ModuleItems,
                     child_context,
                 )?;
             }
@@ -569,24 +509,16 @@ impl<'a> DeclarationCollector<'a> {
                 let Some((file, child_context)) = resolved_file else {
                     return Ok(());
                 };
-                self.collect_file_items(
-                    child,
-                    file,
-                    ItemOrder::real,
-                    MacroCallPlacement::ModuleItems,
-                    child_context,
-                )?;
+                self.collect_file_items(child, file, ItemOrder::real, child_context)?;
             }
         }
         if let Some(macro_use) = &module_item.macro_use
             && let Some(selector) = macro_use.active_selector(&self.state.cfg_evaluator())
         {
-            self.state.textual_macro_scopes.import_module_definitions(
-                parent_module,
-                child,
-                order,
-                &selector,
-            );
+            self.state
+                .macro_scopes
+                .textual_macro_scopes
+                .import_module_definitions(parent_module, child, order, &selector);
         }
         Ok(())
     }
@@ -722,9 +654,9 @@ impl<'a> DeclarationCollector<'a> {
             return;
         };
 
-        // A macro definition is also a normal local def, but expansion needs extra build-only
-        // ordering and the serialized macro body for later calls to resolve and compile.
-        self.state.macro_definitions.insert(
+        // A macro definition is also a normal local def. Retain its textual order so calls
+        // expanded here or later from a member query select the same definition.
+        self.state.macro_scopes.macro_definitions.insert(
             local_def_id,
             MacroDefinitionRecord {
                 order: order.clone(),
@@ -734,6 +666,7 @@ impl<'a> DeclarationCollector<'a> {
             && let Some(name) = item.name.clone()
         {
             self.state
+                .macro_scopes
                 .textual_macro_scopes
                 .record_definition(module_id, name, local_def_id, order);
         }
@@ -792,40 +725,45 @@ impl<'a> DeclarationCollector<'a> {
             .any(|predicate| cfg.is_predicate_enabled(predicate))
     }
 
-    /// Queue macros inside a trait or impl, keeping their output in that associated-item slot.
-    fn collect_associated_macro_calls(
+    /// Save the owner slot without expanding calls or constructing semantic members.
+    fn capture_associated_items(
         &mut self,
-        module_id: ModuleId,
-        parent_source: ItemSource,
-        item_ids: &[ItemTreeId],
-        order: &ItemOrder,
-        module_file_context: &Arc<ModuleFileContext>,
+        owner: AssociatedItemOwner,
+        module: ModuleId,
+        source: ItemSource,
+        items: &[ItemTreeId],
+        order: ItemOrder,
     ) {
-        for (index, item_id) in item_ids.iter().copied().enumerate() {
-            let source = parent_source.with_item(item_id);
-            let item = self.item(source);
-            if !self.is_item_enabled(&item) {
-                continue;
+        let origin_source = match source.kind {
+            ItemSourceKind::ItemTree(written) => written,
+            ItemSourceKind::Generated(generated) => {
+                self.state
+                    .generated_items
+                    .source(generated.source())
+                    .expect("generated owner source exists")
+                    .origin_source
             }
-            let ItemKind::MacroCall(macro_call) = &item.kind else {
-                continue;
-            };
-            self.collect_macro_call(
-                module_id,
-                &item,
-                source,
-                macro_call,
-                order.generated_child(index),
-                MacroCallPlacement::AssociatedItems {
-                    call_source: source,
-                },
-                Arc::clone(module_file_context),
-            );
-        }
+            _ => unreachable!("collected owners are written or expanded"),
+        };
+        let input = AssociatedItemInput::capture(
+            module,
+            source,
+            origin_source,
+            self.dollar_crate,
+            order,
+            items,
+            |id| self.item(source.with_item(id)).into_owned(),
+        );
+        self.state.member_inputs.insert(owner, input);
     }
 
     /// Record an impl for Semantic IR without introducing a namespace binding.
-    fn collect_local_impl(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemSource) {
+    fn collect_local_impl(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        source: ItemSource,
+    ) -> LocalImplId {
         let local_impl_id = self.state.def_map_builder.alloc_local_impl(LocalImplData {
             module: module_id,
             source,
@@ -838,6 +776,7 @@ impl<'a> DeclarationCollector<'a> {
             .expect("module should exist for impl block")
             .impls
             .push(local_impl_id);
+        local_impl_id
     }
 
     /// Record import paths and aliases for later resolution, preserving their source provenance.
@@ -924,9 +863,10 @@ impl<'a> DeclarationCollector<'a> {
             // source order here so fallback lookup can prefer the last declared macro import.
             let index = self
                 .state
+                .macro_scopes
                 .macro_use_imports
                 .partition_point(|import| import.order <= order);
-            self.state.macro_use_imports.insert(
+            self.state.macro_scopes.macro_use_imports.insert(
                 index,
                 MacroUseImport {
                     module: module_id,
@@ -1017,7 +957,7 @@ impl<'a> DeclarationCollector<'a> {
             Namespace::Macros,
             NameBinding::new(def, Visibility::Public, NameBindingProvenance::Direct),
         );
-        self.state.macro_definitions.insert(
+        self.state.macro_scopes.macro_definitions.insert(
             local_def_id,
             MacroDefinitionRecord {
                 order: order.clone(),

@@ -2,6 +2,7 @@ use std::{error::Error, fmt, io};
 
 mod build_outputs;
 mod cargo;
+mod config;
 mod inputs;
 mod lower;
 mod model;
@@ -17,6 +18,7 @@ mod tests;
 pub use self::{
     build_outputs::{CargoBuildOutputScanStats, CargoGeneratedSources},
     cargo::{CargoMetadataConfig, CargoMetadataTarget, LoadedCargoMetadata},
+    config::CrateConfig,
     inputs::{PackageInput, TargetInput, WorkspaceInput},
     lower::WorkspaceLoweringConfig,
     model::{

@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use expect_test::expect;
 
 use super::utils::{HostFixture, HostObservation};
@@ -647,7 +645,7 @@ pub struct Appeared;
         ],
         expect![[r#"
             changed files
-            - generated_module_update_fixture src/optional.rs
+            - src/optional.rs
 
             changed targets
             - generated_module_update_fixture[lib]
@@ -671,7 +669,7 @@ pub struct Renamed;
         ],
         expect![[r#"
             changed files
-            - generated_module_update_fixture src/optional.rs
+            - src/optional.rs
 
             changed targets
             - generated_module_update_fixture[lib]
@@ -695,8 +693,8 @@ pub struct RootOnly;
         ],
         expect![[r#"
             changed files
-            - generated_module_update_fixture src/lib.rs
-            - generated_module_update_fixture src/optional.rs
+            - src/lib.rs
+            - src/optional.rs
 
             changed targets
             - generated_module_update_fixture[lib]
@@ -759,15 +757,18 @@ choose_module!();
     );
 
     fixture.project().inspect(|snapshot| {
-        let parsed_paths = snapshot
-            .parse_db()
-            .package(0)
-            .expect("request-change fixture package should exist")
-            .parsed_files()
-            .map(|file| file.path().to_path_buf())
-            .collect::<BTreeSet<_>>();
-        assert!(!parsed_paths.contains(&first));
-        assert!(parsed_paths.contains(&second));
+        assert!(
+            snapshot
+                .file_context_for_source_path(&first)
+                .expect("old module routing")
+                .is_none()
+        );
+        assert!(
+            snapshot
+                .file_context_for_source_path(&second)
+                .expect("new module routing")
+                .is_some()
+        );
 
         let analysis = snapshot.analysis();
         assert!(
@@ -826,25 +827,26 @@ pub struct ChildItem;
     std::fs::rename(&flat_path, &nested_path)
         .expect("generated module fixture should rename to nested form");
     project
-        .apply_change(SavedFileChange::fs_path(&nested_path))
+        .apply_changes([SavedFileChange::fs_path(&nested_path)])
         .expect("the unknown nested path should trigger generated module rediscovery");
 
     let canonical_nested = nested_path
         .canonicalize()
         .expect("nested generated module path should canonicalize");
-    let parsed_paths = project
-        .state
-        .parse_db()
-        .package(0)
-        .expect("rename fixture package should exist")
-        .parsed_files()
-        .map(|file| file.path().to_path_buf())
-        .collect::<Vec<_>>();
-    assert!(parsed_paths.contains(&canonical_nested));
-    assert!(
-        !parsed_paths.contains(&canonical_flat),
-        "the removed flat path should leave the rebuilt package snapshot",
-    );
+    project.inspect(|snapshot| {
+        assert!(
+            snapshot
+                .file_context_for_source_path(&canonical_nested)
+                .expect("renamed module routing")
+                .is_some()
+        );
+        assert!(
+            snapshot
+                .file_context_for_source_path(&canonical_flat)
+                .expect("old module routing")
+                .is_none()
+        );
+    });
 
     std::fs::remove_file(&nested_path).expect("nested generated fixture file should be removed");
     let lib_path = fixture.path("src/lib.rs");
@@ -863,17 +865,12 @@ make_child!();
     )
     .expect("fixture root should be changed after generated module deletion");
     project
-        .apply_change(SavedFileChange::fs_path(&lib_path))
+        .apply_changes([SavedFileChange::fs_path(&lib_path)])
         .expect("saving the declaring file should publish the missing generated module state");
 
     project.inspect(|snapshot| {
         assert_eq!(
-            snapshot
-                .parse_db()
-                .package(0)
-                .expect("deleted fixture package should exist")
-                .parsed_files()
-                .count(),
+            snapshot.state.stats().file_count,
             1,
             "a missing generated module should not retain its historical package file",
         );

@@ -86,18 +86,15 @@ impl WorkspaceMetadata {
             input.set_name(update, package.name.clone())?;
             input.set_origin(update, package.origin.clone())?;
             input.set_generated_sources(update, package.cargo_generated_sources.clone())?;
-            for (index, target) in package.analyzed_targets().enumerate() {
-                let input = TargetInput::at(CrateRef {
-                    package: slot,
-                    crate_id: CrateId(index),
-                });
-                input.set_root_path(
-                    update,
-                    NativeOsString::from_os_str(target.src_path.as_os_str()),
-                )?;
-                input.set_name(update, target.name.clone())?;
-                input.set_kind(update, target.kind.clone())?;
-            }
+        }
+        for (krate, target) in self.targets() {
+            let input = TargetInput::at(krate);
+            input.set_root_path(
+                update,
+                NativeOsString::from_os_str(target.src_path.as_os_str()),
+            )?;
+            input.set_name(update, target.name.clone())?;
+            input.set_kind(update, target.kind.clone())?;
         }
         WorkspaceInput::at(()).set_target_cfg(update, self.target_cfg_options.clone())
     }
@@ -251,6 +248,43 @@ impl WorkspaceMetadata {
         &self.packages
     }
 
+    /// All analyzed targets in package order, with the same identities used by workspace inputs.
+    pub fn targets(&self) -> impl Iterator<Item = (CrateRef, &CargoTarget)> {
+        (0..self.packages.len()).flat_map(move |slot| self.targets_for_package(PackageSlot(slot)))
+    }
+
+    /// Target slots follow the filtered Cargo order, including for non-workspace packages
+    /// where only library targets are analyzed. Declaration collection uses these same identities.
+    pub fn targets_for_package(
+        &self,
+        package: PackageSlot,
+    ) -> impl Iterator<Item = (CrateRef, &CargoTarget)> {
+        self.packages
+            .get(package.0)
+            .into_iter()
+            .flat_map(move |metadata| {
+                metadata
+                    .analyzed_targets()
+                    .enumerate()
+                    .map(move |(index, target)| {
+                        (
+                            CrateRef {
+                                package,
+                                crate_id: CrateId(index),
+                            },
+                            target,
+                        )
+                    })
+            })
+    }
+
+    pub fn target(&self, krate: CrateRef) -> Option<&CargoTarget> {
+        self.packages
+            .get(krate.package.0)?
+            .analyzed_targets()
+            .nth(krate.crate_id.0)
+    }
+
     /// Returns one package by normalized package id.
     pub fn package(&self, package_id: &PackageId) -> Option<&Package> {
         self.packages.get(self.package_slot(package_id)?.0)
@@ -264,20 +298,6 @@ impl WorkspaceMetadata {
     /// Returns one compiler-provided package when sysroot sources were modeled.
     pub fn sysroot_package(&self, krate: SysrootCrate) -> Option<&Package> {
         self.package(&PackageId::sysroot(krate))
-    }
-
-    /// Returns package slots whose manifest directory contains `path`.
-    ///
-    /// This is intentionally a filesystem-root query, not a parsed-file ownership query. The
-    /// analysis host uses it when a saved file was not part of the parsed graph yet, for example
-    /// after `mod api;` was saved before `api.rs` existed. Rebuilding the containing package lets
-    /// normal module discovery decide whether the new path is actually reachable.
-    pub fn package_slots_containing_path(&self, path: &Path) -> Vec<usize> {
-        self.packages
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, package)| package.contains_path(path).then_some(slot))
-            .collect()
     }
 
     /// Iterates over packages that belong to the analyzed workspace.

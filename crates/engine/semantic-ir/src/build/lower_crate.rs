@@ -31,17 +31,14 @@ impl<'a> ItemStoreSourceReader<'a> for CrateLowering<'a> {
                 self.generated_items.item(item_ref).with_context(|| {
                     format!(
                         "while attempting to find generated item {:?} from generated source {:?}",
-                        item_ref.item, item_ref.source
+                        item_ref.item(),
+                        item_ref.source()
                     )
                 })?
             }
             ItemSourceKind::Body(_) => anyhow::bail!("Body is not supported"),
         };
         Ok(item)
-    }
-
-    fn associated_macro_expansion(&self, source: ItemSource) -> Option<&[ItemSource]> {
-        self.generated_items.associated_macro_expansion(source)
     }
 }
 

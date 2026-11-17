@@ -4,12 +4,23 @@
 //! source identity to the file tables read through the operation's query context. Generated syntax
 //! takes an extra step: its occurrences identify input tokens, which lead back to those file tables.
 
-use rg_def_map::{GeneratedExpansionLocations, GeneratedLocations, ItemSource, ItemSourceKind};
-use rg_ir_model::{CrateRef, FileId, PackageSlot, SourceId, SourceLocation, Span};
+mod ownership;
+mod resolve;
+
+use rg_def_map::{
+    GeneratedExpansionLocations, GeneratedLocations, GeneratedSourceStore, GeneratedSourceStoreId,
+    ItemSource, ItemSourceKind,
+};
+use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, Span};
 use rg_item_tree::{DeclarationSourceStore, SourceLocations, file_declaration_sources};
 use rg_source::QueryContext;
 
-use crate::target_declarations;
+pub(crate) use self::resolve::SavedSourceResolver;
+pub use self::{
+    ownership::{SourceOwnership, SourceOwnershipIndex, complete_source_ownership},
+    resolve::SourceSelection,
+};
+use crate::{associated_declarations, target_declarations};
 
 /// The source tables needed to read occurrences and previews from one saved declaration source.
 ///
@@ -46,10 +57,21 @@ impl<'db> SavedDeclarationSourceView<'db> {
                     )?));
                 }
                 ItemSourceKind::Generated(generated) | ItemSourceKind::Synthetic(generated) => {
-                    let declarations = target_declarations(db, krate)?;
-                    let sources = declarations.generated_sources.value_ref(db)?;
+                    // Expansion slots are local to the query that produced them. The source ref
+                    // routes directly to module output or one member owner, without searching others.
+                    let sources = match generated.source_store() {
+                        GeneratedSourceStoreId::Target => target_declarations(db, krate)?
+                            .generated_sources
+                            .value_ref(db)?,
+                        GeneratedSourceStoreId::TraitMembers(id) => {
+                            Self::member_sources(db, krate, ItemStoreId::Trait(id))?
+                        }
+                        GeneratedSourceStoreId::ImplMembers(id) => {
+                            Self::member_sources(db, krate, ItemStoreId::Impl(id))?
+                        }
+                    };
                     let locations = sources
-                        .get(generated.source)
+                        .get(generated.source())
                         .ok_or_else(|| ajika::Error::application("generated source is absent"))?;
                     match locations {
                         GeneratedLocations::Inherited(input) => source = *input,
@@ -74,6 +96,18 @@ impl<'db> SavedDeclarationSourceView<'db> {
                 }
             }
         }
+    }
+
+    fn member_sources(
+        db: &'db QueryContext<'db>,
+        krate: CrateRef,
+        owner: ItemStoreId,
+    ) -> ajika::Result<&'db GeneratedSourceStore> {
+        associated_declarations(db, krate, owner)?
+            .as_ref()
+            .ok_or_else(|| ajika::Error::application("generated source owner is absent"))?
+            .sources
+            .value_ref(db)
     }
 
     pub fn initializer_preview(&self, occurrence: SourceId) -> Option<&'db str> {

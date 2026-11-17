@@ -169,14 +169,6 @@ impl BodyData {
         self.exprs.as_slice()
     }
 
-    pub fn scopes_with_ids(&self) -> impl Iterator<Item = (ScopeId, &ScopeData)> {
-        self.scopes.iter_with_ids()
-    }
-
-    pub fn exprs_with_ids(&self) -> impl Iterator<Item = (ExprId, &ExprData)> {
-        self.exprs.iter_with_ids()
-    }
-
     pub fn binding(&self, binding: BindingId) -> Option<&BindingData> {
         self.bindings.get(binding)
     }

@@ -5,14 +5,12 @@
 //! it groups those scheduled owners by file, opens each parsed file once, finds the matching AST
 //! item by span, and then delegates the actual expression lowering to `BodyLowering`.
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
     BodyId, ConstRef, FileId, FunctionRef, ModuleRef, SavedBodyOwner, Span, StaticRef,
 };
-use rg_parse::{CurrentSource, Package, saved_syntax};
+use rg_parse::{CurrentSource, SavedSourceReader};
 use rg_semantic_ir::BodyOwnerData;
 use rg_source::QueryContext;
 use rg_std::CancellationToken;
@@ -66,8 +64,8 @@ impl BodyLoweringTask {
 
 /// Which immutable syntax tree scheduled body tasks must use.
 ///
-/// Saved builds share tracked parses. A current request substitutes its one
-/// captured document while retaining the saved package for any other source reached by lowering.
+/// Saved builds share tracked parses. A current request substitutes its captured document;
+/// any other file still comes from saved source inputs, including lazily discovered includes.
 #[derive(Clone, Copy)]
 pub(crate) enum BodyTaskSource<'a> {
     Tracked {
@@ -75,7 +73,8 @@ pub(crate) enum BodyTaskSource<'a> {
         edition: RustEdition,
     },
     Current {
-        package: &'a Package,
+        saved: SavedSourceReader<'a>,
+        edition: RustEdition,
         file: FileId,
         source: &'a CurrentSource,
     },
@@ -84,8 +83,7 @@ pub(crate) enum BodyTaskSource<'a> {
 impl<'a> BodyTaskSource<'a> {
     pub(crate) fn edition(self) -> RustEdition {
         match self {
-            Self::Current { package, .. } => package.edition(),
-            Self::Tracked { edition, .. } => edition,
+            Self::Current { edition, .. } | Self::Tracked { edition, .. } => edition,
         }
     }
 
@@ -176,14 +174,10 @@ impl<'a> BodyTaskLowering<'a> {
         }
 
         let parse = match self.source {
-            BodyTaskSource::Tracked { db, edition } => saved_syntax(db, file_id, edition)?,
-            BodyTaskSource::Current { package, .. } => Arc::new(
-                package
-                    .parsed_file(file_id)
-                    .with_context(|| format!("fetch parsed source file {file_id:?}"))?
-                    .parse_syntax()
-                    .with_context(|| format!("parse body source {file_id:?}"))?,
-            ),
+            BodyTaskSource::Tracked { db, edition } => {
+                SavedSourceReader::new(db).syntax(file_id, edition)?
+            }
+            BodyTaskSource::Current { saved, edition, .. } => saved.syntax(file_id, edition)?,
         };
         self.lower_file_tasks_from_syntax(
             file_id,

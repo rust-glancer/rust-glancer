@@ -255,7 +255,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Reads the exact source text covered by a rename surface span.
     fn source_text_for_span(&self, symbol: &SourceSymbol, span: Span) -> anyhow::Result<String> {
         self.analysis
-            .saved_source_text_for_span(symbol.crate_ref().package, symbol.file_id(), span)
+            .saved_source
+            .text_for_span(symbol.file_id(), span)
             .with_context(|| "while attempting to read source text for rename edit")?
             .with_context(|| "rename edit span should have source text")
     }

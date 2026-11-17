@@ -936,11 +936,11 @@ pub fn unselected() {
     );
     let target = fixture.target();
     fixture.fixture.project().inspect(|snapshot| {
-        let (first_crate, first_file) = target;
+        let (_, first_file) = target;
         let current = snapshot
-            .file_source_text(first_crate.package, first_file)
-            .expect("saved fixture source should load")
-            .expect("saved fixture source should exist");
+            .sources()
+            .text(first_file)
+            .expect("saved fixture source should load");
         let offset = current
             .find("let selected")
             .expect("selected body should exist in saved fixture")
