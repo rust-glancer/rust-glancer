@@ -54,6 +54,9 @@ mod tests {
     #[test]
     fn parses_engine_configuration() {
         let options = json!({
+            "cache": {
+                "reuseOnStartup": false,
+            },
             "cfg": {
                 "test": false,
             },
@@ -69,6 +72,7 @@ mod tests {
             .expect("engine config should parse");
 
         assert!(!config.analysis.cfg.test);
+        assert!(!config.analysis.reuse_cache);
         assert!(config.diagnostics.on_save);
         assert_eq!(config.inlay_hints.max_length, 0);
         assert_eq!(EngineConfig::default().inlay_hints.max_length, 25);

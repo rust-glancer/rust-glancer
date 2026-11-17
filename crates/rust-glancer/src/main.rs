@@ -50,7 +50,7 @@ enum Command {
         #[clap(long, value_enum, default_value = "text")]
         format: self::analyze::OutputFormat,
     },
-    /// Compare rust-glancer LSP query behavior against another LSP server.
+    /// Compare rust-glancer LSP query behavior against another LSP server from fresh analysis state.
     CompareLsp {
         fixture: CliFixture,
         /// Override the fixture root. Defaults to the selected fixture's configured root.
