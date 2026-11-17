@@ -1,180 +1,142 @@
 {
-    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-
-    // Start from Renovate's recommended behavior, then add two repository-wide
-    // maintenance helpers: immutable GitHub Actions pins and future config migrations.
-    "extends": [
-        "config:recommended",
-        "helpers:pinGitHubActionDigests",
-        ":configMigration"
+    $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+    extends: [
+        'config:recommended',
+        'helpers:pinGitHubActionDigests',
+        ':configMigration',
     ],
-
-    // Keep pending/skipped updates visible without forcing every major update to
-    // open a PR immediately.
-    "dependencyDashboard": true,
-
-    // Renovate discovers package files directly, not through the Cargo workspace.
-    // The test targets are intentionally fake/fixture projects with their own
-    // lockfiles and pinned versions, so updating them would mostly create noise.
-    "ignorePaths": [
-        "**/node_modules/**",
-        "**/bower_components/**",
-        "crates/lib/test-fixture/assets/fake_sysroot/**",
-        "test_targets/**"
-    ],
-
-    // Put dependency update PRs on a predictable weekly cadence and cap burstiness.
-    "labels": [
-        "dependencies"
-    ],
-    "timezone": "UTC",
-    "schedule": [
-        "* 0-5 * * 0"
-    ],
-    "updateNotScheduled": false,
-    "prHourlyLimit": 2,
-    "prConcurrentLimit": 5,
-
-    // Only surface dependency PRs after Renovate's internal checks are no
-    // longer pending. For minimumReleaseAge this means CI-visible PRs should
-    // already be using updates that survived the waiting window.
-    "minimumReleaseAge": "7 days",
-    "internalChecksFilter": "strict",
-    "prCreation": "not-pending",
-
-    // Prefer updating manifest ranges instead of only refreshing lockfiles, so
-    // accepted PRs leave dependency intent visible in Cargo.toml/package.json.
-    "rangeStrategy": "bump",
-
-    // Refresh existing branches during the same Sunday 00:00-06:00 UTC window.
-    // Main-branch activity should not trigger dependency CI throughout the week.
-    "rebaseWhen": "behind-base-branch",
-
-    // Refresh lockfiles weekly as a separate maintenance PR rather than mixing
-    // transitive-only churn into direct dependency updates.
-    "lockFileMaintenance": {
-        "enabled": true,
-        "schedule": [
-            "* 0-5 * * 0"
-        ],
-        "automerge": false
+    dependencyDashboard: {
+        enabled: true,
     },
-
-    "packageRules": [
+    ignorePaths: [
+        '**/node_modules/**',
+        '**/bower_components/**',
+        'crates/lib/test-fixture/assets/fake_sysroot/**',
+        'test_targets/**',
+    ],
+    labels: [
+        'dependencies',
+    ],
+    timezone: 'UTC',
+    schedule: [
+        '* 0-5 * * 0',
+    ],
+    updateNotScheduled: false,
+    prHourlyLimit: 2,
+    prConcurrentLimit: 5,
+    minimumReleaseAge: '7 days',
+    internalChecksFilter: 'strict',
+    prCreation: 'not-pending',
+    rangeStrategy: 'bump',
+    rebaseWhen: 'behind-base-branch',
+    lockFileMaintenance: {
+        enabled: true,
+        schedule: [
+            '* 0-5 * * 0',
+        ],
+        automerge: false,
+    },
+    packageRules: [
         {
-            "description": "Do not update Cargo git dependencies pinned to refs/tags",
-            "matchManagers": [
-                "cargo"
+            description: 'Do not update Cargo git dependencies pinned to refs/tags',
+            matchManagers: [
+                'cargo',
             ],
-            "matchDatasources": [
-                "git-refs",
-                "git-tags",
-                "github-tags",
-                "gitlab-tags"
+            matchDatasources: [
+                'git-refs',
+                'git-tags',
+                'github-tags',
+                'gitlab-tags',
             ],
-            "enabled": false
+            enabled: false,
         },
         {
-            // The vendored rust-analyzer crates are copied from one upstream
-            // snapshot. Their support crates need to move with that snapshot,
-            // not as ordinary independent dependency updates.
-            "description": "Do not update rust-analyzer snapshot crates independently",
-            "matchManagers": [
-                "cargo"
+            description: 'Do not update rust-analyzer snapshot crates independently',
+            matchManagers: [
+                'cargo',
             ],
-            "matchDepNames": [
-                "edition",
-                "ra-ap-rustc_lexer",
-                "rustc-literal-escaper",
-                "rustc_apfloat",
-                "stdx",
-                "test-utils"
+            matchDepNames: [
+                'edition',
+                'ra-ap-rustc_lexer',
+                'rustc-literal-escaper',
+                'rustc_apfloat',
+                'stdx',
+                'test-utils',
             ],
-            "enabled": false
+            enabled: false,
         },
         {
-            "description": "Group non-major Rust dependencies",
-            "matchManagers": [
-                "cargo"
+            description: 'Group non-major Rust dependencies',
+            matchManagers: [
+                'cargo',
             ],
-            "matchUpdateTypes": [
-                "minor",
-                "patch"
+            matchUpdateTypes: [
+                'minor',
+                'patch',
             ],
-            "groupName": "rust dependencies"
+            groupName: 'rust dependencies',
         },
         {
-            "description": "Group non-major TypeScript/npm dependencies",
-            "matchManagers": [
-                "npm"
+            description: 'Group non-major TypeScript/npm dependencies',
+            matchManagers: [
+                'npm',
             ],
-            "matchUpdateTypes": [
-                "minor",
-                "patch"
+            matchUpdateTypes: [
+                'minor',
+                'patch',
             ],
-            "groupName": "typescript dependencies"
+            groupName: 'typescript dependencies',
         },
         {
-            // Formatter updates often need source reformatting, and hosted
-            // Renovate cannot safely run arbitrary format commands unless the
-            // bot installation explicitly allows them.
-            "description": "Require manual handling for Prettier updates",
-            "matchManagers": [
-                "npm"
+            description: 'Require manual handling for Prettier updates',
+            matchManagers: [
+                'npm',
             ],
-            "matchPackageNames": [
-                "prettier"
+            matchPackageNames: [
+                'prettier',
             ],
-            "groupName": "prettier",
-            "dependencyDashboardApproval": true
+            groupName: 'prettier',
+            dependencyDashboardApproval: true,
         },
         {
-            // npm lockfile maintenance can silently float dev tools within
-            // existing ranges. That is how Prettier changed formatting without
-            // any package.json change, so keep npm lock refreshes tied to real
-            // manifest updates instead.
-            "description": "Do not run npm lockfile-only maintenance",
-            "matchManagers": [
-                "npm"
+            description: 'Do not run npm lockfile-only maintenance',
+            matchManagers: [
+                'npm',
             ],
-            "matchUpdateTypes": [
-                "lockFileMaintenance"
+            matchUpdateTypes: [
+                'lockFileMaintenance',
             ],
-            "enabled": false
+            enabled: false,
         },
         {
-            "description": "Group non-major GitHub Actions version and pin updates",
-            "matchManagers": [
-                "github-actions"
+            description: 'Group non-major GitHub Actions version and pin updates',
+            matchManagers: [
+                'github-actions',
             ],
-            "matchUpdateTypes": [
-                "minor",
-                "patch",
-                "pinDigest"
+            matchUpdateTypes: [
+                'minor',
+                'patch',
+                'pinDigest',
             ],
-            "groupName": "github-actions"
+            groupName: 'github-actions',
         },
         {
-            "description": "Require manual handling for major updates",
-            "matchUpdateTypes": [
-                "major"
+            description: 'Require manual handling for major updates',
+            matchUpdateTypes: [
+                'major',
             ],
-            "dependencyDashboardApproval": true
+            dependencyDashboardApproval: true,
         },
         {
-            // Digest refreshes keep already-pinned GitHub Actions pointing at the
-            // current commit behind their version tags. They are intentionally kept
-            // separate from version bumps so this narrow update type can automerge
-            // after the repository-wide release-age window has passed.
-            "description": "Automerge only GitHub Action digest pin refreshes",
-            "matchManagers": [
-                "github-actions"
+            description: 'Automerge only GitHub Action digest pin refreshes',
+            matchManagers: [
+                'github-actions',
             ],
-            "matchUpdateTypes": [
-                "digest"
+            matchUpdateTypes: [
+                'digest',
             ],
-            "groupName": "github-action digests",
-            "automerge": true
-        }
-    ]
+            groupName: 'github-action digests',
+            automerge: true,
+        },
+    ],
 }
