@@ -2,13 +2,11 @@
 //!
 //! `build` lowers syntax and prepares local declarations before `resolution` derives semantic
 //! facts. `body` owns the frozen structure, its facts, and the views that read them together.
-//! `store` reads saved owner results and the current bodies prepared for an editor request.
+//! `store` joins an owner’s prepared meaning, inferred facts and source locations on demand.
 //!
 //! Preparation freezes an outer owner and all its nested bodies together. Its semantic data and
 //! source tables are separate query outputs: moving code can update locations while inference
 //! reuses the unchanged data. `BodyView` borrows structure, facts, and locations for one operation.
-//! Editor requests use the same preparation and inference, reusing saved facts only when the
-//! complete prepared owner matches.
 
 mod body;
 mod build;
@@ -20,13 +18,8 @@ pub mod testonly;
 
 pub use rg_ir_model::FieldKey;
 
-pub(crate) use self::store::CurrentBody;
 pub use self::{
-    build::{
-        CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
-        CurrentSourceSelection, CurrentSourceUnavailable, PreparedBody, infer_saved_body,
-        prepare_saved_body, saved_body,
-    },
+    build::{PreparedBody, body_store, infer_body, prepare_body},
     profile::profile_descriptors,
 };
 
@@ -49,7 +42,7 @@ pub use self::{
         BodyValuePathQuery,
     },
     store::{
-        BodyFactsStore, BodyLocalItems, BodyReader, BodyStore, CurrentSourceStore,
-        DeclarationSourceView, PreparedBodyStore,
+        BodyFactsStore, BodyLocalItems, BodyReader, BodyStore, DeclarationSourceView,
+        PreparedBodyStore,
     },
 };

@@ -1,5 +1,5 @@
 use rg_ir_model::{
-    ConstOrStaticRef, ConstRef, FunctionRef, GenericDefRef, SavedBodyOwner, StaticRef,
+    ConstOrStaticRef, ConstRef, FunctionRef, GenericDefRef, OuterBodyOwner, StaticRef,
     identity::DeclarationRef,
 };
 use rg_std::{MemorySize, Shrink};
@@ -53,7 +53,7 @@ impl BodyOwner {
     }
 }
 
-impl From<BodyOwner> for SavedBodyOwner {
+impl From<BodyOwner> for OuterBodyOwner {
     fn from(owner: BodyOwner) -> Self {
         match owner {
             BodyOwner::Function(item) => item.into(),

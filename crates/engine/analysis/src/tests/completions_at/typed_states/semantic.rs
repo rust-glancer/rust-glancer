@@ -32,57 +32,57 @@ pub struct Record {
     pub record_field: u8,
 }
 
-use crate::api::PathT$0 as ImportedPathType; // complete_with_source("edited import path").matching("PathType")
+use crate::api::PathT$0 as ImportedPathType; // complete("edited import path").matching("PathType")
 
 pub fn associated_unfinished() {
-    let _ = Widget::<u8>::ne$0 // complete_with_source("unfinished associated path").matching("new")
+    let _ = Widget::<u8>::ne$0 // complete("unfinished associated path").matching("new")
 }
 
 pub fn dot_unfinished(widget: Widget<u8>) {
-    let _ = widget.na$0 // complete_with_source("unfinished dot member").matching("named_method")
+    let _ = widget.na$0 // complete("unfinished dot member").matching("named_method")
 }
 
 pub fn unqualified_unfinished(local_value: u8) {
-    let _ = local_v$0 // complete_with_source("unfinished unqualified name").matching("local_value")
+    let _ = local_v$0 // complete("unfinished unqualified name").matching("local_value")
 }
 
 pub fn qualified_unfinished() {
-    let _: crate::api::PathT$0 // complete_with_source("unfinished qualified type").matching("PathType")
+    let _: crate::api::PathT$0 // complete("unfinished qualified type").matching("PathType")
 }
 
 pub fn record_unfinished() {
-    let _ = Record { record_f$0 } // complete_with_source("unfinished record field").matching("record_field")
+    let _ = Record { record_f$0 } // complete("unfinished record field").matching("record_field")
 }
 
 pub fn pattern_unfinished(record: Record) {
-    let Record { record_f$0 } = record // complete_with_source("unfinished pattern field").matching("record_field")
+    let Record { record_f$0 } = record // complete("unfinished pattern field").matching("record_field")
 }
 
 pub fn associated_edit() {
-    let _ = Widget::<u8>::ne$0(); // complete_with_source("edited associated path").matching("new")
+    let _ = Widget::<u8>::ne$0(); // complete("edited associated path").matching("new")
 }
 
 pub fn dot_edit(widget: Widget<u8>) {
-    let _ = widget.na$0(); // complete_with_source("edited dot member").matching("named_method")
+    let _ = widget.na$0(); // complete("edited dot member").matching("named_method")
 }
 
 pub fn unqualified_edit(local_value: u8) {
-    let _ = local_v$0 + 1; // complete_with_source("edited unqualified name").matching("local_value")
+    let _ = local_v$0 + 1; // complete("edited unqualified name").matching("local_value")
 }
 
 pub fn qualified_edit() {
-    let _: crate::api::PathT$0 = todo!(); // complete_with_source("edited qualified type").matching("PathType")
+    let _: crate::api::PathT$0 = todo!(); // complete("edited qualified type").matching("PathType")
 }
 
 pub fn record_edit() {
-    let _ = Record { record_f$0: 1 }; // complete_with_source("edited record field").matching("record_field")
+    let _ = Record { record_f$0: 1 }; // complete("edited record field").matching("record_field")
 }
 
 pub fn pattern_edit(record: Record) {
-    let Record { record_f$0: _ } = record; // complete_with_source("edited pattern field").matching("record_field")
+    let Record { record_f$0: _ } = record; // complete("edited pattern field").matching("record_field")
 }
 
-use crate::api::PathT$0 // complete_with_source("unfinished import path").matching("PathType")
+use crate::api::PathT$0 // complete("unfinished import path").matching("PathType")
 "#,
         expect![[r#"
             st PathType // edited import path
@@ -148,41 +148,41 @@ pub struct Record {
 
 //- /src/associated.rs
 pub fn run() {
-    let _ = crate::Widget::<u8>::ne$0 // complete_with_source("associated path at EOF").matching("new")
+    let _ = crate::Widget::<u8>::ne$0 // complete("associated path at EOF").matching("new")
 //- /src/bare_associated.rs
 pub fn run() {
-    let _ = crate::Widget::<u8>::$0 // complete_with_source("empty associated path at EOF").matching("new")
+    let _ = crate::Widget::<u8>::$0 // complete("empty associated path at EOF").matching("new")
 //- /src/dot.rs
 pub fn run(widget: crate::Widget<u8>) {
-    let _ = widget.na$0 // complete_with_source("dot member at EOF").matching("named_method")
+    let _ = widget.na$0 // complete("dot member at EOF").matching("named_method")
 //- /src/bare_dot.rs
 pub fn run(widget: crate::Widget<u8>) {
-    let _ = widget.$0 // complete_with_source("empty dot member at EOF").matching("named_method")
+    let _ = widget.$0 // complete("empty dot member at EOF").matching("named_method")
 //- /src/unqualified.rs
 pub fn run(local_value: u8) {
-    let _ = local_v$0 // complete_with_source("unqualified name at EOF").matching("local_value")
+    let _ = local_v$0 // complete("unqualified name at EOF").matching("local_value")
 //- /src/qualified.rs
 pub fn run() {
-    let _: crate::api::PathT$0 // complete_with_source("qualified type at EOF").matching("PathType")
+    let _: crate::api::PathT$0 // complete("qualified type at EOF").matching("PathType")
 //- /src/bare_path.rs
 pub fn run() {
-    let _: crate::api::$0 // complete_with_source("empty qualified path at EOF").matching("PathType")
+    let _: crate::api::$0 // complete("empty qualified path at EOF").matching("PathType")
 //- /src/record.rs
 pub fn run() {
-    let _ = crate::Record { record_f$0 // complete_with_source("record field at EOF").matching("record_field")
+    let _ = crate::Record { record_f$0 // complete("record field at EOF").matching("record_field")
 //- /src/empty_record.rs
 pub fn run() {
-    let _ = crate::Record { $0 // complete_with_source("empty record field at EOF").matching("record_field")
+    let _ = crate::Record { $0 // complete("empty record field at EOF").matching("record_field")
 //- /src/pattern.rs
 pub fn run(record: crate::Record) {
-    let crate::Record { record_f$0 // complete_with_source("pattern field at EOF").matching("record_field")
+    let crate::Record { record_f$0 // complete("pattern field at EOF").matching("record_field")
 //- /src/empty_pattern.rs
 pub fn run(record: crate::Record) {
-    let crate::Record { $0 // complete_with_source("empty pattern field at EOF").matching("record_field")
+    let crate::Record { $0 // complete("empty pattern field at EOF").matching("record_field")
 //- /src/label.rs
 pub fn run() {
     'inner: loop {
-        break 'inn$0 // complete_with_source("loop label at EOF").matching("'inner")
+        break 'inn$0 // complete("loop label at EOF").matching("'inner")
 "#,
         expect![[r#"
             fn new // associated path at EOF
@@ -223,21 +223,21 @@ pub trait Parameterized<Input> {
 
 pub struct PositionalType;
 
-pub fn edit_in_place<T: Sequence<It$0 = u8>>() {} // complete_with_source("binding with existing equals").matching("Item")
-pub fn before_equals<T: Sequence<It$0>>() {} // complete_with_source("binding before equals").matching("Item")
-pub fn positional_argument<T: Parameterized<PositionalT$0>>() {} // complete_with_source("ordinary positional type remains available").matching("PositionalType")
-pub fn binding_after_positional<T: Parameterized<u8, Out$0>>() {} // complete_with_source("binding after positional argument").matching("Output")
+pub fn edit_in_place<T: Sequence<It$0 = u8>>() {} // complete("binding with existing equals").matching("Item")
+pub fn before_equals<T: Sequence<It$0>>() {} // complete("binding before equals").matching("Item")
+pub fn positional_argument<T: Parameterized<PositionalT$0>>() {} // complete("ordinary positional type remains available").matching("PositionalType")
+pub fn binding_after_positional<T: Parameterized<u8, Out$0>>() {} // complete("binding after positional argument").matching("Output")
 
 pub fn body_local() {
     trait LocalSequence {
         type LocalItem;
     }
 
-    fn consume<T: LocalSequence<Loc$0>>() {} // complete_with_source("body-local binding before equals").matching("LocalItem")
+    fn consume<T: LocalSequence<Loc$0>>() {} // complete("body-local binding before equals").matching("LocalItem")
 }
 
 //- /src/eof.rs
-pub fn run<T: crate::Sequence<It$0 // complete_with_source("binding before equals at EOF").matching("Item")
+pub fn run<T: crate::Sequence<It$0 // complete("binding before equals at EOF").matching("Item")
 "#,
         expect![[r#"
             ta Item // binding with existing equals

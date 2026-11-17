@@ -29,7 +29,7 @@ pub fn consume<T: api::Base<u8, Item = u16> + ?Sized>(value: &T) -> T::Item { lo
 pub fn run(value: &Service) {
     let $0results = (value.request(), value.parent(), value.inspect(), consume(value)); // hover("object method results")
     let callback = <Service as api::Base<u8>>::$0parent; // goto("qualified method declaration")
-    value$0.$1; // goto_type("object trait declaration"), complete("object methods")
+    value$0.$1; // goto_type("object trait declaration"), complete("object methods").members()
 }
 "#,
         expect![[r#"
@@ -76,8 +76,8 @@ pub fn inspect<T: api::Render>(value: T) {
             AnalysisQuery::ty("supertrait result", "inherited"),
             AnalysisQuery::goto("direct declaration", "render"),
             AnalysisQuery::goto("supertrait declaration", "base"),
-            AnalysisQuery::complete("saved bound methods", "members").matching("render"),
-            AnalysisQuery::complete_with_source("request-local bound methods", "members")
+            AnalysisQuery::complete("completed bound methods", "members")
+                .members()
                 .matching("render"),
         ],
         expect![[r#"
@@ -86,11 +86,7 @@ pub fn inspect<T: api::Render>(value: T) {
             fn render @ 6:12-6:18 // direct declaration
             fn render_base @ 3:12-3:23 // supertrait declaration
 
-            // saved bound methods
-            tm render
-            tm render_base
-
-            // request-local bound methods
+            // completed bound methods
             tm render
             tm render_base
         "#]],
@@ -124,9 +120,7 @@ where
             AnalysisQuery::ty("field through generic Deref chain", "field").in_lib("app"),
             AnalysisQuery::ty("method through generic Deref chain", "method").in_lib("app"),
             AnalysisQuery::complete("generic Deref members", "members")
-                .in_lib("app")
-                .matching("value"),
-            AnalysisQuery::complete_with_source("request-local Deref members", "members")
+                .members()
                 .in_lib("app")
                 .matching("value"),
         ],
@@ -135,10 +129,6 @@ where
             u32 // method through generic Deref chain
 
             // generic Deref members
-            fd value
-            im value_len
-
-            // request-local Deref members
             fd value
             im value_len
         "#]],
@@ -186,48 +176,31 @@ impl Owner where Other: Marker {
 "#,
         &[
             AnalysisQuery::ty("function bound", "function_result"),
-            AnalysisQuery::complete("saved function bound", "function_members")
-                .matching("from_marker"),
-            AnalysisQuery::complete_with_source("request-local function bound", "function_members")
+            AnalysisQuery::complete("completed function bound", "function_members")
+                .members()
                 .matching("from_marker"),
             AnalysisQuery::ty("trait parameter bound", "trait_result"),
-            AnalysisQuery::complete("saved trait parameter bound", "trait_members")
+            AnalysisQuery::complete("completed trait parameter bound", "trait_members")
+                .members()
                 .matching("from_marker"),
-            AnalysisQuery::complete_with_source(
-                "request-local trait parameter bound",
-                "trait_members",
-            )
-            .matching("from_marker"),
             AnalysisQuery::ty("implicit Self bound", "self_result"),
-            AnalysisQuery::complete("saved implicit Self bound", "self_members")
+            AnalysisQuery::complete("completed implicit Self bound", "self_members")
+                .members()
                 .matching("from_render"),
-            AnalysisQuery::complete_with_source(
-                "request-local implicit Self bound",
-                "self_members",
-            )
-            .matching("from_render"),
             AnalysisQuery::ty("nongeneric impl bound", "impl_result"),
-            AnalysisQuery::complete("saved nongeneric impl bound", "impl_members")
+            AnalysisQuery::complete("completed nongeneric impl bound", "impl_members")
+                .members()
                 .matching("from_marker"),
-            AnalysisQuery::complete_with_source(
-                "request-local nongeneric impl bound",
-                "impl_members",
-            )
-            .matching("from_marker"),
         ],
         expect![[r#"
             bool // function bound
-            tm from_marker // saved function bound
-            tm from_marker // request-local function bound
+            tm from_marker // completed function bound
             bool // trait parameter bound
-            tm from_marker // saved trait parameter bound
-            tm from_marker // request-local trait parameter bound
+            tm from_marker // completed trait parameter bound
             u16 // implicit Self bound
-            tm from_render // saved implicit Self bound
-            tm from_render // request-local implicit Self bound
+            tm from_render // completed implicit Self bound
             bool // nongeneric impl bound
-            tm from_marker // saved nongeneric impl bound
-            tm from_marker // request-local nongeneric impl bound
+            tm from_marker // completed nongeneric impl bound
         "#]],
     );
 }
@@ -259,8 +232,8 @@ impl Named for User {
 }
 
 pub fn use_it(user: User) {
-    user.$0id(); // complete("partial dot completions")
-    user.$0; // complete("bare dot completions")
+    user.$0id(); // complete("partial dot completions").members()
+    user.$0; // complete("bare dot completions").members()
 }
 "#,
         expect![[r#"
@@ -317,19 +290,19 @@ use runtime::underscore::Underscore as _;
 use runtime::wildcard::*;
 
 pub fn inspect(value: Value) {
-    value.$0; // complete("outer trait scope").in_lib("app")
+    value.$0; // complete("outer trait scope").members().in_lib("app")
     {
         use runtime::hidden::Hidden;
-        value.$0; // complete("block trait scope").in_lib("app")
+        value.$0; // complete("block trait scope").members().in_lib("app")
     }
     {
         use runtime::hidden::Hidden as _;
-        value.$0; // complete("block underscore trait scope").in_lib("app")
+        value.$0; // complete("block underscore trait scope").members().in_lib("app")
     }
-    value.$0; // complete("scope after block").in_lib("app")
+    value.$0; // complete("scope after block").members().in_lib("app")
     {
         struct Named;
-        value.$0; // complete("type shadow keeps outer trait").in_lib("app")
+        value.$0; // complete("type shadow keeps outer trait").members().in_lib("app")
     }
 }
 "#,
@@ -409,10 +382,10 @@ pub fn inspect() {
 
     check_analysis_queries(
         &fixture,
-        &[AnalysisQuery::complete(
-            "inferred receiver with many unrelated impls",
-            "receiver",
-        )],
+        &[
+            AnalysisQuery::complete("inferred receiver with many unrelated impls", "receiver")
+                .members(),
+        ],
         expect![[r#"
             im marker // inferred receiver with many unrelated impls
         "#]],
@@ -433,7 +406,7 @@ impl User {
 }
 
 pub fn use_it(user: User) {
-    user.$0 // complete_verbose("bare dot before statement completions")
+    user.$0 // complete_verbose("bare dot before statement completions").members()
 
     user.id();
 }
@@ -481,11 +454,11 @@ pub async fn load_user_async() -> User {
 pub async fn use_it(user: User) -> Result<(), Error> {
     let raw = 0;
     let shared: &&User = &&user;
-    (&user).$0; // complete("reference completions").in_lib("analysis_wrapper_completion")
-    shared.$0; // complete("double reference completions").in_lib("analysis_wrapper_completion")
-    load_user()?.$0; // complete("try completions").in_lib("analysis_wrapper_completion")
-    load_user_async().await.$0; // complete("await completions").in_lib("analysis_wrapper_completion")
-    (raw as User).$0; // complete("cast completions").in_lib("analysis_wrapper_completion")
+    (&user).$0; // complete("reference completions").members().in_lib("analysis_wrapper_completion")
+    shared.$0; // complete("double reference completions").members().in_lib("analysis_wrapper_completion")
+    load_user()?.$0; // complete("try completions").members().in_lib("analysis_wrapper_completion")
+    load_user_async().await.$0; // complete("await completions").members().in_lib("analysis_wrapper_completion")
+    (raw as User).$0; // complete("cast completions").members().in_lib("analysis_wrapper_completion")
     Result::Ok(())
 }
 "#,
@@ -528,7 +501,7 @@ impl Api {
 //- /src/main.rs crate:analysis_bin_completion kind:bin name:analysis-bin-completion
 fn main() {
     let api: analysis_bin_completion::Api = todo!();
-    api.$0; // complete("bin root completions").in_bin("analysis_bin_completion")
+    api.$0; // complete("bin root completions").members().in_bin("analysis_bin_completion")
 }
 "#,
         expect![[r#"
@@ -553,7 +526,7 @@ impl User {
 }
 
 pub fn use_it(user: User) {
-    user.id($0$0); // complete("completion inside method argument")
+    user.id($0$0); // complete("completion inside method argument").members()
 }
 "#,
         expect![[r#"
@@ -590,7 +563,7 @@ impl Displayed for User {
 }
 
 pub fn use_it(user: User) {
-    let $0picked = user.$1label(); // ty("inherent call takes precedence"), complete("same-name completions")
+    let $0picked = user.$1label(); // ty("inherent call takes precedence"), complete("same-name completions").members()
 }
 "#,
         expect![[r#"
@@ -633,7 +606,7 @@ impl UserOnlyTrait for Wrapper<User> {
 }
 
 pub fn use_it(error: Wrapper<Error>) {
-    error.$0; // complete("wrong generic arg completions")
+    error.$0; // complete("wrong generic arg completions").members()
 }
 "#,
         expect![[r#"
@@ -677,7 +650,7 @@ where
 }
 
 pub fn use_it(wrapper: Wrapper<User>) {
-    wrapper.$0; // complete("generic trait completions")
+    wrapper.$0; // complete("generic trait completions").members()
 }
 "#,
         expect![[r#"
@@ -704,7 +677,7 @@ impl Named for Wrapper<1> {
 }
 
 pub fn use_it(wrapper: Wrapper<2>) {
-    wrapper.$0; // complete("const trait impl completions")
+    wrapper.$0; // complete("const trait impl completions").members()
 }
 "#,
         expect![[r#"
@@ -729,8 +702,8 @@ pub struct User {
 }
 
 pub fn use_it(user: User) {
-    user.profile.$0; // complete("field receiver completions")
-    user.$0; // complete("outer receiver completions")
+    user.profile.$0; // complete("field receiver completions").members()
+    user.$0; // complete("outer receiver completions").members()
 }
 "#,
         expect![[r#"
@@ -757,10 +730,10 @@ pub fn use_it() {
     struct Profile;
 
     let user: User;
-    user.$0; // complete("body-local field completions")
+    user.$0; // complete("body-local field completions").members()
 
     let pair: Pair;
-    pair.$0; // complete("body-local tuple field completions")
+    pair.$0; // complete("body-local tuple field completions").members()
 }
 "#,
         expect![[r#"
@@ -796,8 +769,8 @@ impl User {
 }
 
 pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
-    user.$0; // complete("Deref completions").in_lib("app")
-    object.$0; // complete("dyn Deref completions").in_lib("app")
+    user.$0; // complete("Deref completions").members().in_lib("app")
+    object.$0; // complete("dyn Deref completions").members().in_lib("app")
 }
 "#,
         expect![[r#"
@@ -831,9 +804,9 @@ impl<T> [T] {
 pub struct Package;
 
 pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3]) {
-    packages.$0; // complete("slice method completions").in_lib("app")
-    array.$0; // complete("array method completions").in_lib("app")
-    array_ref.$0; // complete("array ref method completions").in_lib("app")
+    packages.$0; // complete("slice method completions").members().in_lib("app")
+    array.$0; // complete("array method completions").members().in_lib("app")
+    array_ref.$0; // complete("array ref method completions").members().in_lib("app")
 }
 "#,
         expect![[r#"
@@ -891,9 +864,9 @@ impl Project for OwnedText {
 use runtime::OwnedText;
 
 pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
-    owned.$0; // complete("primitive method through Deref").in_lib("app")
-    borrowed.$0; // complete("primitive method through reference").in_lib("app")
-    scalar.$0; // complete("scalar primitive method").in_lib("app")
+    owned.$0; // complete("primitive method through Deref").members().in_lib("app")
+    borrowed.$0; // complete("primitive method through reference").members().in_lib("app")
+    scalar.$0; // complete("scalar primitive method").members().in_lib("app")
 }
 "#,
         expect![[r#"
@@ -953,7 +926,7 @@ impl GeneratedTrait for u32 {
 use runtime::GeneratedTrait;
 
 pub fn use_it(value: u32) {
-    value.$0; // complete("macro-generated methods").in_lib("app")
+    value.$0; // complete("macro-generated methods").members().in_lib("app")
 }
 "#,
         expect![[r#"
@@ -981,7 +954,7 @@ impl<T: PointeeSized> *const T {
 
 //- /app/src/lib.rs crate:app root:app deps:runtime
 pub fn use_it(pointer: *const u8) {
-    pointer.$0; // complete("raw pointer methods").in_lib("app")
+    pointer.$0; // complete("raw pointer methods").members().in_lib("app")
 }
 "#,
         expect![[r#"
@@ -1047,10 +1020,10 @@ use runtime::{ArrayElement, BlanketLabel, ReferenceIdentity, ScalarLabel};
 pub struct User;
 
 pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
-    scalar.$0; // complete("primitive trait methods").in_lib("app")
-    array.$0; // complete("array trait methods").in_lib("app")
-    user.$0; // complete("blanket trait methods").in_lib("app")
-    reference.$0; // complete("reference trait methods").in_lib("app")
+    scalar.$0; // complete("primitive trait methods").members().in_lib("app")
+    array.$0; // complete("array trait methods").members().in_lib("app")
+    user.$0; // complete("blanket trait methods").members().in_lib("app")
+    reference.$0; // complete("reference trait methods").members().in_lib("app")
 }
 "#,
         expect![[r#"
@@ -1095,7 +1068,7 @@ pub fn local_type_receiver() {
     }
 
     let user: User;
-    user.$0; // complete("body-local type impl completions")
+    user.$0; // complete("body-local type impl completions").members()
 }
 
 pub fn target_type_receiver(id: GlobalId) {
@@ -1105,7 +1078,7 @@ pub fn target_type_receiver(id: GlobalId) {
         }
     }
 
-    id.$0; // complete("body-local target impl completions")
+    id.$0; // complete("body-local target impl completions").members()
 }
 
 pub fn trait_target_type_receiver(id: GlobalId) {
@@ -1124,7 +1097,7 @@ pub fn trait_target_type_receiver(id: GlobalId) {
         }
     }
 
-    id.$0; // complete("body-local target trait impl completions")
+    id.$0; // complete("body-local target trait impl completions").members()
 }
 
 pub fn nested_impl_block() {
@@ -1141,7 +1114,7 @@ pub fn nested_impl_block() {
     }
 
     let user: User;
-    user.$0; // complete("nested body-local impl completions")
+    user.$0; // complete("nested body-local impl completions").members()
 }
 
 pub fn nested_body_owner() {
@@ -1158,7 +1131,7 @@ pub fn nested_body_owner() {
     }
 
     fn helper(user: User) {
-        user.$0; // complete("parent body-local impl completions from nested body")
+        user.$0; // complete("parent body-local impl completions from nested body").members()
     }
 }
 "#,
@@ -1212,11 +1185,11 @@ pub fn use_it() {
     }
 
     let wrapper: Wrapper<User>;
-    wrapper.get().$0; // complete("generic method return completions")
-    wrapper.value.$0; // complete("generic field receiver completions")
+    wrapper.get().$0; // complete("generic method return completions").members()
+    wrapper.value.$0; // complete("generic field receiver completions").members()
 
     let error: Wrapper<Error>;
-    error.$0; // complete("wrong generic receiver completions")
+    error.$0; // complete("wrong generic receiver completions").members()
 }
 "#,
         expect![[r#"
@@ -1260,21 +1233,21 @@ pub enum Option<T> {
 }
 
 pub fn use_it(maybe: Option<User>) {
-    let _closure = |user: User| user.$0; // complete("closure parameter completions")
+    let _closure = |user: User| user.$0; // complete("closure parameter completions").members()
 
     let Some(value) = maybe else { return; };
-    value.$0; // complete("let pattern payload completions")
+    value.$0; // complete("let pattern payload completions").members()
 
-    if let Some(found) = maybe && found.$0is_valid() { // complete("if let-chain rhs completions")
-        found.$0; // complete("if let pattern payload completions")
+    if let Some(found) = maybe && found.$0is_valid() { // complete("if let-chain rhs completions").members()
+        found.$0; // complete("if let pattern payload completions").members()
     }
 
     while let Some(next) = maybe {
-        next.$0; // complete("while let pattern payload completions")
+        next.$0; // complete("while let pattern payload completions").members()
     }
 
     match maybe {
-        Some(user) if user.$0is_valid() => user.$1, // complete("match guard payload completions"), complete("match pattern payload completions")
+        Some(user) if user.$0is_valid() => user.$1, // complete("match guard payload completions").members(), complete("match pattern payload completions").members()
         None => {}
     }
 }
@@ -1329,7 +1302,7 @@ pub struct Right;
 pub struct Pair(pub Left, pub Right);
 
 pub fn use_it(pair: Pair) {
-    pair.$0; // complete("tuple field completions")
+    pair.$0; // complete("tuple field completions").members()
 }
 "#,
         expect![[r#"
@@ -1360,7 +1333,7 @@ impl User {
 }
 
 pub fn use_it(user: User) {
-    user.na$0; // complete_verbose("metadata completions")
+    user.na$0; // complete_verbose("metadata completions").members()
 }
 "#,
         expect![[r#"

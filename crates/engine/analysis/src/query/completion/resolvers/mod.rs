@@ -21,6 +21,7 @@ mod unqualified;
 mod visibility;
 
 use anyhow::Context as _;
+use rg_ir_view::source::SourceCompletionView;
 
 use self::{
     apostrophe::ApostropheCompletionResolver,
@@ -34,10 +35,10 @@ use self::{
     visibility::VisibilityCompletionResolver,
 };
 use super::{
-    CompletionQuery,
+    CompletionContext, CompletionQuery,
     site::{
-        CompletionSite, CompletionSiteDetector, CompletionSourceAttachment, ItemListCompletionKind,
-        NameCompletionContext, SpecializedCompletionContext, SyntaxCompletionContext,
+        CompletionSite, CompletionSiteDetector, ItemListCompletionKind, NameCompletionContext,
+        SpecializedCompletionContext, SyntaxCompletionContext,
     },
     syntax::CompletionSyntaxContext,
 };
@@ -55,23 +56,38 @@ use crate::{
 /// the matching resolver perform semantic lookup and render rows.
 pub(crate) struct CompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
+    shared_syntax: Option<&'source CompletionSyntaxContext<'source>>,
 }
 
 impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
-        Self { analysis, query }
+    pub(crate) fn new(
+        analysis: &'a Analysis<'db>,
+        query: CompletionQuery<'source>,
+        source_text: &'source str,
+    ) -> Self {
+        Self {
+            analysis,
+            shared_syntax: query.completion_source().map(|source| &source.syntax),
+            query: CompletionContext {
+                crate_ref: query.crate_ref,
+                file_id: query.file_id,
+                offset: query.offset,
+                source_text,
+                client_capabilities: query.client_capabilities,
+            },
+        }
     }
 
     /// Collects completions for one source offset, e.g. `user.$0`,
     /// `let value = crate::$0`, `let value = inp$0`, `User { na$0 }`, or `use st$0`.
     pub(crate) fn completions_at(&self) -> anyhow::Result<Vec<CompletionItem>> {
-        let shared_syntax = self.query.completion_source().map(|source| &source.syntax);
-        let local_syntax = shared_syntax
+        let local_syntax = self
+            .shared_syntax
             .is_none()
             .then(|| CompletionSyntaxContext::at(self.query.source_text, self.query.offset))
             .flatten();
-        let syntax_context = shared_syntax.or(local_syntax.as_ref());
+        let syntax_context = self.shared_syntax.or(local_syntax.as_ref());
 
         // Item lists and specialized declaration syntax are owned by the request-local classifier.
         // An incomplete `extern c$0`, for example, can resemble a lowered extern-crate name even
@@ -201,13 +217,13 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .completions(site, syntax_context)
                     .context("collect unqualified completions")?;
                 if context == NameCompletionContext::Type
-                    && let Some(binding) = CompletionSourceAttachment::new(
-                        self.analysis,
-                        self.query.crate_ref,
-                        self.query.file_id,
-                    )
-                    .implicit_associated_type_binding_site_at(self.query.offset)
-                    .context("detect implicit associated type binding")?
+                    && let Some(binding) = SourceCompletionView::new(self.analysis.view_db())
+                        .implicit_associated_type_binding_site_at(
+                            self.query.crate_ref,
+                            self.query.file_id,
+                            self.query.offset,
+                        )
+                        .context("detect implicit associated type binding")?
                 {
                     completions.extend(
                         AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)

@@ -13,9 +13,6 @@ mod stats;
 
 use std::sync::OnceLock;
 
-pub use rg_body_ir::{
-    CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceSelection,
-};
 pub use rg_def_map::{MacroExpansionLimitGroup, MacroExpansionLimitReport};
 
 pub use self::{
@@ -24,7 +21,7 @@ pub use self::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::Project,
-    query::{DocumentSourceView, FileContext, ProjectSnapshot},
+    query::{FileContext, ProjectSnapshot},
     state::ProjectGenerationId,
     stats::{MacroExpansionLimitBuildSummary, ProjectStats},
 };

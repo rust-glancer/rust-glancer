@@ -7,12 +7,17 @@
 
 mod notifications;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{ffi::OsStr, path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
+use gen_lsp_types::{
+    CodeAction, CompletionItem, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint,
+    Location, PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
+};
 use rg_lsp_proto::{
-    DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig,
-    EngineError, EngineResult, EngineService, FoldingClientCapabilities, GlobalPositionSnapshot,
+    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
+    DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
+    EngineError, EngineResult, EngineService, FoldingClientCapabilities, OpenDocumentsRevision,
     ProjectInitialization, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
 };
 use rg_project::SavedFileChange;
@@ -90,6 +95,20 @@ impl EngineService for Service {
         Ok(())
     }
 
+    async fn invalidate_editor_snapshot(
+        self,
+        _: context::Context,
+        revision: OpenDocumentsRevision,
+    ) -> EngineResult<()> {
+        self.engine
+            .request(|respond_to| EngineCommand::InvalidateEditorSnapshot {
+                revision,
+                respond_to,
+            })
+            .await
+            .map_err(EngineError::from)
+    }
+
     async fn did_save(self, _: context::Context, proposal: SaveProposal) -> EngineResult<u64> {
         let client_version = proposal.client_version();
         let (target, text) = proposal.into_parts();
@@ -103,7 +122,7 @@ impl EngineService for Service {
             "submitting ingress-captured save proposal"
         );
 
-        let change = if path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs") {
+        let change = if path.extension().and_then(OsStr::to_str) == Some("rs") {
             let captured = CapturedSource::new(&path, text)
                 .context("prepare captured editor saved Rust source")
                 .map_err(EngineError::from)?;
@@ -173,8 +192,8 @@ impl EngineService for Service {
     async fn goto_definition(
         self,
         _: context::Context,
-        input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
+        input: DocumentPositionSnapshot,
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::GotoDefinition { input, respond_to })
             .await
@@ -183,8 +202,8 @@ impl EngineService for Service {
     async fn goto_type_definition(
         self,
         _: context::Context,
-        input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
+        input: DocumentPositionSnapshot,
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::GotoTypeDefinition { input, respond_to })
             .await
@@ -193,8 +212,8 @@ impl EngineService for Service {
     async fn goto_implementation(
         self,
         _: context::Context,
-        input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
+        input: DocumentPositionSnapshot,
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::GotoImplementation { input, respond_to })
             .await
@@ -203,9 +222,9 @@ impl EngineService for Service {
     async fn references(
         self,
         _: context::Context,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         include_declaration: bool,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::References {
                 input,
@@ -218,8 +237,8 @@ impl EngineService for Service {
     async fn prepare_rename(
         self,
         _: context::Context,
-        input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<gen_lsp_types::PrepareRenameResult>>, QueryError> {
+        input: DocumentPositionSnapshot,
+    ) -> Result<QueryValue<Option<PrepareRenameResult>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::PrepareRename { input, respond_to })
             .await
@@ -228,13 +247,15 @@ impl EngineService for Service {
     async fn rename(
         self,
         _: context::Context,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         new_name: String,
-    ) -> Result<QueryValue<Option<gen_lsp_types::WorkspaceEdit>>, QueryError> {
+        versioned_document_edits: bool,
+    ) -> Result<QueryValue<Option<WorkspaceEdit>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Rename {
                 input,
                 new_name,
+                versioned_document_edits,
                 respond_to,
             })
             .await
@@ -244,7 +265,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentPositionSnapshot,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::DocumentHighlight>>, QueryError> {
+    ) -> Result<QueryValue<Vec<DocumentHighlight>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::DocumentHighlight { input, respond_to })
             .await
@@ -253,8 +274,8 @@ impl EngineService for Service {
     async fn hover(
         self,
         _: context::Context,
-        input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<gen_lsp_types::Hover>>, QueryError> {
+        input: DocumentPositionSnapshot,
+    ) -> Result<QueryValue<Option<Hover>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Hover { input, respond_to })
             .await
@@ -264,8 +285,8 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentRangeSnapshot,
-        request_context: rg_lsp_proto::CodeActionRequestContext,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::CodeAction>>, QueryError> {
+        request_context: CodeActionRequestContext,
+    ) -> Result<QueryValue<Vec<CodeAction>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::CodeAction {
                 input,
@@ -279,8 +300,8 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentPositionSnapshot,
-        client_capabilities: rg_lsp_proto::CompletionClientCapabilities,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::CompletionItem>>, QueryError> {
+        client_capabilities: CompletionClientCapabilities,
+    ) -> Result<QueryValue<Vec<CompletionItem>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Completion {
                 input,
@@ -294,7 +315,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
-    ) -> Result<QueryValue<Option<Vec<gen_lsp_types::TextEdit>>>, QueryError> {
+    ) -> Result<QueryValue<Option<Vec<TextEdit>>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Formatting {
                 snapshot,
@@ -306,8 +327,8 @@ impl EngineService for Service {
     async fn document_symbol(
         self,
         _: context::Context,
-        snapshot: EditorDocumentSnapshot,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::DocumentSymbol>>, QueryError> {
+        snapshot: DocumentSnapshot,
+    ) -> Result<QueryValue<Vec<DocumentSymbol>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::DocumentSymbol {
                 snapshot,
@@ -321,7 +342,7 @@ impl EngineService for Service {
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::FoldingRange>>, QueryError> {
+    ) -> Result<QueryValue<Vec<FoldingRange>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::FoldingRange {
                 snapshot,
@@ -334,9 +355,9 @@ impl EngineService for Service {
     async fn semantic_tokens(
         self,
         _: context::Context,
-        snapshot: EditorDocumentSnapshot,
-        range: Option<gen_lsp_types::Range>,
-    ) -> Result<QueryValue<gen_lsp_types::SemanticTokens>, QueryError> {
+        snapshot: DocumentSnapshot,
+        range: Option<Range>,
+    ) -> Result<QueryValue<SemanticTokens>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::SemanticTokens {
                 snapshot,
@@ -350,7 +371,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentRangeSnapshot,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::InlayHint>>, QueryError> {
+    ) -> Result<QueryValue<Vec<InlayHint>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::InlayHint { input, respond_to })
             .await
@@ -359,10 +380,15 @@ impl EngineService for Service {
     async fn workspace_symbol(
         self,
         _: context::Context,
+        snapshot: EditorSnapshot,
         query: String,
-    ) -> Result<QueryValue<Vec<gen_lsp_types::WorkspaceSymbol>>, QueryError> {
+    ) -> Result<QueryValue<Vec<WorkspaceSymbol>>, QueryError> {
         self.engine
-            .query(|respond_to| EngineCommand::WorkspaceSymbol { query, respond_to })
+            .query(|respond_to| EngineCommand::WorkspaceSymbol {
+                snapshot,
+                query,
+                respond_to,
+            })
             .await
     }
 

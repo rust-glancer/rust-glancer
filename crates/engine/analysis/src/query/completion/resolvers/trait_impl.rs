@@ -32,7 +32,7 @@ use crate::{
     },
     query::{
         completion::{
-            CompletionQuery,
+            CompletionContext,
             render::{CompletionSortPolicy, escape_lsp_snippet_text},
             site::{TraitImplCompletionSite, TraitImplMemberKind},
         },
@@ -46,11 +46,11 @@ use crate::{
 /// implied by a written `fn`, `type`, or `const`, then applies replacement and snippet policy.
 pub(super) struct TraitImplCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 
@@ -59,17 +59,10 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
         &self,
         site: TraitImplCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let Some(source_text) = self.query.source_text else {
-            return Ok(Vec::new());
-        };
-        let members = TraitImplMemberQuery::new(
-            self.analysis,
-            self.query.crate_ref,
-            self.query.file_id,
-            source_text,
-        )
-        .missing_members_at(site.owner_start())
-        .context("collect missing trait member completions")?;
+        let members =
+            TraitImplMemberQuery::new(self.analysis, self.query.crate_ref, self.query.file_id)
+                .missing_members_at(site.owner_start())
+                .context("collect missing trait member completions")?;
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };

@@ -5,6 +5,7 @@
 //! per-session queue, while a newer non-duplicate message marks it as replaced immediately.
 
 use std::{
+    fmt,
     future::Future,
     pin::Pin,
     sync::{
@@ -20,7 +21,7 @@ use super::{
     attempt::{AttemptKey, AttemptWaiter},
     session::{RequestId, SchedulerState, SessionKey},
 };
-use crate::ingress::{CapturedDocument, DocumentRevisionWatch};
+use crate::ingress::{CapturedDocument, EditorRevisionWatch};
 
 pub(super) type CompletionFuture =
     Pin<Box<dyn Future<Output = Result<QueryValue<Vec<CompletionItem>>, QueryError>> + Send>>;
@@ -69,7 +70,7 @@ impl CompletionRequest {
     pub(crate) async fn submit_attempt<Run, Fut>(
         &self,
         input: DocumentPositionSnapshot,
-        invalidation: DocumentRevisionWatch,
+        invalidation: EditorRevisionWatch,
         run: Run,
     ) -> CompletionAttemptOutcome
     where
@@ -85,7 +86,7 @@ impl CompletionRequest {
     pub(super) fn enqueue_attempt(
         &self,
         key: AttemptKey,
-        invalidation: DocumentRevisionWatch,
+        invalidation: EditorRevisionWatch,
         run: CompletionFuture,
     ) -> AttemptWaiter {
         SchedulerState::enqueue_attempt(&self.lease, key, invalidation, run)
@@ -97,8 +98,8 @@ impl CompletionRequest {
     }
 }
 
-impl std::fmt::Debug for CompletionRequest {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for CompletionRequest {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("CompletionRequest")
             .field("id", &self.lease.id)
             .field("session", &self.lease.session)

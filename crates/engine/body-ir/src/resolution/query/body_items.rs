@@ -1,7 +1,7 @@
 //! A small declaration index for items supplied by the active body view.
 //!
-//! Persisted Semantic IR indexes describe the last saved crate snapshot. Body resolution may also
-//! see declarations from an active source overlay or from a body-local module:
+//! Crate indexes contain module-level declarations. Body resolution also needs declarations nested
+//! within the body or its enclosing bodies:
 //!
 //! ```text
 //! fn inspect() {
@@ -11,8 +11,8 @@
 //! }
 //! ```
 //!
-//! Those declarations cannot be added to the persisted crate index. The first body query scans the
-//! few body item stores that can affect this body and builds a compact overlay index. Later
+//! Those declarations belong to body stores rather than the crate index. The first body query scans
+//! the few body item stores that can affect this body and builds a compact lookup index. Later
 //! queries read the same index through [`BodyLocalItemCache`](crate::resolution::cache::BodyLocalItemCache).
 
 use std::collections::HashMap;
@@ -25,15 +25,9 @@ use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 
-use crate::resolution::{
-    BodyResolutionContext,
-    cache::{BodyLocalInherentItemNames, BodyLocalItemIndex},
-};
+use crate::resolution::{BodyResolutionContext, cache::BodyLocalItemIndex};
 
-/// Read adapter for declarations that exist only in the current body view.
-///
-/// Query methods return borrowed slices from the lazily built overlay. Callers then combine them
-/// with persisted project candidates without cloning the whole body-local collection.
+/// Read adapter for declarations nested within this outer body.
 pub(crate) struct BodyLocalItemQuery<'context, 'query, D, I> {
     context: &'context BodyResolutionContext<'query, D, I>,
 }
@@ -55,18 +49,6 @@ where
             .get(&ty)
             .map(UniqueVec::as_slice)
             .unwrap_or_default())
-    }
-
-    /// Return names supplied by body-local inherent impls for this type.
-    ///
-    /// Body-aware lookup combines these impls with a crate-wide index. A current declaration
-    /// replaces a crate-indexed declaration of the same kind and name; unrelated saved members
-    /// remain visible.
-    pub(super) fn inherent_item_names_for_type(
-        &self,
-        ty: TypeDefRef,
-    ) -> Result<Option<&BodyLocalInherentItemNames>, ReadError> {
-        Ok(self.index()?.inherent_item_names_by_type.get(&ty))
     }
 
     /// Return body-local trait impls whose `Self` resolves to this type.
@@ -130,7 +112,7 @@ where
         Ok(self.index()?.traits_with_associated_items.as_slice())
     }
 
-    /// Build the request-local overlay once for queries throughout body inference.
+    /// Build the local declaration index once for queries throughout body inference.
     fn build_index(&self) -> Result<BodyLocalItemIndex, ReadError> {
         let mut index = BodyLocalItemIndex::default();
         for items in self.body_lookup_items()? {
@@ -140,8 +122,7 @@ where
                 .filter_map(|item| Some((item.item(), item.name()?)))
                 .collect();
 
-            // Impl declarations provide receiver candidates. Inherent impls additionally retain
-            // member names so an active declaration can replace its stale saved counterpart.
+            // Group local impls by receiver so lookup can combine them with crate-level impls.
             for view in &items {
                 let SemanticItemRef::Impl(impl_ref) = view.item() else {
                     continue;
@@ -176,31 +157,6 @@ where
                     .entry(*self_ty)
                     .or_default()
                     .push(impl_ref);
-                let names = index
-                    .inherent_item_names_by_type
-                    .entry(*self_ty)
-                    .or_default();
-                for item in self
-                    .context
-                    .item_query()
-                    .associated_items(impl_ref.member_store())?
-                {
-                    let Some(name) = item_names.get(&item.semantic_ref(impl_ref.member_store()))
-                    else {
-                        continue;
-                    };
-                    match item {
-                        AssocItemId::Function(_) => {
-                            names.functions.push((*name).clone());
-                        }
-                        AssocItemId::Const(_) => {
-                            names.consts.push((*name).clone());
-                        }
-                        AssocItemId::TypeAlias(_) => {
-                            names.type_aliases.push((*name).clone());
-                        }
-                    }
-                }
             }
 
             // Trait declarations provide the name-first surfaces used before impl matching. A
@@ -262,7 +218,7 @@ where
         let mut origins = UniqueVec::new();
 
         // Check the active body first, then the body-local modules that own this declaration and
-        // its fallback. Target declarations are handled by the saved lookup index.
+        // its fallback. Target declarations are handled by the crate lookup index.
         origins.push(DefMapRef::Body(self.context.body_ref()));
         for module in [
             self.context.body().owner_module(),

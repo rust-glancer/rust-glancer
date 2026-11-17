@@ -14,7 +14,7 @@
 //! this resolver asks either scope.
 
 use anyhow::Context as _;
-use rg_ir_model::Span;
+use rg_ir_model::{GenericDefRef, Span};
 use rg_ir_view::{
     lookup::name::NameLookupView,
     source::{IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, SourceCompletionView},
@@ -28,9 +28,9 @@ use crate::{
         SyntheticCompletionTarget,
     },
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         render::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
-        site::{CompletionSourceAttachment, LabelCompletionContext, LifetimeCompletionContext},
+        site::{LabelCompletionContext, LifetimeCompletionContext},
         syntax::CompletionSyntaxContext,
     },
 };
@@ -41,11 +41,11 @@ use crate::{
 /// loop expressions, so the two namespaces never share candidates merely because both use `'`.
 pub(super) struct ApostropheCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 
@@ -149,7 +149,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
         &self,
         prefix_span: Span,
         prefix: &str,
-    ) -> anyhow::Result<Option<rg_ir_model::GenericDefRef>> {
+    ) -> anyhow::Result<Option<GenericDefRef>> {
         let source = SourceCompletionView::new(self.analysis.view_db());
         if let Some(site) = source
             .body_syntax_name_site_at(
@@ -175,13 +175,10 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
                 .context("read body lifetime completion owner");
         }
 
-        Ok(
-            CompletionSourceAttachment::new(
-                self.analysis,
+        Ok(SourceCompletionView::new(self.analysis.view_db())
+            .signature_syntax_name_site_at(
                 self.query.crate_ref,
                 self.query.file_id,
-            )
-            .signature_name_site_at(
                 self.query.offset,
                 IndexedUnqualifiedNameContext::Const,
                 prefix_span,
@@ -193,8 +190,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
                 IndexedUnqualifiedNameScope::Body { .. }
                 | IndexedUnqualifiedNameScope::Module { .. }
                 | IndexedUnqualifiedNameScope::Import { .. } => None,
-            }),
-        )
+            }))
     }
 
     fn apostrophe_candidate(

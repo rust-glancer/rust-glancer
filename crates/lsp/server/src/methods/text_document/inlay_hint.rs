@@ -22,7 +22,7 @@ pub(crate) async fn inlay_hint(
     // cancellation also drops its engine query; no background retry or retained hint data remains.
     loop {
         let captured = ctx.captured_document();
-        if captured.document_revision_watch().is_superseded() {
+        if captured.editor_revision_watch().is_superseded() {
             let recaptured = captured
                 .recapture()
                 .map_err(|error| methods::temporarily_unavailable(error.reason()))?;
@@ -37,7 +37,7 @@ pub(crate) async fn inlay_hint(
 
         // The client still expects the original numeric coverage after an edit. The engine
         // handles endpoints beyond the newer text, so only the document changes between attempts.
-        let input = ctx.target_range(params.range)?;
+        let input = ctx.range(params.range)?;
         let result = ctx
             .engine_client
             .query(

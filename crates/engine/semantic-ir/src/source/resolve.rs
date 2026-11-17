@@ -1,20 +1,26 @@
-//! Select semantic owners before acquiring declarations at a saved source position.
+//! Select semantic owners before acquiring declarations at a source position.
 
-use rg_ir_model::{CrateRef, FileId, ItemStoreId, ItemStoreRef};
+use rg_ir_model::{CrateRef, FileId, ItemStoreId, ItemStoreRef, Span};
 use rg_item_tree::SourceLocations as _;
 use rg_source::QueryContext;
 
-use crate::{SavedDeclarationSourceView, complete_source_ownership, target_declarations};
+use crate::{ItemSourceView, complete_source_ownership, target_declarations};
 
 /// Choose the source surface an operation needs. A written outline and an exhaustive reference
 /// search are different: the latter must also see macros elsewhere that include this same file.
 #[derive(Debug, Clone, Copy)]
 pub enum SourceSelection {
-    /// Written containers in a file, optionally narrowed to a saved cursor position. If the file
-    /// is only known through includes, reverse discovery supplies its enclosing owners.
+    /// Written containers at a cursor position. If the file is only known through includes,
+    /// reverse discovery supplies its enclosing owners.
     Written {
         file: FileId,
-        offset: Option<u32>,
+        offset: u32,
+    },
+    /// Written containers touching a requested range, including its endpoints. Owners that
+    /// contain the range still contribute, even when their headers are outside it.
+    WrittenRange {
+        file: FileId,
+        range: Span,
     },
     /// Every interpretation of this physical file, including reused include input. May expand
     /// unrelated owners to discover whether their macros include this file.
@@ -24,43 +30,53 @@ pub enum SourceSelection {
 
 impl SourceSelection {
     pub fn at(file: FileId, offset: u32) -> Self {
-        Self::Written {
-            file,
-            offset: Some(offset),
-        }
+        Self::Written { file, offset }
     }
 
-    pub fn written_file(file: FileId) -> Self {
-        Self::Written { file, offset: None }
+    pub fn in_range(file: FileId, range: Span) -> Self {
+        Self::WrittenRange { file, range }
+    }
+
+    /// Cursor and viewport reads use the same owner filtering; a cursor has zero-width bounds.
+    pub(crate) fn bounds(self) -> Option<Span> {
+        match self {
+            Self::Written { offset, .. } => Some(Span {
+                start: offset,
+                end: offset,
+            }),
+            Self::WrittenRange { range, .. } => Some(range),
+            Self::AllInFile(_) | Self::All => None,
+        }
     }
 
     pub fn offset(self) -> Option<u32> {
         match self {
-            Self::Written { offset, .. } => offset,
+            Self::Written { offset, .. } => Some(offset),
             _ => None,
         }
     }
 
     pub fn file(self) -> Option<FileId> {
         match self {
-            Self::Written { file, .. } | Self::AllInFile(file) => Some(file),
+            Self::Written { file, .. }
+            | Self::WrittenRange { file, .. }
+            | Self::AllInFile(file) => Some(file),
             Self::All => None,
         }
     }
 }
 
-/// Resolves written declaration containers in saved coordinates. Current editor positions must
-/// first pass through the current-to-saved association owned by the editor layer.
+/// Find which declaration containers may contribute items at a source position.
 ///
 /// A header in this file can select its own member store without discovering unrelated macros.
 /// A file known only through an include needs reverse ownership discovery. The complete result
 /// keeps all include owners; it never guesses one owner from the physical source identity.
-pub(crate) struct SavedSourceResolver<'db> {
+pub(crate) struct DeclarationSourceResolver<'db> {
     db: &'db QueryContext<'db>,
     krate: CrateRef,
 }
 
-impl<'db> SavedSourceResolver<'db> {
+impl<'db> DeclarationSourceResolver<'db> {
     pub(crate) fn new(db: &'db QueryContext<'db>, krate: CrateRef) -> Self {
         Self { db, krate }
     }
@@ -82,9 +98,9 @@ impl<'db> SavedSourceResolver<'db> {
         } else {
             indexed
         };
-        // File ownership already selects the stores. Only a cursor needs headers and source
-        // locations to narrow that selection to its enclosing trait or impl.
-        let Some(offset) = selection.offset() else {
+        // A cursor or viewport needs header locations to narrow the enclosing trait/impl stores.
+        // Whole-file reads can use ownership alone, without acquiring locations.
+        let Some(bounds) = selection.bounds() else {
             return Ok(owners
                 .iter()
                 .copied()
@@ -118,10 +134,10 @@ impl<'db> SavedSourceResolver<'db> {
             };
             // The include's offsets belong to its own file, not the enclosing owner's header.
             if source.file_id == file {
-                let locations = SavedDeclarationSourceView::new(self.db, self.krate, source)?;
+                let locations = ItemSourceView::new(self.db, self.krate, source)?;
                 if !locations
                     .location(location)
-                    .is_some_and(|location| location.span.touches(offset))
+                    .is_some_and(|location| location.span.touches_span(bounds))
                 {
                     continue;
                 }

@@ -1,13 +1,14 @@
-//! Owns the saved input baseline and the editor view installed in the shared query runtime.
+//! Owns query storage and retained saved/editor inputs across operation boundaries.
 
 use std::{collections::BTreeMap, ffi::OsStr, path::PathBuf, time::Duration};
 
+use ajika::Compression;
 use rg_ir_model::FileId;
 use rg_semantic_ir::TargetDeclarationReader;
 use rg_source::{
     CapturedSource, QueryDatabase, QueryServices, ReadError, SourceInput, SourceRevision,
 };
-use rg_std::CancellationToken;
+use rg_std::{CancellationToken, MemoryRecorder, MemorySize};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{ProjectSnapshot, state::ProjectState};
@@ -25,6 +26,21 @@ const RETENTION: ajika::Retention = ajika::Retention {
     max_bytes: 4 * 1024 * 1024 * 1024,
     max_idle: Duration::from_secs(30 * 24 * 60 * 60),
 };
+
+// Internal benchmark switch: change this constant and rebuild to compare memory storage or
+// another codec. CLI and LSP use this same choice; it is not a user configuration setting.
+const STORAGE: QueryStorage = QueryStorage::Disk(Compression::Lz4);
+
+/// Memory keeps reusable typed results resident; disk releases decoded results between operations.
+#[derive(Debug)]
+#[allow(
+    dead_code,
+    reason = "only the variant selected by STORAGE is constructed"
+)]
+enum QueryStorage {
+    Memory,
+    Disk(Compression),
+}
 
 /// The database has one installed input view at a time. Keep the accepted saved baseline here,
 /// independent of whichever complete editor capture the previous request used.
@@ -49,6 +65,9 @@ impl ProjectQueries {
     ) -> anyhow::Result<R> {
         self.database.replace_inputs(self.saved.clone());
         let result = update(&mut self.database);
+        // Both successful and rejected candidates can discover sources shared with the baseline.
+        SourceInput::evict_saved_text(self.database.inputs());
+        SourceInput::evict_saved_text(&self.saved);
         if result.is_ok() {
             self.saved = self.database.inputs().clone();
             // The next request supplies the remaining edits against this new baseline. Keep
@@ -106,7 +125,12 @@ impl ProjectQueries {
         let result = self.database.run(|db| {
             let declarations =
                 TargetDeclarationReader::for_project(db, state.targets.iter().copied());
-            let snapshot = ProjectSnapshot::new(state, db, &declarations);
+            let snapshot = ProjectSnapshot::new(
+                state,
+                db,
+                &declarations,
+                documents.is_empty().then_some(&state.sources),
+            );
             work(snapshot).map_err(|error| {
                 ReadError::query_cause(error.as_ref()).unwrap_or_else(|| {
                     ajika::Error::application(
@@ -140,8 +164,26 @@ impl ProjectQueries {
         self.database.set_session_retention(retention);
     }
 
+    pub(crate) fn release_editor_snapshot(&mut self) {
+        self.database.replace_inputs(self.saved.clone());
+        self.editor = None;
+    }
+
     pub(crate) fn clear_session(&mut self) {
         self.database.clear_session();
+    }
+
+    /// Run after operation borrows and the previous published generation have been released.
+    /// Collection relocates Ajika's interner; source entries belong to us and need their own pass.
+    /// Do not compact here: that explicit storage operation may rewrite every live payload.
+    pub(crate) fn collect(&mut self) -> ajika::Result<()> {
+        SourceInput::relocate(self.input_views())?;
+        self.database.collect()?;
+        Ok(())
+    }
+
+    fn input_views(&self) -> impl Iterator<Item = &ajika::Inputs> {
+        std::iter::once(&self.saved).chain(self.editor.iter().map(|editor| &editor.inputs))
     }
 
     #[cfg(test)]
@@ -150,6 +192,31 @@ impl ProjectQueries {
     }
 
     pub(crate) fn open(workspace: &WorkspaceMetadata, reuse_cache: bool) -> anyhow::Result<Self> {
+        tracing::debug!(storage = ?STORAGE, reuse_cache, "opening project query storage");
+        let database = match STORAGE {
+            QueryStorage::Memory => QueryDatabase::memory(
+                ajika::Inputs::default(),
+                QueryServices::default(),
+                RETENTION,
+            ),
+            QueryStorage::Disk(compression) => {
+                let mut database = Self::open_disk(workspace)?;
+                // Existing frames carry their own codec; this only changes future writes.
+                database.set_compression(compression);
+                if !reuse_cache {
+                    database.invalidate()?;
+                }
+                database
+            }
+        };
+        Ok(Self {
+            saved: database.inputs().clone(),
+            database,
+            editor: None,
+        })
+    }
+
+    fn open_disk(workspace: &WorkspaceMetadata) -> anyhow::Result<QueryDatabase> {
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| workspace.cargo_target_dir().to_path_buf());
@@ -167,16 +234,7 @@ impl ProjectQueries {
                 QueryServices::default(),
                 RETENTION,
             ) {
-                Ok(mut database) => {
-                    if !reuse_cache {
-                        database.invalidate()?;
-                    }
-                    return Ok(Self {
-                        saved: database.inputs().clone(),
-                        database,
-                        editor: None,
-                    });
-                }
+                Ok(database) => return Ok(database),
                 Err(error) => match error.kind() {
                     ajika::ErrorKind::Persistence(error)
                         if error.kind() == ajika::PersistenceErrorKind::InUse => {}
@@ -185,6 +243,30 @@ impl ProjectQueries {
             }
         }
         anyhow::bail!("no free query cache slots under {}", root.display())
+    }
+}
+
+impl MemorySize for ProjectQueries {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        // The query owner is the single accounting owner of the shared interner. Ajika does not
+        // expose its full runtime heap; encoded cache/session budgets are not resident byte counts
+        // and must not be added to this structural report as if they were allocations.
+        recorder.scope("interner", |recorder| {
+            recorder.record_approximate::<ajika::Interner>(self.database.interner().memory_bytes());
+        });
+        recorder.scope("inputs", |recorder| {
+            // An editor view includes the saved baseline. Its table estimate already deduplicates
+            // shared tables, while the source walk also includes saved entries hidden by edits.
+            let inputs = self
+                .editor
+                .as_ref()
+                .map_or(&self.saved, |editor| &editor.inputs);
+            recorder.record_approximate::<ajika::Inputs>(inputs.table_bytes());
+            SourceInput::record_memory(self.input_views(), recorder);
+            if let Some(editor) = &self.editor {
+                editor.revisions.record_memory_children(recorder);
+            }
+        });
     }
 }
 

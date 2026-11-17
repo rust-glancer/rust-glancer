@@ -14,7 +14,7 @@
 //! leaking into an attribute argument list.
 
 use anyhow::Context as _;
-use rg_ir_view::lookup::name::MacroKind;
+use rg_ir_view::{lookup::name::MacroKind, source::SourceCompletionView};
 
 use crate::{
     Analysis,
@@ -23,13 +23,13 @@ use crate::{
         SyntheticCompletionTarget,
     },
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
             DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
         },
-        site::{AttributeCompletionContext, AttributeCompletionKind, CompletionSourceAttachment},
+        site::{AttributeCompletionContext, AttributeCompletionKind},
         syntax::CompletionSyntaxContext,
     },
 };
@@ -40,11 +40,11 @@ use crate::{
 /// features, or proc macros visible in the macro namespace.
 pub(super) struct AttributeCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> AttributeCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 
@@ -84,13 +84,14 @@ impl<'a, 'db, 'source> AttributeCompletionResolver<'a, 'db, 'source> {
         let Some(macro_kind) = macro_kind else {
             return Ok(completions);
         };
-        let Some(source_site) = CompletionSourceAttachment::new(
-            self.analysis,
-            self.query.crate_ref,
-            self.query.file_id,
-        )
-        .module_site_at(self.query.offset, &syntax.inline_module_path())
-        .context("find attribute completion module")?
+        let Some(source_site) = SourceCompletionView::new(self.analysis.view_db())
+            .module_completion_site_at(
+                self.query.crate_ref,
+                self.query.file_id,
+                self.query.offset,
+                &syntax.inline_module_path(),
+            )
+            .context("find attribute completion module")?
         else {
             return Ok(completions);
         };

@@ -148,11 +148,16 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     }
 
     /// Return module-owned items in one file.
-    fn module_owned_items(&self, crate_ref: CrateRef, file_id: FileId) -> Result<Vec<IndexedItem>> {
+    fn module_owned_items(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        range: Span,
+    ) -> Result<Vec<IndexedItem>> {
         let mut items = Vec::new();
         let declarations = self.db.source_items(
             DefMapRef::Crate(crate_ref),
-            SourceSelection::written_file(file_id),
+            SourceSelection::in_range(file_id, range),
         )?;
         let containers: HashSet<_> = declarations
             .iter()
@@ -173,6 +178,14 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
             if item.source().file_id != file_id {
                 continue;
             }
+            // Building an indexed trait/impl tree acquires its members. Check its header before
+            // doing that, even though scope_items also returned headers outside the viewport.
+            if DeclarationView::new(self.db)
+                .declaration(DeclarationRef::from(item.item()))?
+                .is_none_or(|declaration| !declaration.span().touches_span(range))
+            {
+                continue;
+            }
             if let Some(item) = self.semantic_item(item)? {
                 items.push(item);
             }
@@ -185,11 +198,12 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
+        range: Span,
     ) -> Result<Vec<IndexedBodyLocalGroup>> {
         let body_view = BodyView::new(self.db);
         let mut groups = Vec::new();
 
-        for group in body_view.local_groups(crate_ref, file_id)? {
+        for group in body_view.local_groups(crate_ref, file_id, range)? {
             let mut children = Vec::new();
             for declaration in body_view
                 .local_scope_declarations(group.body(), file_id)
@@ -384,11 +398,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Self { db }
     }
 
-    /// Return source-outline symbols for one file.
+    /// Return source-outline symbols from owners overlapping the requested range.
+    /// Range selection keeps enclosing containers so callers can still use their nesting.
     pub fn source_outline(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
+        range: Span,
     ) -> Result<Vec<SourceOutlineNode>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
@@ -398,14 +414,15 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 .declaration_source_outline_node(declaration)
                 .context("project module outline declaration")?
                 && symbol.declaration().file_id() == file_id
+                && symbol.declaration().span().touches_span(range)
             {
                 symbols.push(symbol);
             }
         }
 
-        for item in index.module_owned_items(crate_ref, file_id)? {
+        for item in index.module_owned_items(crate_ref, file_id, range)? {
             if let Some(symbol) = self
-                .source_outline_item(&item, Some(file_id))
+                .source_outline_item(&item, file_id)
                 .context("project module outline item")?
             {
                 symbols.push(symbol);
@@ -414,7 +431,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
         // Body-local items belong to their owning function in a source outline. The owner may
         // already be nested under a trait or impl, so attachment searches the built tree.
-        for group in index.body_local_groups(crate_ref, file_id)? {
+        for group in index.body_local_groups(crate_ref, file_id, range)? {
             let Some(owner) = self
                 .declaration(group.owner())
                 .context("read body-local outline owner")?
@@ -431,7 +448,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             };
             for item in group.children() {
                 if let Some(symbol) = self
-                    .source_outline_item(item, Some(file_id))
+                    .source_outline_item(item, file_id)
                     .context("project body-local outline item")?
                 {
                     parent.children_mut().push(symbol);
@@ -479,12 +496,12 @@ impl<'a, 'db> SymbolView<'a, 'db> {
     fn source_outline_item(
         &self,
         item: &IndexedItem,
-        file_id: Option<FileId>,
+        file_id: FileId,
     ) -> Result<Option<SourceOutlineNode>> {
         let Some(declaration) = self.declaration(item.declaration())? else {
             return Ok(None);
         };
-        if file_id.is_some_and(|file_id| declaration.file_id() != file_id) {
+        if declaration.file_id() != file_id {
             return Ok(None);
         }
 
@@ -498,7 +515,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                     }
                 }
                 IndexedItemChild::Syntax(child) => {
-                    if file_id.is_some_and(|file_id| child.file_id() != file_id) {
+                    if child.file_id() != file_id {
                         continue;
                     }
                     children.push(SourceOutlineNode::new(SourceOutlineDeclaration::field(
@@ -557,7 +574,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         )))
     }
 
-    /// Materialize the one owned name required by the editor-facing outline result.
+    /// Materialize the declaration's display name for the outline.
     fn source_outline_declaration(
         &self,
         declaration: Declaration,

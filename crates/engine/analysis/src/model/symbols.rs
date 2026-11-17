@@ -1,17 +1,9 @@
 use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::SymbolKind;
 
-/// Hierarchical source outline for one file under one crate context.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DocumentOutline {
-    pub file_id: FileId,
-    pub symbols: Vec<DocumentSymbol>,
-}
-
 /// One node in a document outline.
 ///
-/// Children always belong to the same source file as their parent. The file identity therefore
-/// lives once on `DocumentOutline` instead of being repeated throughout this recursive tree.
+/// All nodes belong to the requested document, so they only carry offsets within that file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSymbol {
     pub name: String,

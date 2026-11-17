@@ -1,4 +1,4 @@
-//! Signature lowering shared by body-local items and selected current declarations.
+//! Signature lowering for body-local declarations.
 
 use rg_item_tree::{
     ConstItem, Documentation, FromAst as _, FunctionItem, ItemKind, ItemNode, MaybeFromAst,

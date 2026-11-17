@@ -23,9 +23,9 @@ pub use self::{
     highlight::{Highlight, HighlightKind},
     hover::{DocumentationLink, HoverBlock, HoverInfo},
     inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition},
-    navigation::{NavigationTarget, NavigationTargetKind, NavigationTargetSource},
+    navigation::{NavigationTarget, NavigationTargetKind},
     references::ReferenceLocation,
     rename::{RenameEdit, RenameResult, RenameTarget},
     symbol::SymbolAt,
-    symbols::{DocumentOutline, DocumentSymbol, WorkspaceSymbol},
+    symbols::{DocumentSymbol, WorkspaceSymbol},
 };

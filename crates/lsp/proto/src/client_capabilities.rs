@@ -9,12 +9,25 @@ use crate::{
 pub struct ClientCapabilities {
     pub code_action: CodeActionClientCapabilities,
     pub completion: CompletionClientCapabilities,
+    /// Workspace edits may use versioned `documentChanges`.
+    pub versioned_document_edits: bool,
     pub folding: FoldingClientCapabilities,
 }
 
 impl ClientCapabilities {
+    /// Eager action edits require both action literals and versioned workspace edits.
+    pub const fn supports_eager_actions(self) -> bool {
+        self.code_action.literal_support && self.versioned_document_edits
+    }
+
     pub fn from_lsp_client_capabilities(capabilities: &gen_lsp_types::ClientCapabilities) -> Self {
         Self {
+            versioned_document_edits: capabilities
+                .workspace
+                .as_ref()
+                .and_then(|workspace| workspace.workspace_edit.as_ref())
+                .and_then(|edits| edits.document_changes)
+                .unwrap_or(false),
             code_action: CodeActionClientCapabilities::from_lsp_client_capabilities(capabilities),
             completion: CompletionClientCapabilities::from_lsp_client_capabilities(capabilities),
             folding: FoldingClientCapabilities::from_lsp_client_capabilities(capabilities),
@@ -52,15 +65,15 @@ mod tests {
         let actual = ClientCapabilities::from_lsp_client_capabilities(&capabilities);
 
         assert!(actual.code_action.literal_support);
-        assert!(actual.code_action.versioned_document_edits);
+        assert!(actual.versioned_document_edits);
         assert!(actual.code_action.preferred_support);
-        assert!(actual.code_action.supports_eager_actions());
+        assert!(actual.supports_eager_actions());
         assert!(actual.completion.snippet_support);
 
         let defaults = ClientCapabilities::from_lsp_client_capabilities(
             &gen_lsp_types::ClientCapabilities::default(),
         );
-        assert!(!defaults.code_action.supports_eager_actions());
+        assert!(!defaults.supports_eager_actions());
         assert!(!defaults.completion.snippet_support);
     }
 }

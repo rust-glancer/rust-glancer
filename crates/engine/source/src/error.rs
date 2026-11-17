@@ -12,19 +12,24 @@ use std::{
     str,
 };
 
+use rg_std::MemorySize;
+
 use crate::SourceRevision;
 
 /// Failure to capture, access, or verify source for a generation.
-#[derive(Debug)]
+#[derive(Debug, MemorySize)]
 pub enum SourceError {
     /// The source path could not be read from the filesystem.
     Io {
         path: PathBuf,
+        // OS error internals are opaque; account for the source path and inline error only.
+        #[memsize(skip)]
         source: std::io::Error,
     },
     /// Source bytes were read, but they cannot be parsed as UTF-8 Rust source.
     InvalidUtf8 {
         path: PathBuf,
+        #[memsize(skip)]
         source: str::Utf8Error,
     },
     /// Disk now contains a different revision than the generation captured.

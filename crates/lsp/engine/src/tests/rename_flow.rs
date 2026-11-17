@@ -43,7 +43,7 @@ async fn rename_returns_workspace_edit_for_clean_document() {
 }
 
 #[tokio::test]
-async fn rename_requires_save_before_using_changed_global_spans() {
+async fn dirty_global_queries_and_versioned_rename_share_the_editor_view() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -95,7 +95,7 @@ pub fn make(user: EditorUser) -> EditorUser {
         .await;
 
     fixture
-        .check_dirty_global_operations_require_save(&consumer, "rename", "Account")
+        .check_dirty_global_operations(&consumer, "rename", "Account")
         .await;
 
     fixture.did_save_dirty(&declaration).await;

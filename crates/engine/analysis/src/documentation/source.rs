@@ -1,4 +1,4 @@
-//! Read comments from the query's source, then attach them to saved declarations for link lookup.
+//! Read comments from the query's source, then attach them to declarations for link lookup.
 //! Comment edits change the Markdown and its source positions without necessarily changing the
 //! declaration that supplies the link's scope.
 
@@ -28,7 +28,7 @@ use crate::Analysis;
 /// in `api.rs`. Those comments form one Markdown document, but each part keeps its own Rust
 /// file ranges and placement so links can be displayed and resolved where they were written.
 pub(crate) struct SourceDocumentation {
-    /// The saved declaration whose scope resolves links. Without a unique association,
+    /// The declaration whose scope resolves links. Without a unique owner,
     /// examples still have syntax to highlight, but item links cannot be resolved.
     pub(crate) owner: Option<DeclarationRef>,
     pub(crate) text: String,
@@ -148,8 +148,7 @@ pub(crate) struct SourceDocumentationLink {
     pub(crate) span: Span,
 }
 
-/// Use the request's syntax for comment text and positions, and saved declarations for scope.
-/// Matching the documented item's header connects those two views when comments have been edited.
+/// Read comment text and positions from syntax, then find the declaration that supplies link scope.
 pub(crate) struct SourceDocumentationQuery<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
@@ -238,7 +237,6 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         )
     }
 
-    /// Reuse captured editor syntax, or parse saved text when the request has no syntax for it.
     /// Before parsing for a link query, check whether its cursor could be in documentation.
     /// `None` means the cursor made parsing unnecessary.
     /// Highlighting and counterpart docs need the whole file and pass no cursor.
@@ -248,7 +246,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         file: FileId,
         link_offset: Option<u32>,
     ) -> anyhow::Result<Option<SourceFile>> {
-        if link_offset.is_none() || self.0.current_source(crate_ref.package, file).is_some() {
+        if link_offset.is_none() {
             return self.0.source_syntax(crate_ref, file).map(Some);
         }
         let edition = self
@@ -258,12 +256,12 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
             .context("read documentation edition")?;
         let text = self
             .0
-            .saved_source
+            .sources
             .text(file)
-            .context("read saved documentation source")?;
-        // Saved files have no retained syntax tree. Lexing is enough to rule out ordinary
-        // code without constructing one on every hover or navigation request. Use Rust tokens
-        // so multiline comments and raw doc strings work too; the syntax check in `link_at`
+            .context("read documentation source")?;
+        // Lexing is enough to rule out ordinary code without parsing the file on every hover
+        // or navigation request. Use Rust tokens so multiline comments and raw doc strings work
+        // too; the syntax check in `link_at`
         // still decides whether a string belongs to a doc attribute.
         if let Some(offset) = link_offset {
             let kind = lexical_token_kind_at(&text, edition, offset);
@@ -341,8 +339,8 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
                     continue;
                 }
             }
-            // File-level inner docs use the file's module directly. Item docs need their
-            // current header associated with a saved declaration before links have a scope.
+            // File-level inner docs use the file's module directly. Item docs use the declaration
+            // at the documented header's range to choose the scope for links.
             let owner = if is_file {
                 view.file_module(crate_ref, file)
                     .context("find documented file module")?
@@ -356,7 +354,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
                             .context("read documentation declarations")?,
                     )
                 };
-                self.owner(crate_ref, file, &node, names)
+                self.owner(&node, names)
                     .context("associate documentation owner")?
             };
             let mut docs = SourceDocumentation {
@@ -453,14 +451,9 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         Ok(())
     }
 
-    /// Find the saved declaration that supplies this syntax node's documentation scope.
-    /// Editing a comment can move every name below it, so first map a current header token
-    /// into saved coordinates, then look it up in the saved name inventory. An unavailable or
-    /// ambiguous association leaves the owner unknown instead of borrowing a nearby item's scope.
+    /// Find the declaration that supplies this syntax node's documentation scope.
     fn owner(
         &self,
-        crate_ref: CrateRef,
-        file: FileId,
         node: &SyntaxNode,
         names: &DocumentationDeclarationIndex,
     ) -> anyhow::Result<Option<DeclarationRef>> {
@@ -486,13 +479,6 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         let Some(offset) = name_offset else {
             return Ok(None);
         };
-        let Some(saved) = self
-            .0
-            .saved_header_offset_for_current(crate_ref, file, offset.into())
-            .context("map documentation owner to saved header")?
-        else {
-            return Ok(None);
-        };
-        Ok(names.declaration_at(saved))
+        Ok(names.declaration_at(offset.into()))
     }
 }

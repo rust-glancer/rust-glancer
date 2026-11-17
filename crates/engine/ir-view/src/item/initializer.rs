@@ -33,9 +33,7 @@ impl<'a, 'db> InitializerView<'a, 'db> {
                 (data.source, data.initializer_location)
             }
         };
-        let preview = if let Some(current) = self.db.body_ir.current_initializer(item) {
-            current.initializer_preview()
-        } else if let Some(location) = location {
+        let preview = if let Some(location) = location {
             self.db
                 .body_ir
                 .declaration_source(item.origin().origin_crate(), source)?

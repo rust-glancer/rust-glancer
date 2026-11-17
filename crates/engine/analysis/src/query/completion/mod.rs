@@ -51,7 +51,7 @@ impl<'source> CompletionSource<'source> {
     pub fn new(source_text: &'source str, offset: u32) -> Option<Self> {
         Some(Self {
             offset,
-            syntax: CompletionSyntaxContext::at(Some(source_text), offset)?,
+            syntax: CompletionSyntaxContext::at(source_text, offset)?,
         })
     }
 
@@ -75,9 +75,8 @@ pub struct CompletionClientCapabilities {
 
 /// One source-position completion query plus the editor state needed for request-local syntax.
 ///
-/// Semantic completion can still use indexed sites without `source_text`. Supplying the exact
-/// request buffer additionally enables incomplete syntax classification, accurate replacement
-/// spans, call/punctuation detection, and source edits such as auto-imports.
+/// Source text and speculative syntax may be supplied by the caller. Otherwise completion reads
+/// the active snapshot and prepares its syntax there; both paths use the same completion rules.
 #[derive(Debug, Clone, Copy)]
 pub struct CompletionQuery<'a> {
     /// Crate context used to interpret paths and visibility from `file_id`.
@@ -86,7 +85,7 @@ pub struct CompletionQuery<'a> {
     pub file_id: FileId,
     /// UTF-8 byte offset of the cursor in `source_text` and the matching analysis snapshot.
     pub offset: u32,
-    /// Exact editor buffer for speculative parsing and source-aware insertion policy.
+    /// Exact buffer for this snapshot. When omitted, completion reads the file from the snapshot.
     pub source_text: Option<&'a str>,
     completion_source: Option<&'a CompletionSource<'a>>,
     /// Client features that affect insertion text but not semantic eligibility.
@@ -130,4 +129,15 @@ impl<'a> CompletionQuery<'a> {
         self.completion_source
             .filter(|source| source.offset() == self.offset)
     }
+}
+
+/// Source and request settings shared by completion providers after input preparation.
+/// Text is always present, even when the caller supplied only a file and cursor.
+#[derive(Clone, Copy)]
+pub(crate) struct CompletionContext<'a> {
+    pub(crate) crate_ref: CrateRef,
+    pub(crate) file_id: FileId,
+    pub(crate) offset: u32,
+    pub(crate) source_text: &'a str,
+    pub(crate) client_capabilities: CompletionClientCapabilities,
 }

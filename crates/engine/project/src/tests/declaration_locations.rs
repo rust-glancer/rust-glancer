@@ -1,8 +1,8 @@
 use std::fs;
 
-use rg_body_ir::CurrentSourceSelection;
 use rg_ir_model::{PrimitiveTy, Span, UnsignedIntTy};
 use rg_profile::test_support::ProfileTest;
+use rg_source::CapturedSource;
 use rg_std::CancellationToken;
 
 use crate::{Project, SavedFileChange, profile_descriptors, testonly::ProjectSourceFixture};
@@ -88,46 +88,42 @@ pub fn later() -> u8 { 2 }
             UnsignedIntTy::U8,
         ),
     ] {
-        // The editor path uses the same declarations with request-local body positions.
-        project.inspect(|snapshot| {
-            let context = snapshot
-                .file_context_for_path(&path)
-                .expect("route model")
-                .expect("model target");
-            let target = (context.crate_ref, context.file);
-            let offset = text.find("value;").expect("current local") as u32;
-            let source = snapshot
-                .prepare_current_source(target, &text, &CancellationToken::new())
-                .expect("prepare editor source");
-            let (analysis, summary) = snapshot
-                .analysis_for_current_source(
-                    target,
-                    source,
-                    CurrentSourceSelection::AtOffset(offset),
-                    |_| Ok(()),
-                )
-                .expect("current body");
-            assert!(summary.is_complete(), "{summary:?}");
-            let targets = analysis
-                .goto_definition(target.0, target.1, offset)
-                .expect("current local navigation");
-            let start = text.find("value =").expect("current binding") as u32;
-            assert_eq!(
-                targets[0].span,
-                Some(Span {
-                    start,
-                    end: start + 5
-                })
-            );
-            assert_eq!(
-                analysis
-                    .type_at(target.0, target.1, offset)
-                    .expect("current local type")
-                    .expect("inferred local")
-                    .primitive(),
-                Some(PrimitiveTy::UnsignedInt(expected))
-            );
-        });
+        // Before saving, queries already use the edited declarations and body locations.
+        project
+            .with_editor_snapshot(
+                &[CapturedSource::new(&path, text.clone()).expect("editor source")],
+                CancellationToken::new(),
+                |snapshot| {
+                    let context = snapshot
+                        .file_context_for_path(&path)
+                        .expect("route model")
+                        .expect("model target");
+                    let target = (context.crate_ref, context.file);
+                    let offset = text.find("value;").expect("current local") as u32;
+                    let analysis = snapshot.analysis();
+                    let targets = analysis
+                        .goto_definition(target.0, target.1, offset)
+                        .expect("current local navigation");
+                    let start = text.find("value =").expect("current binding") as u32;
+                    assert_eq!(
+                        targets[0].span,
+                        Some(Span {
+                            start,
+                            end: start + 5
+                        })
+                    );
+                    assert_eq!(
+                        analysis
+                            .type_at(target.0, target.1, offset)
+                            .expect("current local type")
+                            .expect("inferred local")
+                            .primitive(),
+                        Some(PrimitiveTy::UnsignedInt(expected))
+                    );
+                    Ok(())
+                },
+            )
+            .expect("query edited source");
 
         let profile = ProfileTest::start(profile_descriptors(), "def_map.construction");
         fs::write(&path, &text).expect("save model");

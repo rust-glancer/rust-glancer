@@ -7,23 +7,28 @@ This document aims to provide better intel on how these are used.
 
 ## Source and request state
 
-- **Saved project generation**: the globally indexed state built from saved files. It contains
-  packages, modules, declarations, traits, impls, indexes, and saved bodies. A save or an external
-  filesystem change can replace it; typing one more character cannot.
+- **Saved project generation**: the accepted project configuration and saved source inputs. A save
+  or an external filesystem change can replace it; typing one more character cannot. Declarations
+  and bodies are query results derived from those inputs, rather than a second mutable project.
 - **Captured source**: source text and its path fixed at one boundary and then carried together. We
   don't read the path again later and accidentally get different bytes. `Captured` means "already
   fixed", not "waiting to be applied".
 - **Editor document snapshot**: the text and identity of one open document revision. LSP ingress
   owns the live document and gives async handlers snapshots that cannot change underneath them.
-- **Current body**: a function, const, or static body rebuilt from an editor document snapshot for
-  one request. It can contain newly typed locals and expressions, while module-level declarations,
-  traits, and impls still come from the saved project. It disappears when the request is done.
-- **Current body build summary**: records which editor bodies were rebuilt for one request and why
-  another crate interpretation could not be rebuilt. This is diagnostic information about the
-  build, not another kind of query result.
-- **Global operation**: a cross-file query such as references, rename, or goto implementation. Its
-  identities and source locations come from the saved project, so it checks relevant open documents
-  first and asks for a save if those locations cannot be used safely.
+- **Editor snapshot**: a complete capture of applicable open documents and their source routes.
+  Semantic requests install this capture over the saved inputs before routing or analysis. An
+  omitted document uses its saved input. Document requests select a target within this capture;
+  workspace requests use the capture without a target.
+- **Input view**: the fixed source and configuration inputs observed by one query operation.
+  Saved and edited files use the same declaration, body, inference and source readers. Dirty
+  inputs keep affected results in bounded session storage; unchanged results can use disk storage.
+- **Editor freshness**: whether a response still describes the live capture at publication. An
+  edit to a sibling can change a semantic answer, so semantic requests watch the whole editor
+  revision. Syntax-only requests watch their target document. These revisions describe host
+  events, not semantic query identities.
+- **Outer body owner**: a function, const or static declaration that starts an independent body
+  worklist. Nested declarations allocate local body IDs within that owner's result. This is a
+  semantic ownership distinction, independent of whether its source has been saved.
 
 ## Object families
 

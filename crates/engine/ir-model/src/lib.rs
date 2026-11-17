@@ -25,8 +25,8 @@ pub use self::{
     field::FieldKey,
     ids::{
         body::{
-            BindingId, BodyBindingRef, BodyId, BodyKey, BodyRef, BodyRoot, ExprId, PatId,
-            SavedBodyOwner, ScopeId, StmtId,
+            BindingId, BodyBindingRef, BodyId, BodyKey, BodyRef, BodyRoot, ExprId, OuterBodyOwner,
+            PatId, ScopeId, StmtId,
         },
         def_map::{
             CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef,

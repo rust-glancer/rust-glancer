@@ -44,10 +44,8 @@ impl InlineAnalysisFixture {
                 "ty",
                 "complete",
                 "complete_verbose",
-                "complete_with_source",
-                "complete_verbose_with_source",
-                "complete_keywords_with_source",
-                "complete_keywords_verbose_with_source",
+                "complete_keywords",
+                "complete_keywords_verbose",
                 "hover",
                 "code_actions",
                 "automatic_code_actions",
@@ -90,12 +88,8 @@ impl InlineAnalysisFixture {
             "ty" => AnalysisQuery::ty,
             "complete" => AnalysisQuery::complete,
             "complete_verbose" => AnalysisQuery::complete_verbose,
-            "complete_with_source" => AnalysisQuery::complete_with_source,
-            "complete_verbose_with_source" => AnalysisQuery::complete_verbose_with_source,
-            "complete_keywords_with_source" => AnalysisQuery::complete_keywords_with_source,
-            "complete_keywords_verbose_with_source" => {
-                AnalysisQuery::complete_keywords_verbose_with_source
-            }
+            "complete_keywords" => AnalysisQuery::complete_keywords,
+            "complete_keywords_verbose" => AnalysisQuery::complete_keywords_verbose,
             "hover" => AnalysisQuery::hover,
             "code_actions" => AnalysisQuery::code_actions,
             "automatic_code_actions" => AnalysisQuery::automatic_code_actions,
@@ -128,8 +122,9 @@ impl InlineAnalysisFixture {
                 ("in_lib", [String(package)]) => query.in_lib(package),
                 ("in_bin", [String(package)]) => query.in_bin(package),
                 ("matching", [String(prefix)]) => query.matching(prefix),
+                ("members", []) => query.members(),
                 _ => panic!(
-                    "expected .in_lib(\"package\"), .in_bin(\"package\") or .matching(\"prefix\")"
+                    "expected .in_lib(\"package\"), .in_bin(\"package\"), .matching(\"prefix\") or .members()"
                 ),
             };
         }
@@ -177,9 +172,9 @@ let raw = r#"// ty("inside a string")"#;
 // example("ordinary fixture comment")
 let pair$binding$ = (1$0, 2$1); // ty("binding, \"quoted\""), ty("left"), ty(r#"right"#)
 let digits = 1$0$2; // ty("digits")
-name.$11 // complete_with_source("members").matching("na").in_lib("inline_queries")
+name.$11 // complete("members").matching("na").in_lib("inline_queries")
 //- /src/main.rs crate:inline_queries edition:2015 kind:bin
-use $0 // complete_keywords_with_source("import at EOF").in_bin("inline_queries")
+use $0 // complete_keywords("import at EOF").in_bin("inline_queries")
 "##,
     );
     let expected = FixtureSpec::parse(

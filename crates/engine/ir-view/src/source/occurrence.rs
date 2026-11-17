@@ -21,9 +21,8 @@ use rg_syntax::SourceFile;
 
 use super::scan::{
     BindingSurface, BodyCursorScanner, BodySourceCandidate, BodySourceScanner,
-    CurrentUsePathScanner, DefinitionSourceCandidate, DefinitionSourceScanner,
-    RecordFieldKeySurface, SignatureSourceCandidate, SignatureSourceScanner, ValueReferenceSource,
-    ValueReferenceSurface,
+    DefinitionSourceCandidate, DefinitionSourceScanner, RecordFieldKeySurface,
+    SignatureSourceCandidate, SignatureSourceScanner, ValueReferenceSource, ValueReferenceSurface,
 };
 use crate::{IndexedViewDb, item::declaration::DeclarationView, source::ReferenceSourceSelection};
 
@@ -375,16 +374,24 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ///
     /// The result is intentionally a vector rather than a single “best symbol”: the smallest
     /// body-local node and a path segment can provide different facts for analysis to interpret.
-    /// The caller must know that Body IR and saved declaration indexes use the same source text.
-    /// Edited source must choose one of the narrower methods below instead.
     pub fn occurrences_at(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
-        let mut occurrences = self.body_occurrences_at(crate_ref, file_id, offset)?;
-        occurrences.extend(self.saved_declaration_occurrences(crate_ref, file_id, Some(offset))?);
+        let mut occurrences = Vec::new();
+        for candidate in
+            BodyCursorScanner::new(&self.db.body_ir, crate_ref, file_id, offset).scan()?
+        {
+            if let Some(occurrence) = self
+                .body_occurrence(crate_ref, candidate, Some(file_id))
+                .context("convert body occurrence at cursor")?
+            {
+                occurrences.push(occurrence);
+            }
+        }
+        occurrences.extend(self.declaration_occurrences(crate_ref, file_id, Some(offset))?);
         Ok(occurrences)
     }
 
@@ -413,87 +420,11 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         }))
     }
 
-    /// Return occurrences whose coordinates come from Body IR.
-    ///
-    /// This narrower query is used for an edited file whose Body IR was rebuilt from current text.
-    /// Saved declaration scanners must not receive the same numeric offset in that case.
-    pub fn body_occurrences_at(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
-        let mut occurrences = Vec::new();
-        for candidate in
-            BodyCursorScanner::new(&self.db.body_ir, crate_ref, file_id, offset).scan()?
-        {
-            if let Some(occurrence) = self
-                .body_occurrence(crate_ref, candidate, Some(file_id))
-                .context("convert body occurrence at cursor")?
-            {
-                occurrences.push(occurrence);
-            }
-        }
-        Ok(occurrences)
-    }
-
-    /// Return signature occurrences lowered from the declaration selected in current source.
-    ///
-    /// These ranges belong to the editor buffer, unlike the saved signature index. The semantic
-    /// identities remain request-local, while referenced saved types and traits resolve through
-    /// the containing-module fallback recorded by the request database.
-    ///
-    /// For `impl<Current> Service for model::Worker<Current>`, `Service` and `model::Worker`
-    /// resolve from the saved module, while the final `Current` resolves to the request-local impl
-    /// generic.
-    pub fn current_signature_occurrences_at(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
-        let mut occurrences = Vec::new();
-        for origin in self.db.current_signature_origins(crate_ref, file_id) {
-            for candidate in
-                SignatureSourceScanner::at_origin(self.db, origin, file_id, offset).scan()?
-            {
-                if let Some(occurrence) =
-                    self.signature_occurrence(crate_ref, candidate, Some(file_id))?
-                {
-                    occurrences.push(occurrence);
-                }
-            }
-        }
-        Ok(occurrences)
-    }
-
-    /// Return a module-level import occurrence whose path and span come from current syntax.
-    ///
-    /// The saved DefMap contributes only the module namespace selected by the current inline-module
-    /// path. This method never asks a saved source scanner to interpret `offset`.
-    pub fn current_module_use_occurrences_at(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        source: &SourceFile,
-        offset: u32,
-    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
-        Ok(
-            CurrentUsePathScanner::new(&self.db.def_map, crate_ref, file_id, source, offset)
-                .scan()?
-                .into_iter()
-                .filter_map(|candidate| Self::definition_occurrence(crate_ref, candidate))
-                .collect(),
-        )
-    }
-
-    /// Return declaration occurrences whose coordinates come from saved source indexes.
+    /// Return declaration occurrences using the active declaration source indexes.
     ///
     /// With no offset, collect the whole file for consumers that associate several declarations.
-    /// These are saved coordinates; callers must map current headers before comparing positions. Body IR is
-    /// intentionally excluded so an explicitly mapped saved header cannot collide with a current
-    /// body at the same numeric range.
-    pub fn saved_declaration_occurrences(
+    /// Body IR is excluded so documentation lookup can find owners without inferring expressions.
+    pub(crate) fn declaration_occurrences(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
@@ -542,7 +473,14 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
-        occurrences.extend(self.body_occurrences_in_crate(crate_ref, file_id, selection)?);
+        for candidate in BodySourceScanner::new(self.db, crate_ref, file_id, selection).scan()? {
+            if let Some(occurrence) = self
+                .body_occurrence(crate_ref, candidate, file_id)
+                .context("convert body occurrence")?
+            {
+                occurrences.push(occurrence);
+            }
+        }
         for candidate in SignatureSourceScanner::in_crate(self.db, crate_ref, file_id).scan()? {
             if let Some(occurrence) = self
                 .signature_occurrence(crate_ref, candidate, file_id)
@@ -552,28 +490,6 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             }
         }
 
-        Ok(occurrences)
-    }
-
-    /// Return the complete occurrence inventory from Body IR only.
-    ///
-    /// In a file rebuilt from edited text, this is the only inventory whose ranges belong to the
-    /// current document. Saved declarations must not be mixed into that editor-facing surface.
-    pub fn body_occurrences_in_crate(
-        &self,
-        crate_ref: CrateRef,
-        file_id: Option<FileId>,
-        selection: Option<&ReferenceSourceSelection>,
-    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
-        let mut occurrences = Vec::new();
-        for candidate in BodySourceScanner::new(self.db, crate_ref, file_id, selection).scan()? {
-            if let Some(occurrence) = self
-                .body_occurrence(crate_ref, candidate, file_id)
-                .context("convert body occurrence")?
-            {
-                occurrences.push(occurrence);
-            }
-        }
         Ok(occurrences)
     }
 

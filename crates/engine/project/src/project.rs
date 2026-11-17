@@ -1,22 +1,26 @@
 //! Owns the accepted source generation and serializes access to its query runtime.
 
 use std::{
+    fmt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
+use rg_ir_model::FileId;
 use rg_source::{CapturedSource, SourceError};
-use rg_std::{CancellationToken, MemorySize};
+use rg_std::{CancellationToken, MemoryRecorder, MemorySize};
+use rg_text::RustEdition;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
-    MacroExpansionLimitBuildSummary, ProjectBuilder, ProjectGenerationId, ProjectMemoryHooks,
-    ProjectSnapshot, ProjectStats, project_queries::ProjectQueries, state::ProjectState,
+    MacroExpansionLimitBuildSummary, MacroExpansionLimitReport, ProjectBuilder,
+    ProjectGenerationId, ProjectMemoryHooks, ProjectMemoryPurgePoint, ProjectSnapshot,
+    ProjectStats, project_queries::ProjectQueries, state::ProjectState,
 };
 
 #[derive(MemorySize)]
 pub struct Project {
-    #[memsize(skip)]
+    #[memsize(with = "Self::record_queries_memory")]
     pub(crate) queries: Mutex<ProjectQueries>,
     pub(crate) state: ProjectState,
     #[memsize(skip)]
@@ -27,6 +31,36 @@ pub struct Project {
 }
 
 impl Project {
+    fn record_queries_memory(queries: &Mutex<ProjectQueries>, recorder: &mut MemoryRecorder) {
+        queries
+            .lock()
+            .expect("project query runtime")
+            .record_memory_children(recorder);
+    }
+
+    /// Release operation leftovers and apply retention at a host idle boundary. This does not
+    /// change the published generation or discard editor inputs. Maintenance failure is reported
+    /// separately: an already accepted save must not look like a rejected source update.
+    pub fn collect(&self) {
+        self.collect_at(ProjectMemoryPurgePoint::Idle);
+    }
+
+    pub(crate) fn collect_at(&self, point: ProjectMemoryPurgePoint) {
+        let result = self
+            .queries
+            .lock()
+            .expect("project query runtime")
+            .collect();
+        if let Err(error) = result {
+            let persistence_kind = match error.kind() {
+                ajika::ErrorKind::Persistence(error) => Some(error.kind()),
+                _ => None,
+            };
+            tracing::warn!(%error, ?persistence_kind, boundary = point.label(), "query storage maintenance failed");
+        }
+        self.memory_hooks.purge(point);
+    }
+
     pub fn builder(workspace: WorkspaceMetadata) -> ProjectBuilder {
         ProjectBuilder::new(workspace)
     }
@@ -73,6 +107,15 @@ impl Project {
             .set_session_retention(retention);
     }
 
+    /// Release retained editor inputs after their host capture is superseded. Query memos retain
+    /// their normal bounded session policy; the next operation installs a complete capture again.
+    pub fn release_editor_snapshot(&self) {
+        self.queries
+            .lock()
+            .expect("project query runtime")
+            .release_editor_snapshot();
+    }
+
     /// Release retained query work without discarding editor inputs. The next request can use
     /// the same captures and recompute its answers; this does not save or discard documents.
     pub fn clear_session(&self) {
@@ -90,13 +133,53 @@ impl Project {
         self.state.workspace()
     }
 
+    /// Choose an edition for syntax-only requests without discovering semantic owners.
+    /// Collected membership handles paths outside a package, such as `#[path = "../shared.rs"]`.
+    /// For other files, use Cargo's generated-file attribution or the nearest package root.
+    /// A file outside all of these has no project edition; the caller chooses its default.
+    pub fn source_edition(&self, source_path: &Path) -> anyhow::Result<Option<RustEdition>> {
+        let file = FileId::for_path(
+            &self
+                .queries
+                .lock()
+                .expect("project query runtime")
+                .interner(),
+            source_path,
+        )?;
+        let packages = self.workspace().packages();
+        if let Some(krate) = self.state.sources.first_source_crate(file) {
+            return Ok(Some(packages[krate.package.0].edition));
+        }
+
+        let package = packages
+            .iter()
+            .find(|package| {
+                package
+                    .cargo_generated_sources
+                    .as_ref()
+                    .is_some_and(|sources| {
+                        sources
+                            .generated_files()
+                            .iter()
+                            .any(|file| file == source_path)
+                    })
+            })
+            .or_else(|| {
+                packages
+                    .iter()
+                    .filter(|package| source_path.starts_with(package.root_dir()))
+                    .max_by_key(|package| package.root_dir().components().count())
+            });
+        Ok(package.map(|package| package.edition))
+    }
+
     pub fn stats(&self) -> ProjectStats {
         self.state.stats()
     }
 
     pub fn macro_expansion_limit_reports(
         &self,
-    ) -> impl Iterator<Item = &rg_def_map::MacroExpansionLimitReport> {
+    ) -> impl Iterator<Item = &MacroExpansionLimitReport> {
         self.state.reports.iter()
     }
 
@@ -128,8 +211,8 @@ impl Project {
     }
 }
 
-impl std::fmt::Debug for Project {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Project {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Project")
             .field("state", &self.state)
             .finish_non_exhaustive()

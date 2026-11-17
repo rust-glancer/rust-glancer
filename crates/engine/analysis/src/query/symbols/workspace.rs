@@ -1,9 +1,8 @@
 //! Workspace-wide symbol search.
 
 use anyhow::Result;
-use rg_ir_view::{IndexedViewDb, symbol::SymbolView};
+use rg_ir_view::{IndexedViewDb, item::declaration::DeclarationView, symbol::SymbolView};
 
-use super::adapter::workspace_symbol;
 use crate::model::WorkspaceSymbol;
 
 pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a IndexedViewDb<'db>);
@@ -18,7 +17,18 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
 
         for symbol in SymbolView::new(self.0).workspace_symbols(query)? {
             rg_std::check_cancel!(self.0, "workspace symbol filtering");
-            symbols.push(workspace_symbol(self.0, symbol)?);
+            let (declaration, container_name) = symbol.into_parts();
+            let name = DeclarationView::new(self.0)
+                .declaration_site_name(&declaration)?
+                .to_string();
+            symbols.push(WorkspaceSymbol {
+                crate_ref: declaration.crate_ref(),
+                name,
+                kind: declaration.kind(),
+                file_id: declaration.file_id(),
+                span: Some(declaration.selection_span()),
+                container_name,
+            });
         }
 
         symbols.sort_by_key(|symbol| {

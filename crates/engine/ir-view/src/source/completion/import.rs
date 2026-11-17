@@ -10,7 +10,7 @@ use super::{
 use crate::source::scan::{ImportPathCompletionSiteScanner, ModuleSourceSiteScanner};
 
 impl<'a, 'db> SourceCompletionView<'a, 'db> {
-    /// Resolve a qualified current import, such as `use std::sync::Ar$0`, in its saved module.
+    /// Resolve a qualified import, such as `use std::sync::Ar$0`, in its enclosing module.
     pub fn import_syntax_qualified_path_site(
         &self,
         crate_ref: CrateRef,
@@ -25,7 +25,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
             file_id,
             inline_module_path,
         )
-        .context("match current import syntax to saved module")?
+        .context("resolve import syntax module")?
         .map(|module| IndexedQualifiedPathSite {
             scope: IndexedQualifiedPathScope::Import { module },
             module_qualifier: Some(qualifier),
@@ -34,7 +34,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         }))
     }
 
-    /// Resolve an unqualified current import, such as `use st$0`, in its saved module.
+    /// Resolve an unqualified import, such as `use st$0`, in its enclosing module.
     pub fn import_syntax_unqualified_name_site(
         &self,
         crate_ref: CrateRef,
@@ -49,7 +49,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
             file_id,
             inline_module_path,
         )
-        .context("match current import syntax to saved module")?
+        .context("resolve import syntax module")?
         .map(|module| IndexedUnqualifiedNameSite {
             scope: IndexedUnqualifiedNameScope::Import {
                 module,

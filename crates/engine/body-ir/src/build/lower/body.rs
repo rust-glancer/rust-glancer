@@ -1,15 +1,12 @@
 //! Shared lowering context for expression bodies.
 
-use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceId, Span};
-use rg_item_tree::{RecordSource, SourceRole, initializer_preview};
-use rg_std::CancellationToken;
+use rg_item_tree::{RecordSource, SourceRole};
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
 
 use super::{
-    CurrentDeclarationBuilder, CurrentRootItems,
     builder::{BodyBuilder, LoweredBodyData},
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
@@ -25,7 +22,6 @@ pub(super) struct BodyLowering<'a> {
     pub(super) builder: BodyBuilder,
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
     generated_context: Option<GeneratedBodyMacroContext>,
-    cancellation: &'a CancellationToken,
 }
 
 impl<'a> BodyLowering<'a> {
@@ -36,7 +32,6 @@ impl<'a> BodyLowering<'a> {
         body_source: BodySource,
         cfg: CfgEvaluator<'a>,
         macro_expansion: &'a mut dyn BodyMacroExpansionContext,
-        cancellation: &'a CancellationToken,
     ) -> Self {
         Self {
             owner,
@@ -47,50 +42,21 @@ impl<'a> BodyLowering<'a> {
             builder: BodyBuilder::default(),
             macro_expansion,
             generated_context: None,
-            cancellation,
         }
-    }
-
-    fn lower_current_declaration(
-        &mut self,
-        item: ast::Item,
-        role: CurrentRootItems,
-        scope: ScopeId,
-    ) -> anyhow::Result<()> {
-        let declaration = CurrentDeclarationBuilder {
-            file: self.body_source.file_id,
-            cfg: self.cfg,
-            items: &mut self.builder.source_items,
-            sources: &mut self.builder.sources,
-            cancellation: self.cancellation,
-        }
-        .root(item, role)
-        .context("collect current body declarations")?;
-        if let Some(declaration) = declaration {
-            self.builder.scopes[scope].source_items.push(declaration);
-        }
-        Ok(())
     }
 
     pub(super) fn lower_function(
         mut self,
         function: ast::Fn,
         body: ast::BlockExpr,
-        current_root_items: CurrentRootItems,
-    ) -> anyhow::Result<LoweredBodyData> {
+    ) -> LoweredBodyData {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
-        self.lower_current_declaration(
-            ast::Item::Fn(function.clone()),
-            current_root_items,
-            param_scope,
-        )
-        .context("lower function declarations")?;
         let function_params = self.lower_params(function.param_list(), param_scope);
         let root_expr = self.lower_block_expr(body, param_scope);
 
-        Ok(self.builder.finish(
+        self.builder.finish(
             self.owner,
             self.owner_module,
             self.fallback_module,
@@ -98,52 +64,15 @@ impl<'a> BodyLowering<'a> {
             param_scope,
             root_expr,
             function_params,
-        ))
-    }
-
-    pub(super) fn lower_const(
-        mut self,
-        konst: ast::Const,
-        expr: ast::Expr,
-        current_root_items: CurrentRootItems,
-    ) -> anyhow::Result<LoweredBodyData> {
-        let root_scope = self.builder.alloc_scope(None);
-        self.lower_current_declaration(
-            ast::Item::Const(konst.clone()),
-            current_root_items,
-            root_scope,
         )
-        .context("lower initializer declarations")?;
-        Ok(self.lower_initializer(expr, root_scope))
     }
 
-    pub(super) fn lower_static(
-        mut self,
-        static_: ast::Static,
-        expr: ast::Expr,
-        current_root_items: CurrentRootItems,
-    ) -> anyhow::Result<LoweredBodyData> {
+    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> LoweredBodyData {
         let root_scope = self.builder.alloc_scope(None);
-        self.lower_current_declaration(
-            ast::Item::Static(static_.clone()),
-            current_root_items,
-            root_scope,
-        )
-        .context("lower initializer declarations")?;
-        Ok(self.lower_initializer(expr, root_scope))
-    }
-
-    fn lower_initializer(mut self, expr: ast::Expr, root_scope: ScopeId) -> LoweredBodyData {
         // Item initializers are expression bodies without parameters. They still need a root scope
         // so ordinary body path resolution, type paths, and source scans can use the same pipeline
         // as function bodies.
-        let preview = initializer_preview(&expr);
         let root_expr = self.lower_expr(expr, root_scope);
-        // A current initializer can reuse a saved declaration. Its display text must still come
-        // from this body snapshot, even when the current expression is too long for a preview.
-        self.builder
-            .sources
-            .record_initializer_preview(self.builder.exprs[root_expr].source, preview);
 
         self.builder.finish(
             self.owner,

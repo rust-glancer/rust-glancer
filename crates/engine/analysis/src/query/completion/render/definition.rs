@@ -16,7 +16,7 @@ use super::{
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind},
-    query::completion::{CompletionQuery, candidates::DefinitionCompletionCandidate},
+    query::completion::{CompletionContext, candidates::DefinitionCompletionCandidate},
 };
 
 /// Site-specific rendering choices for one definition-shaped candidate.
@@ -31,14 +31,14 @@ pub(crate) struct DefinitionCompletionRequest<'candidate> {
 /// Renders the common candidate vocabulary without repeating semantic lookup.
 pub(crate) struct DefinitionCompletionRenderer<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
     syntax: SyntaxRenderer,
 }
 
 impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
     pub(crate) fn new(
         analysis: &'a Analysis<'db>,
-        query: CompletionQuery<'source>,
+        query: CompletionContext<'source>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             analysis,
@@ -129,13 +129,10 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
     }
 
     fn macro_invocation_already_present(&self, edit: CompletionEdit) -> bool {
-        let Some(source) = self.query.source_text else {
-            return false;
-        };
         let Ok(end) = usize::try_from(edit.replace.end) else {
             return false;
         };
-        let Some(after_completion) = source.get(end..) else {
+        let Some(after_completion) = self.query.source_text.get(end..) else {
             return false;
         };
 

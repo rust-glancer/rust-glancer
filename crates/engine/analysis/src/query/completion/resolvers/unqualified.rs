@@ -13,6 +13,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context as _;
+use rg_ir_model::EnumVariantRef;
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::details::{DeclarationDetailsContext, DeclarationDetailsView},
@@ -23,12 +24,12 @@ use rg_ir_view::{
 use crate::{
     Analysis,
     model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
+        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+        CompletionItem, CompletionKind, CompletionTarget,
     },
     query::{
         completion::{
-            CompletionQuery,
+            CompletionContext,
             candidates::{
                 CompletionCandidateSource, DefinitionCompletionCandidate,
                 GenericScopeCompletionCandidate, LexicalCompletionCandidate,
@@ -56,11 +57,11 @@ const ENABLE_AUTO_IMPORT_COMPLETIONS: bool = false;
 /// Combines unqualified candidate families while preserving namespace-aware shadowing.
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 
@@ -224,36 +225,20 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         )
         .context("render module completion candidates")?;
 
-        if let Some(auto_import_occupied) = auto_import_occupied {
-            // Exact request syntax is shared with the coordinator. Semantic-only API callers do
-            // not have that tree, so load saved source only for this source-edit policy and still
-            // build at most one syntax tree on their request path.
-            let loaded_source = if syntax_context.is_none() {
-                Some(
-                    self.analysis
-                        .saved_source
-                        .text(self.query.file_id)
-                        .context("load auto-import source text")?,
-                )
-            } else {
-                None
-            };
-            let loaded_syntax = loaded_source
-                .as_deref()
-                .and_then(|source| CompletionSyntaxContext::at(Some(source), self.query.offset));
-            if let Some(syntax_context) = syntax_context.or(loaded_syntax.as_ref()) {
-                let planner = ImportEditPlanner::for_completion(syntax_context, edit);
-                self.push_auto_import_completions(
-                    syntax,
-                    auto_import_candidates,
-                    filter,
-                    &auto_import_occupied,
-                    &planner,
-                    edit,
-                    &mut completions,
-                )
-                .context("render auto-import completion candidates")?;
-            }
+        if let Some(auto_import_occupied) = auto_import_occupied
+            && let Some(syntax_context) = syntax_context
+        {
+            let planner = ImportEditPlanner::for_completion(syntax_context, edit);
+            self.push_auto_import_completions(
+                syntax,
+                auto_import_candidates,
+                filter,
+                &auto_import_occupied,
+                &planner,
+                edit,
+                &mut completions,
+            )
+            .context("render auto-import completion candidates")?;
         }
 
         self.push_expected_variant_completions(
@@ -287,11 +272,11 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     fn visible_expected_variants(
         &self,
         source: &CompletionCandidateSource<'_, '_>,
-        variants: Vec<rg_ir_model::EnumVariantRef>,
+        variants: Vec<EnumVariantRef>,
         lexical: &[LexicalCompletionCandidate],
         module: &[DefinitionCompletionCandidate],
         hidden: &HashSet<(String, NameNamespace)>,
-    ) -> anyhow::Result<Vec<(rg_ir_model::EnumVariantRef, String)>> {
+    ) -> anyhow::Result<Vec<(EnumVariantRef, String)>> {
         let members = MemberView::new(self.analysis.view_db());
         let mut visible = Vec::new();
         for variant_ref in variants {
@@ -349,7 +334,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     fn push_expected_variant_completions(
         &self,
         syntax: SyntaxRenderer,
-        variants: Vec<(rg_ir_model::EnumVariantRef, String)>,
+        variants: Vec<(EnumVariantRef, String)>,
         pattern_policy: Option<PatternCompletionPolicy>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
@@ -648,12 +633,10 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 Some(detail) => format!("{detail} (use {rendered_path})"),
                 None => format!("use {rendered_path}"),
             });
-            completion
-                .additional_edits
-                .push(crate::CompletionAdditionalEdit {
-                    replace: additional_edit.replace,
-                    new_text: additional_edit.new_text,
-                });
+            completion.additional_edits.push(CompletionAdditionalEdit {
+                replace: additional_edit.replace,
+                new_text: additional_edit.new_text,
+            });
             if completions.iter().any(|existing| {
                 existing.target == completion.target && existing.label == completion.label
             }) {

@@ -5,7 +5,8 @@
 //! signal, and shared outcome channel.
 
 use rg_lsp_proto::{
-    DocumentPositionSnapshot, DocumentRevision, EngineError, QueryError, TargetDocumentRevision,
+    DocumentPositionSnapshot, DocumentRevision, EngineError, OpenDocumentsRevision, QueryError,
+    TargetDocumentRevision,
 };
 use tokio::sync::watch;
 use tower_lsp_server::gen_lsp_types::Position;
@@ -14,7 +15,7 @@ use super::{
     request::{CompletionAttemptOutcome, CompletionFuture},
     session::{RequestId, SessionKey},
 };
-use crate::ingress::{CapturedDocument, DocumentRevisionWatch};
+use crate::ingress::{CapturedDocument, EditorRevisionWatch};
 
 /// Identity of one engine attempt for a captured target document and cursor.
 ///
@@ -24,26 +25,40 @@ use crate::ingress::{CapturedDocument, DocumentRevisionWatch};
 pub(super) struct AttemptKey {
     pub(super) session: SessionKey,
     pub(super) document_revision: DocumentRevision,
+    pub(super) editor_revision: OpenDocumentsRevision,
     pub(super) line: u32,
     pub(super) character: u32,
 }
 
 impl AttemptKey {
     pub(super) fn for_input(input: &DocumentPositionSnapshot) -> Self {
-        Self::new(input.document().target().clone(), input.position())
+        Self::new(
+            input.document().target().clone(),
+            input.snapshot().editor().revision(),
+            input.position(),
+        )
     }
 
     pub(super) fn for_capture(captured: &CapturedDocument, position: Position) -> Self {
-        Self::new(captured.document().target().clone(), position)
+        Self::new(
+            captured.document().target().clone(),
+            captured.open_documents_revision(),
+            position,
+        )
     }
 
-    fn new(target: TargetDocumentRevision, position: Position) -> Self {
+    fn new(
+        target: TargetDocumentRevision,
+        editor_revision: OpenDocumentsRevision,
+        position: Position,
+    ) -> Self {
         Self {
             session: SessionKey {
                 path: target.path().to_path_buf(),
                 session: target.session(),
             },
             document_revision: target.revision(),
+            editor_revision,
             line: position.line,
             character: position.character,
         }
@@ -60,7 +75,7 @@ pub(super) struct AttemptIdentity {
 /// One accepted engine attempt, including the future that has not yet completed.
 pub(super) struct AttemptJob {
     identity: AttemptIdentity,
-    invalidation: DocumentRevisionWatch,
+    invalidation: EditorRevisionWatch,
     run: CompletionFuture,
     outcome: AttemptOutcomePublisher,
 }
@@ -69,7 +84,7 @@ impl AttemptJob {
     pub(super) fn new(
         request: RequestId,
         key: AttemptKey,
-        invalidation: DocumentRevisionWatch,
+        invalidation: EditorRevisionWatch,
         run: CompletionFuture,
     ) -> (Self, AttemptWaiter) {
         let (outcome, waiter) = AttemptOutcomePublisher::channel();

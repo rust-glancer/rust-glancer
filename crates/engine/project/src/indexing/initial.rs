@@ -65,12 +65,10 @@ pub(crate) fn build_state(
     metric::METADATA_BYTES_WRITTEN.record(ProfileMeasurement::Bytes(stats.metadata_bytes_written));
 
     // A captured file may belong to a member query that startup has not demanded. Module
-    // collection cannot prove that it is detached. Keep the revision observation, but release
-    // reloadable text just as for eagerly discovered files.
+    // collection cannot prove that it is detached. The query owner releases its reloadable text.
     // TODO: Retire captures once live input reachability can be proven without eager discovery.
     // Partial declaration ownership cannot prove absence, and expansion also observes files that
     // contribute no declarations. Detached captures can still require stale-source recovery.
-    SourceInput::evict_saved_text(database.inputs());
     Ok(ProjectState {
         generation_id: ProjectGenerationId::fresh(),
         workspace,

@@ -40,7 +40,7 @@ impl fmt::Display for SourceRevision {
 }
 
 /// Metadata shared by a source capture and the corresponding source input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub(crate) struct SourceDescriptor {
     path: Arc<Path>,
     revision: SourceRevision,
@@ -48,6 +48,14 @@ pub(crate) struct SourceDescriptor {
 }
 
 impl SourceDescriptor {
+    pub(crate) fn relocated(&self) -> Self {
+        Self {
+            path: Arc::from(self.path()),
+            revision: self.revision,
+            byte_len: self.byte_len,
+        }
+    }
+
     pub(crate) fn new(path: PathBuf, bytes: &[u8]) -> Self {
         Self {
             path: path.into(),

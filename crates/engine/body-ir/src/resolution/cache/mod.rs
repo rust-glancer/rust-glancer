@@ -3,8 +3,10 @@
 mod body_items;
 mod traits;
 
+use rg_ty::solver::DeclarationCache;
+
 pub(crate) use self::{
-    body_items::{BodyLocalInherentItemNames, BodyLocalItemCache, BodyLocalItemIndex},
+    body_items::{BodyLocalItemCache, BodyLocalItemIndex},
     traits::{BodyTraitLookupCache, BodyTraitSurface},
 };
 
@@ -15,7 +17,7 @@ pub(crate) use self::{
 /// stable as types gain evidence:
 ///
 /// - `traits` retains lexical trait sets and name-filtered declaration surfaces;
-/// - `body_local_items` indexes active-overlay and body-local declarations once;
+/// - `body_local_items` indexes body-local declarations once;
 /// - `solver_declarations` shares lowered source declarations between solver operations;
 ///
 /// Receiver-specific proofs stay in the body's live solver context instead.
@@ -24,5 +26,5 @@ pub(crate) use self::{
 pub(crate) struct BodyResolutionCaches {
     pub(crate) traits: BodyTraitLookupCache,
     pub(crate) body_local_items: BodyLocalItemCache,
-    pub(crate) solver_declarations: rg_ty::solver::DeclarationCache,
+    pub(crate) solver_declarations: DeclarationCache,
 }

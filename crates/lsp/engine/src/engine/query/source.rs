@@ -1,8 +1,9 @@
-//! Selects one saved crate/file context and converts editor positions in that file.
+//! Selects one active crate/file context and converts editor positions in that file.
 
 use std::path::Path;
 
 use anyhow::Context as _;
+use gen_lsp_types::Position;
 use rg_project::{FileContext, ProjectSnapshot};
 use rg_text::RustEdition;
 
@@ -14,7 +15,7 @@ impl QueryRunner<'_> {
     pub(super) fn file_offset(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
-        position: gen_lsp_types::Position,
+        position: Position,
     ) -> anyhow::Result<Option<(FileContext, u32)>> {
         let Some(context) = Self::file_context(snapshot, path)? else {
             return Ok(None);
@@ -36,13 +37,12 @@ impl QueryRunner<'_> {
         Ok(context)
     }
 
-    /// Standalone Rust files have no owner and use the newest supported edition for syntax queries.
-    pub(super) fn rust_edition_for_path(
-        snapshot: ProjectSnapshot<'_>,
-        path: &Path,
-    ) -> anyhow::Result<RustEdition> {
-        Ok(Self::file_context(snapshot, path)?
-            .and_then(|context| snapshot.package_edition(context.crate_ref.package))
+    /// Files with no package edition use the newest supported edition for syntax queries.
+    pub(super) fn rust_edition_for_path(&self, path: &Path) -> anyhow::Result<RustEdition> {
+        Ok(self
+            .project
+            .saved_project()?
+            .source_edition(path)?
             .unwrap_or(RustEdition::Edition2024))
     }
 }

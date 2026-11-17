@@ -6,10 +6,10 @@ use rg_ir_model::{
     BodyRef, EnumVariantRef, ModuleRef, Path, ScopeId, SemanticItemRef, TraitApplicability,
     TypeDefId, identity::DeclarationRef,
 };
-use rg_item_tree::Documentation;
-use rg_semantic_ir::{ItemStoreQuery, TypePathResolution};
+use rg_item_tree::{Documentation, TypeRef};
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_ty::{
-    GenericArgs, TraitApplication, Ty, TyContext,
+    AdtTy, GenericArgs, TraitApplication, Ty, TyContext,
     lookup::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ItemPathQuery},
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     signature::SemanticSignatureQuery,
@@ -27,7 +27,7 @@ use crate::{
 };
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    /// Return associated declarations for a body qualifier, including local impl overlays.
+    /// Return associated declarations for a body qualifier, including body-local impls.
     ///
     /// `Widget::` can contribute enum variants, inherent items, and items from implemented traits;
     /// `T::` uses bounds visible in the body; `<T as Factory>::` uses the selected trait hierarchy.
@@ -57,7 +57,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &self,
         body: BodyRef,
         scope: ScopeId,
-        trait_ref: &rg_item_tree::TypeRef,
+        trait_ref: &TypeRef,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
         let Some(candidates) = BodyResolutionView::new(self.db)
             .trait_associated_item_candidate_refs(body, scope, trait_ref)
@@ -240,7 +240,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     pub fn trait_associated_item_candidates_for_signature(
         &self,
         scope: IndexedSignatureTypeScope,
-        trait_ref: &rg_item_tree::TypeRef,
+        trait_ref: &TypeRef,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
         let use_site = scope.context().module.origin.origin_crate();
         let item_lookup_query = self
@@ -354,22 +354,20 @@ impl<'a, 'db> MemberView<'a, 'db> {
     /// nominal enum before variants are collected.
     pub fn associated_enum_variants_for_import(
         &self,
-        importing_module: rg_ir_model::ModuleRef,
+        importing_module: ModuleRef,
         qualifier: &Path,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
-        let context = rg_semantic_ir::TypePathContext::module(importing_module);
+        let context = TypePathContext::module(importing_module);
         let resolution = ItemPathQuery::new(self.db, self.db)
             .resolve_type_path(context, qualifier)
             .context("resolve import associated item qualifier")?;
         let ty = match resolution {
             TypePathResolution::SelfType(def) | TypePathResolution::TypeDef(def) => {
-                Some(Ty::adt(rg_ty::AdtTy::bare(def)))
+                Some(Ty::adt(AdtTy::bare(def)))
             }
-            TypePathResolution::TypeAlias(alias) => {
-                SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
-                    .type_alias_ty(alias)
-                    .context("resolve import type alias target")?
-            }
+            TypePathResolution::TypeAlias(alias) => SemanticSignatureQuery::new(self.db, self.db)
+                .type_alias_ty(alias)
+                .context("resolve import type alias target")?,
             TypePathResolution::Trait(_) | TypePathResolution::Unknown => None,
         };
         let Some(ty) = ty else {

@@ -8,38 +8,33 @@ use rg_ir_model::DefMapRef;
 use rg_semantic_ir::{ItemLookupQuery, ItemReader, TypePathResolution};
 use rg_std::ExpectedUnique;
 
-use super::{BodySemanticStage, BodySemanticTimings, BodyStoreBuilder, SLOW_PREPARATION_PHASE};
+use super::{BodySemanticTimings, BodyStoreBuilder, SLOW_PREPARATION_PHASE};
 use crate::{
     build::{pattern_binding::PatternBindingQuery, query_source::BodyBuildQuerySource},
     resolution::BodyResolutionContext,
 };
 
 impl BodyStoreBuilder<'_> {
-    /// Run the semantic stages in the same order for saved and current worklists.
+    /// Resolve the declarations and binding identities that inference depends on.
     ///
     /// Lowering and body-local item discovery decide which bodies belong to the worklist. From
-    /// this point onward both build modes resolve impl headers and ambiguous pattern bindings.
+    /// this point onward preparation resolves impl headers and ambiguous pattern bindings.
     /// Inference and initializer evaluation only see the frozen result.
     pub(crate) fn prepare_semantics(
         &mut self,
         def_map: &DefinitionReader<'_>,
         semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
-        mut checkpoint: impl FnMut(BodySemanticStage) -> anyhow::Result<()>,
     ) -> anyhow::Result<BodySemanticTimings> {
         let started = Instant::now();
         self.resolve_body_local_impl_headers(def_map, semantic_ir, item_lookup_query)?;
         let impl_headers = started.elapsed();
         Self::report_slow_semantic_stage("body_local_impl_headers", impl_headers);
-        checkpoint(BodySemanticStage::ImplHeaders)
-            .context("check body work after resolving body-local impl headers")?;
 
         let started = Instant::now();
         self.materialize_pattern_bindings(def_map, semantic_ir, item_lookup_query)?;
         let pattern_bindings = started.elapsed();
         Self::report_slow_semantic_stage("pattern_bindings", pattern_bindings);
-        checkpoint(BodySemanticStage::PatternBindings)
-            .context("check body work after resolving pattern bindings")?;
 
         Ok(BodySemanticTimings {
             impl_headers,
@@ -67,7 +62,7 @@ impl BodyStoreBuilder<'_> {
         item_lookup_query: &ItemLookupQuery<'_>,
     ) -> anyhow::Result<()> {
         for (body_id, lowered_body) in self.lowered_bodies.bodies().iter_with_ids() {
-            self.source.check_cancelled()?;
+            self.db.check_cancelled()?;
             rg_std::check_cancel!(self.cancellation, "body impl headers");
             let body_ref = self.body_ref(body_id);
             let body = lowered_body.body();
@@ -93,8 +88,7 @@ impl BodyStoreBuilder<'_> {
                 let source = BodyBuildQuerySource::new(
                     def_map,
                     semantic_ir,
-                    self.crate_ref,
-                    &self.body_slots,
+                    self.key,
                     &self.body_local_items,
                 );
                 let context = BodyResolutionContext::new(
@@ -153,17 +147,12 @@ impl BodyStoreBuilder<'_> {
         semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
     ) -> anyhow::Result<()> {
-        let source = BodyBuildQuerySource::new(
-            def_map,
-            semantic_ir,
-            self.crate_ref,
-            &self.body_slots,
-            &self.body_local_items,
-        );
+        let source =
+            BodyBuildQuerySource::new(def_map, semantic_ir, self.key, &self.body_local_items);
 
         for (body_id, body) in self.lowered_bodies.bodies_mut().iter_mut_with_ids() {
             rg_std::check_cancel!(self.cancellation, "body pattern bindings");
-            let body_ref = self.body_refs[body_id];
+            let body_ref = self.key.body(body_id);
             if !body.has_pending_bindings() {
                 continue;
             }

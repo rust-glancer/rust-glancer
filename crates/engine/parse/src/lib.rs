@@ -4,8 +4,6 @@
 //! Callers supply the edition for their crate interpretation. This crate owns neither
 //! workspace metadata nor the mapping from physical files to crates.
 
-mod current_source;
-mod declaration_header;
 mod file;
 mod fs;
 mod line_index;
@@ -15,8 +13,6 @@ mod source_reader;
 mod text_range_map;
 
 pub use self::{
-    current_source::CurrentSource,
-    declaration_header::{DeclarationAssociationIndex, DeclarationHeaderCursor},
     file::{is_documentation_token, lexical_token_kind_at, parse_source_file, syntax_edition},
     fs::resolve_path_literal,
     line_index::{LineColumnSpan, LineEndings, LineIndex, Position},

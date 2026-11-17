@@ -6,7 +6,6 @@
 
 use rg_ir_model::Span;
 
-/// One complete editor action discovered from current syntax and saved semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeAction {
     /// Label shown in the editor's action menu.

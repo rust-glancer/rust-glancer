@@ -22,7 +22,7 @@ use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem},
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
@@ -37,11 +37,11 @@ use crate::{
 /// `Item` binding; this resolver keeps only the remaining associated type declarations.
 pub(super) struct AssociatedTypeBindingCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> AssociatedTypeBindingCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

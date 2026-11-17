@@ -3,6 +3,95 @@ use expect_test::expect;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
+async fn syntax_requests_preserve_lazy_member_capture() {
+    for request in ["formatting", "folding", "outline"] {
+        let fixture = LspEngineFixture::initialized(
+            r#"
+            //- /Cargo.toml
+            [package]
+            name = "syntax_requests"
+            version = "0.1.0"
+            edition = "2015"
+
+            //- /src/lib.rs
+            #[rustc_builtin_macro]
+            macro_rules! include { ($($args:tt)*) => {}; }
+            pub struct Value;
+            impl Value { include!("methods.rs"); }
+            pub fn demo() { Value::wa$method$nted(); }
+
+            //- /src/methods.rs
+            pub fn wanted() -> u8 { 1u8 }
+
+            //- /scratch.rs
+            fn scratch() {
+                let value = 1;
+            }
+            "#,
+        )
+        .await;
+        fixture.did_open_saved("scratch.rs", 1).await;
+        match request {
+            "formatting" => {
+                fixture
+                    .check_formatting(
+                        "syntax request",
+                        "scratch.rs",
+                        expect![[r#"
+                            no edits // syntax request
+                        "#]],
+                    )
+                    .await;
+            }
+            "folding" => {
+                fixture
+                    .check_folding(
+                        "syntax request",
+                        "scratch.rs",
+                        true,
+                        expect![[r#"
+                            code 0:*-2:* // syntax request
+                        "#]],
+                    )
+                    .await;
+            }
+            "outline" => {
+                fixture
+                    .check_queries(
+                        &[LspQuery::document_symbol("syntax request", "scratch.rs")],
+                        expect![[r#"
+                            Function scratch 0:3-0:10 // syntax request
+                        "#]],
+                    )
+                    .await;
+            }
+            _ => unreachable!("request comes from the test vector"),
+        }
+
+        // The standalone file has no semantic owner. Looking up its edition must leave this
+        // include's first observation to the hover request, which needs the new signature.
+        fixture
+            .write_file_without_notification("src/methods.rs", "pub fn wanted() -> u16 { 1u16 }\n");
+        fixture
+            .check_queries(
+                &[LspQuery::hover("included method", "method")],
+                expect![[r#"
+                    // included method
+                    range: /src/lib.rs:4:23-4:29
+                    markdown:
+                      ```rust
+                      syntax_requests::Value::wanted
+
+                      pub fn wanted() -> u16
+                      ```
+                "#]],
+            )
+            .await;
+        fixture.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn const_hover_uses_current_initializer_values() {
     let fixture = LspEngineFixture::initialized(
         r#"

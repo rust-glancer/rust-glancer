@@ -12,7 +12,7 @@ use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionTarget},
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             CallCompletionKind, CompletionSortPolicy, FieldCompletionRenderer,
@@ -29,11 +29,11 @@ use crate::{
 /// replace the whole expression with a synthetic transform such as `value.if` or `value.box`.
 pub(super) struct DotCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

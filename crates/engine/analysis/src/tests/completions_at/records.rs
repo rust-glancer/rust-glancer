@@ -97,10 +97,10 @@ pub struct Users;
 pub fn use_it(id: u8, user: User, users: Users) {
     let _with_prefix = User { id, na$0 }; // complete("record literal prefix completions")
     let _empty = User { id, $0 }; // complete("record literal empty completions")
-    let _defaults = User { ..$0 }; // complete("record literal defaults completions")
+    let _defaults = User { ..$0 }; // complete("record update base completions").matching("user")
 
     let User { id, na$0 } = user; // complete("record pattern prefix completions")
-    let User { ..$0 } = user; // complete("record pattern rest completions")
+    let User { ..$0 } = user; // complete("record pattern rest fields").members()
 
     if let User { id, na$0 } = user {} // complete("if let record pattern fields")
 
@@ -118,13 +118,15 @@ pub fn use_it(id: u8, user: User, users: Users) {
             fd active
             fd name
 
-            <none> // record literal defaults completions
+            // record update base completions
+            vr user
+            vr users
 
             // record pattern prefix completions
             fd active
             fd name
 
-            <none> // record pattern rest completions
+            <none> // record pattern rest fields
 
             // if let record pattern fields
             fd active

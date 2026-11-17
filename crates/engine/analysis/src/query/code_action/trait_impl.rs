@@ -2,10 +2,8 @@
 //!
 //! Given `trait Service { fn run(&self); }` and `impl Service for Worker {}`, the action inserts a
 //! `run` method with a `todo!()` body into the user's source. The resolved impl header supplies
-//! substituted member signatures, while the current syntax tree subtracts members typed since
-//! the last save.
-//! A new impl gets that header from a request-local semantic store, so the action does not require
-//! saving incomplete source first.
+//! substituted member signatures. The syntax tree also accounts for incomplete members that
+//! could not be lowered, so the action does not insert them a second time.
 //!
 //! Trait bounds in the signatures we insert keep full paths so they do not assume imports in the
 //! impl module. Nominal types still use their declared short name. This provider does not add
@@ -26,18 +24,18 @@ use crate::{
     query::trait_member::{RenderedTraitMember, TraitImplMemberQuery},
 };
 
-/// The part of a current-source impl member needed to compare it with saved trait information.
+/// The part of a written impl member needed to compare it with trait information.
 ///
 /// Kind is part of the key so temporarily typing `const run` cannot suppress a required `fn run`
 /// merely because the dirty source contains the same label.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CurrentMemberKey {
+enum WrittenMemberKey {
     Function(String),
     TypeAlias(String),
     Const(String),
 }
 
-impl CurrentMemberKey {
+impl WrittenMemberKey {
     /// Reduce one parsed impl item to the kind and name used by the missing-member list.
     fn from_assoc_item(item: ast::AssocItem) -> Option<Self> {
         match item {
@@ -60,7 +58,7 @@ impl CurrentMemberKey {
         name.strip_prefix("r#").unwrap_or(name).to_string()
     }
 
-    /// Check whether this current-source item already implements the saved missing member.
+    /// Check whether this written item already implements the missing trait member.
     fn matches(&self, member: &MissingTraitMember) -> bool {
         match (self, member.member()) {
             (Self::Function(current), MissingTraitMemberRef::Function(_))
@@ -84,9 +82,8 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
 
     /// Insert every required trait member not already present in the editor buffer.
     ///
-    /// The indexed project knows the trait and its substituted signatures, but it may lag behind
-    /// unsaved typing. This method therefore uses saved information to discover requirements and
-    /// the parsed editor buffer to avoid duplicating members the user just added.
+    /// Semantic lookup supplies the trait requirements. Written members, including incomplete
+    /// ones, prevent the action from inserting a declaration already present in the editor text.
     pub(super) fn code_action(
         &self,
         syntax: &CodeActionSyntax<'_>,
@@ -105,33 +102,24 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
             return Ok(None);
         }
 
-        // 2. Resolve the impl from saved semantics when possible. A new or changed impl instead
-        // gets a request-local semantic header, so the editor does not need invalid source to be
-        // saved before this action becomes available.
-        //
-        // Repeat the `(kind, name)` comparison over current syntax as a recovery guard: even when
-        // an incomplete member cannot lower into the temporary item store, it must not be inserted
-        // twice.
-        let current_members = item_list
+        // 2. Check written members too: an incomplete member may not lower, but inserting it a
+        // second time would still be wrong.
+        let written_members = item_list
             .assoc_items()
-            .filter_map(CurrentMemberKey::from_assoc_item)
+            .filter_map(WrittenMemberKey::from_assoc_item)
             .collect::<Vec<_>>();
-        let members = TraitImplMemberQuery::new(
-            self.analysis,
-            self.query.crate_ref,
-            self.query.file_id,
-            self.query.source_text,
-        )
-        .missing_members(&impl_)
-        .context("collect required trait members for code action")?
-        .into_iter()
-        .filter(|member| member.is_required())
-        .filter(|member| {
-            !current_members
-                .iter()
-                .any(|current| current.matches(member))
-        })
-        .collect::<Vec<_>>();
+        let members =
+            TraitImplMemberQuery::new(self.analysis, self.query.crate_ref, self.query.file_id)
+                .missing_members(&impl_)
+                .context("collect required trait members for code action")?
+                .into_iter()
+                .filter(|member| member.is_required())
+                .filter(|member| {
+                    !written_members
+                        .iter()
+                        .any(|current| current.matches(member))
+                })
+                .collect::<Vec<_>>();
         if members.is_empty() {
             return Ok(None);
         }

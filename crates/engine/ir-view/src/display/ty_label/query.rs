@@ -154,7 +154,7 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
         for (param, arg) in params.iter().zip(args) {
             substitution.push(param.param(), arg.clone());
         }
-        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
+        let signatures = SemanticSignatureQuery::new(self.db, self.db);
         let mut keep = args.len();
         // Work backwards: once one argument must stay, all earlier slots must stay too.
         // Compare resolved values so an alias and the type it names can count as equal.

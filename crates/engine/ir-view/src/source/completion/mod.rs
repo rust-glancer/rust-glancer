@@ -186,12 +186,6 @@ impl IndexedQualifiedPathSite {
     pub fn member_prefix_span(&self) -> Span {
         self.member_prefix_span
     }
-
-    /// Keep saved semantic scope while taking the editable prefix range from current syntax.
-    pub fn with_current_member_prefix(mut self, member_prefix_span: Span) -> Self {
-        self.member_prefix_span = member_prefix_span;
-        self
-    }
 }
 
 /// Type-shaped path prefix retained for associated-item lookup.
@@ -298,35 +292,6 @@ impl IndexedUnqualifiedNameSite {
             | IndexedUnqualifiedNameScope::Import { member_prefix, .. } => member_prefix,
         }
     }
-
-    /// Keep saved semantic scope while taking the written prefix and edit range from current
-    /// syntax.
-    pub fn with_current_member_prefix(
-        mut self,
-        member_prefix_span: Span,
-        member_prefix: String,
-    ) -> Self {
-        self.member_prefix_span = member_prefix_span;
-        match &mut self.scope {
-            IndexedUnqualifiedNameScope::Body {
-                member_prefix: current,
-                ..
-            }
-            | IndexedUnqualifiedNameScope::Signature {
-                member_prefix: current,
-                ..
-            }
-            | IndexedUnqualifiedNameScope::Module {
-                member_prefix: current,
-                ..
-            }
-            | IndexedUnqualifiedNameScope::Import {
-                member_prefix: current,
-                ..
-            } => *current = member_prefix,
-        }
-        self
-    }
 }
 
 /// Resolution context for an unqualified name source site.
@@ -351,7 +316,7 @@ pub enum IndexedUnqualifiedNameScope {
         context: IndexedUnqualifiedNameContext,
         member_prefix: String,
     },
-    /// A name in current module-level syntax resolved against the matching saved module.
+    /// A name in incomplete module-level syntax resolved in its enclosing module.
     Module {
         module: ModuleRef,
         context: IndexedUnqualifiedNameContext,
@@ -373,28 +338,6 @@ pub enum IndexedSignatureTypeSite {
     Qualified(IndexedQualifiedPathSite),
     /// A type name such as `fn load<T>(_: T$0)`.
     Unqualified(IndexedUnqualifiedNameSite),
-}
-
-impl IndexedSignatureTypeSite {
-    /// Keep the associated saved signature scope, but make every editor-facing range and prefix
-    /// belong to current syntax.
-    pub fn with_current_member_prefix(
-        self,
-        member_prefix_span: Span,
-        member_prefix: String,
-    ) -> Self {
-        match self {
-            Self::AssociatedTypeBinding(site) => {
-                Self::AssociatedTypeBinding(site.with_current_member_prefix(member_prefix_span))
-            }
-            Self::Qualified(site) => {
-                Self::Qualified(site.with_current_member_prefix(member_prefix_span))
-            }
-            Self::Unqualified(site) => Self::Unqualified(
-                site.with_current_member_prefix(member_prefix_span, member_prefix),
-            ),
-        }
-    }
 }
 
 /// Normalized source facts for an associated type binding name.
@@ -430,12 +373,6 @@ impl IndexedAssociatedTypeBindingSite {
 
     pub fn existing_bindings(&self) -> &[String] {
         &self.existing_bindings
-    }
-
-    /// Keep the saved trait and binding set while taking the editable range from current syntax.
-    pub fn with_current_member_prefix(mut self, member_prefix_span: Span) -> Self {
-        self.member_prefix_span = member_prefix_span;
-        self
     }
 }
 
@@ -498,6 +435,36 @@ pub struct SourceCompletionView<'a, 'db> {
 }
 
 impl<'a, 'db> SourceCompletionView<'a, 'db> {
+    /// An incomplete module item may have no indexed range. Use its recovered inline-module
+    /// path in that case.
+    pub fn module_completion_site_at(
+        &self,
+        krate: CrateRef,
+        file: FileId,
+        offset: u32,
+        inline_module_path: &[String],
+    ) -> anyhow::Result<Option<IndexedModuleSourceSite>> {
+        if let Some(site) = self.module_source_site_at(krate, file, offset)? {
+            return Ok(Some(site));
+        }
+        self.module_syntax_source_site(krate, file, inline_module_path)
+    }
+
+    /// Associated-type names can occur in a body annotation or a declaration signature.
+    pub fn implicit_associated_type_binding_site_at(
+        &self,
+        krate: CrateRef,
+        file: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<IndexedAssociatedTypeBindingSite>> {
+        if let Some(site) =
+            self.body_implicit_associated_type_binding_site_at(krate, file, offset)?
+        {
+            return Ok(Some(site));
+        }
+        self.signature_implicit_associated_type_binding_site_at(krate, file, offset)
+    }
+
     pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
     }
@@ -522,11 +489,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         )
     }
 
-    /// Find the saved module named by the current inline-module path.
-    ///
-    /// An edit earlier in the file may make the saved byte range useless, while a path such as
-    /// `outer::inner` still identifies the module. If the path is new, renamed, or ambiguous, there
-    /// is no safe saved scope and this returns no completion site until save.
+    /// Find the enclosing module by its path when incomplete syntax has no indexed name site.
     pub fn module_syntax_name_site_at(
         &self,
         crate_ref: CrateRef,
@@ -542,7 +505,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
             file_id,
             inline_module_path,
         )
-        .context("match current module syntax to saved module")?
+        .context("resolve completion module scope")?
         .map(|module| IndexedUnqualifiedNameSite {
             scope: IndexedUnqualifiedNameScope::Module {
                 module,
@@ -553,7 +516,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         }))
     }
 
-    /// Resolve the semantic module named by current syntax for module-owned completion families.
+    /// Resolve the enclosing module recovered from completion syntax.
     pub fn module_syntax_source_site(
         &self,
         crate_ref: CrateRef,
@@ -566,7 +529,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
             file_id,
             inline_module_path,
         )
-        .context("match current module syntax to saved module")?
+        .context("resolve completion module scope")?
         .map(|site| IndexedModuleSourceSite {
             module: site.module,
             file_base: site.file_base.into(),
@@ -593,7 +556,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         )
     }
 
-    /// Find a possible associated-type binding inside request-local Body IR.
+    /// Find a possible associated-type binding inside a body.
     ///
     /// In `Iterator<It$0>`, `It` remains a valid ordinary type argument. This method returns an
     /// extra completion site for associated names; the caller must keep its ordinary type
@@ -619,51 +582,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         )
     }
 
-    /// Find a possible associated-type binding in the selected current declaration header.
-    ///
-    /// In `fn load(_: Iterator<It$0>) {}`, `It` can still be an ordinary type argument. This
-    /// returns the additional associated-type interpretation with the declaration's request-local
-    /// scope; the normal type-path site remains available beside it.
-    pub fn current_signature_implicit_associated_type_binding_site_at(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<IndexedAssociatedTypeBindingSite>> {
-        for origin in self.db.current_signature_origins(crate_ref, file_id) {
-            let Some(site) =
-                SignatureSourceScanner::implicit_associated_type_binding_site_at_origin(
-                    self.db, origin, file_id, offset,
-                )
-                .context("scan current signature associated type binding site")?
-            else {
-                continue;
-            };
-            let SignatureCompletionSite::AssociatedTypeBinding {
-                scope,
-                trait_ref,
-                member_prefix_span,
-                existing_bindings,
-            } = site
-            else {
-                continue;
-            };
-            return Ok(Some(IndexedAssociatedTypeBindingSite {
-                scope: IndexedAssociatedTypeBindingScope::Signature {
-                    scope: Self::signature_scope(scope),
-                },
-                trait_ref,
-                member_prefix_span,
-                existing_bindings,
-            }));
-        }
-        Ok(None)
-    }
-
-    /// Find a possible associated-type binding in a saved declaration signature.
-    ///
-    /// `offset` is a saved-source coordinate. Callers starting from editor text must first prove
-    /// that the saved source is exact or map the cursor through a declaration association.
+    /// Find a possible associated-type binding in a declaration signature.
     pub fn signature_implicit_associated_type_binding_site_at(
         &self,
         crate_ref: CrateRef,

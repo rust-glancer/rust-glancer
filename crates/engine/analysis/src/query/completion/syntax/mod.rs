@@ -1,6 +1,6 @@
 //! Request-local parsing and syntax classification for incomplete completion source.
 //!
-//! The saved syntax tree may not contain a node for what the user is still typing. This module
+//! The ordinary syntax tree may not contain a node for what the user is still typing. This module
 //! replaces the partial identifier with a known marker, reparses the request buffer, and recovers
 //! the typed prefix, replacement span, nearby punctuation, and enclosing grammar.
 //!
@@ -38,7 +38,7 @@ use crate::query::completion::site::{
 ///
 /// The marker token makes incomplete text traversable with ordinary syntax ancestry. Construction
 /// performs this marker-injected parse once and immediately stores the normalized completion
-/// domain. This is separate from the ordinary current-source parse used by Body IR. Resolvers can
+/// domain. This is separate from the ordinary source parse used by semantic lowering. Resolvers can
 /// inspect the same speculative tree for small source-shape facts, but cannot trigger another
 /// classification parse.
 pub(crate) struct CompletionSyntaxContext<'source> {
@@ -56,12 +56,8 @@ pub(crate) struct CompletionSyntaxContext<'source> {
 impl<'source> CompletionSyntaxContext<'source> {
     const MARKER: &'static str = "__rg_completion";
 
-    /// Builds syntax context from saved source or a request-local editor buffer.
-    pub(crate) fn at(source_text: Option<&'source str>, offset: u32) -> Option<Self> {
-        Self::from_source(source_text?, offset)
-    }
-
-    fn from_source(source: &'source str, offset: u32) -> Option<Self> {
+    /// Builds the completion-specific syntax context from the request's source text.
+    pub(crate) fn at(source: &'source str, offset: u32) -> Option<Self> {
         let cursor = usize::try_from(offset).ok()?;
         if cursor > source.len() || !source.is_char_boundary(cursor) {
             return None;
@@ -594,7 +590,7 @@ mod tests {
     #[test]
     fn computes_prefix_and_replacement_span() {
         let (source, offset) = source_with_cursor("fn main() {\n    let value = ma$0;\n}");
-        let syntax = CompletionSyntaxContext::from_source(&source, offset)
+        let syntax = CompletionSyntaxContext::at(&source, offset)
             .expect("keyword syntax context should be created");
         let prefix = syntax.prefix();
 
@@ -645,7 +641,7 @@ mod tests {
 
         for (label, source, expected_kind, expected_replacement, expected_lookup_prefix) in cases {
             let (source, offset) = source_with_cursor(source);
-            let syntax = CompletionSyntaxContext::from_source(&source, offset)
+            let syntax = CompletionSyntaxContext::at(&source, offset)
                 .expect("trait impl syntax context should be created");
             let trait_impl = syntax
                 .trait_impl_completion_syntax()
@@ -854,7 +850,7 @@ mod tests {
 
         for (label, fixture, expected) in cases {
             let (source, offset) = source_with_cursor(fixture);
-            let actual = CompletionSyntaxContext::from_source(&source, offset).and_then(|syntax| {
+            let actual = CompletionSyntaxContext::at(&source, offset).and_then(|syntax| {
                 Some((syntax.completion_context()?.clone(), syntax.prefix().text()))
             });
 
@@ -971,7 +967,7 @@ mod tests {
 
         for (label, fixture, expected) in cases {
             let (source, offset) = source_with_cursor(fixture);
-            let actual = CompletionSyntaxContext::from_source(&source, offset)
+            let actual = CompletionSyntaxContext::at(&source, offset)
                 .and_then(|syntax| syntax.completion_context().cloned());
 
             assert_eq!(actual, expected, "{label}");
@@ -997,14 +993,14 @@ mod tests {
 
         for (label, fixture) in cases {
             let (source, offset) = source_with_cursor(fixture);
-            let actual = CompletionSyntaxContext::from_source(&source, offset)
+            let actual = CompletionSyntaxContext::at(&source, offset)
                 .and_then(|syntax| syntax.completion_context().cloned());
 
             assert_eq!(actual, None, "{label}");
         }
 
         let (source, offset) = source_with_cursor("fn main() { crate::macros::item_ma$0!(); }");
-        let actual = CompletionSyntaxContext::from_source(&source, offset)
+        let actual = CompletionSyntaxContext::at(&source, offset)
             .and_then(|syntax| syntax.completion_context().cloned());
         assert_eq!(
             actual,
@@ -1034,7 +1030,7 @@ mod tests {
 
         for (label, fixture, after_dot, after_colon_colon, inside_use) in cases {
             let (source, offset) = source_with_cursor(fixture);
-            let syntax = CompletionSyntaxContext::from_source(&source, offset)
+            let syntax = CompletionSyntaxContext::at(&source, offset)
                 .expect("syntax context should be created");
 
             assert_eq!(syntax.after_dot(), after_dot, "{label}: after_dot");
@@ -1073,7 +1069,7 @@ mod tests {
 
         for (label, fixture, expected_modules, expected_qualifier) in cases {
             let (source, offset) = source_with_cursor(fixture);
-            let syntax = CompletionSyntaxContext::from_source(&source, offset)
+            let syntax = CompletionSyntaxContext::at(&source, offset)
                 .expect("import syntax context should be created");
             let import = syntax
                 .import_completion_syntax()
@@ -1094,7 +1090,7 @@ mod tests {
     #[test]
     fn recovers_empty_record_and_path_triggers_at_file_end() {
         let (source, offset) = source_with_cursor("fn main() { let _ = crate::Record { $0");
-        let syntax = CompletionSyntaxContext::from_source(&source, offset)
+        let syntax = CompletionSyntaxContext::at(&source, offset)
             .expect("record syntax context should be created");
         assert_eq!(
             syntax.empty_record_owner().map(|path| path.to_string()),
@@ -1102,7 +1098,7 @@ mod tests {
         );
 
         let (source, offset) = source_with_cursor("fn main() { let _: crate::api::$0");
-        let syntax = CompletionSyntaxContext::from_source(&source, offset)
+        let syntax = CompletionSyntaxContext::at(&source, offset)
             .expect("path syntax context should be created");
         assert!(syntax.after_colon_colon());
         assert_eq!(
@@ -1117,7 +1113,7 @@ mod tests {
     fn preserves_specialized_content_and_receiver_ranges() {
         let (source, offset) =
             source_with_cursor("fn f() { let _ = env!(\"CARGO-MANIFEST-DIRECTORY$0\"); }");
-        let syntax = CompletionSyntaxContext::from_source(&source, offset)
+        let syntax = CompletionSyntaxContext::at(&source, offset)
             .expect("environment string syntax should be created");
         let string_prefix = syntax
             .string_word_prefix(true)
@@ -1133,8 +1129,8 @@ mod tests {
 
         let (source, offset) =
             source_with_cursor("fn f(left: i32, right: i32) { (left + right).ma$0; }");
-        let syntax = CompletionSyntaxContext::from_source(&source, offset)
-            .expect("postfix syntax should be created");
+        let syntax =
+            CompletionSyntaxContext::at(&source, offset).expect("postfix syntax should be created");
         let receiver = syntax
             .postfix_receiver_span()
             .expect("postfix receiver should be available");

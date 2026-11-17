@@ -5,17 +5,17 @@ mod closing_brace;
 use std::borrow::Cow;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::{
     body::BodyStructureView,
     display::ty_label::TypeRenderer,
     member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
-use rg_parse::{CurrentSource, SourceReader, syntax_edition};
+use rg_parse::{SourceReader, syntax_edition};
 use rg_std::UniqueVec;
 use rg_syntax::{
-    AstNode as _,
+    AstNode as _, Edition, LexedStr, SyntaxKind,
     ast::{self, HasArgList as _},
 };
 
@@ -41,9 +41,9 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let source = InlaySource::new(self.analysis, crate_ref.package, file_id);
+        let source = self.analysis.sources;
         let edition = self.analysis.view_db().crate_edition(crate_ref)?;
         let renderer = TypeRenderer::new(self.analysis.view_db(), edition)
             .with_iterator_simplification(crate_ref);
@@ -66,7 +66,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
+        range: Span,
         renderer: &TypeRenderer<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
@@ -100,16 +100,16 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
-        source: &InlaySource<'_, '_>,
+        range: Span,
+        source: &SourceReader<'_>,
         renderer: &TypeRenderer<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let mut hints = UniqueVec::new();
         for expr in BodyStructureView::new(self.analysis.view_db())
-            .method_chain_expr_tys(crate_ref, file_id)?
+            .method_chain_expr_tys(crate_ref, file_id, range)?
         {
             let expr_span = expr.span();
-            if range.is_some_and(|range| !range.touches(expr_span.end)) {
+            if !range.touches(expr_span.end) {
                 continue;
             }
             if !self.should_show_method_chain_expr_hint(
@@ -148,14 +148,14 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<Span>,
-        source: &InlaySource<'_, '_>,
+        range: Span,
+        source: &SourceReader<'_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let members = MemberView::new(self.analysis.view_db());
         let edition = syntax_edition(self.analysis.view_db().crate_edition(crate_ref)?);
         let mut hints = UniqueVec::new();
-        for call in
-            BodyView::new(self.analysis.view_db()).resolved_function_calls(crate_ref, file_id)?
+        for call in BodyView::new(self.analysis.view_db())
+            .resolved_function_calls(crate_ref, file_id, range)?
         {
             let Some(function) = members
                 .function(call.function())
@@ -178,7 +178,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     continue;
                 }
                 let arg_span = arg.span();
-                if range.is_some_and(|range| !range.touches(arg_span.start)) {
+                if !range.touches(arg_span.start) {
                     continue;
                 }
                 let arg_text = source.text_for_span(call.file_id(), arg_span)?;
@@ -242,12 +242,11 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     // Recover the name already visible in `&user`, `user.clone()`, or `model.user`.
     // A plain identifier needs only lexing; wrappers and paths need the argument's syntax tree.
-    // Saved and edited text use the same rules without retaining trees or adding IR metadata.
-    fn arg_hint_name(text: &str, edition: rg_syntax::Edition) -> Option<Cow<'_, str>> {
+    fn arg_hint_name(text: &str, edition: Edition) -> Option<Cow<'_, str>> {
         let text = text.trim();
         if matches!(
-            rg_syntax::LexedStr::single_token(edition, text),
-            Some((rg_syntax::SyntaxKind::IDENT, None))
+            LexedStr::single_token(edition, text),
+            Some((SyntaxKind::IDENT, None))
         ) {
             return Some(Cow::Borrowed(text));
         }
@@ -302,68 +301,13 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         file_id: FileId,
         expr_span: Span,
         parent_dot_span: Span,
-        source: &InlaySource<'_, '_>,
+        source: &SourceReader<'_>,
     ) -> anyhow::Result<bool> {
         let expr_end_offset = expr_span.end.saturating_sub(1);
-        let expr_end_line = source.line_for_offset(file_id, expr_end_offset)?;
-        let Some(expr_end_line) = expr_end_line else {
-            return Ok(false);
-        };
-        let parent_dot_line = source.line_for_offset(file_id, parent_dot_span.start)?;
-        let Some(parent_dot_line) = parent_dot_line else {
-            return Ok(false);
-        };
+        let index = source.line_index(file_id)?;
+        let expr_end_line = index.position(expr_end_offset).line;
+        let parent_dot_line = index.position(parent_dot_span.start).line;
 
         Ok(parent_dot_line > expr_end_line)
-    }
-}
-
-/// Source-coordinate operations shared by every inlay-hint family in one file.
-///
-/// The selected Body IR already determines whether its spans belong to current or saved text. Pick
-/// that source once here so individual hint providers cannot accidentally mix the two.
-pub(super) enum InlaySource<'a, 'db> {
-    Current {
-        source: &'a CurrentSource,
-        file: FileId,
-    },
-    Saved(SourceReader<'db>),
-}
-
-impl<'a, 'db> InlaySource<'a, 'db> {
-    fn new(analysis: &'a Analysis<'db>, package: PackageSlot, file: FileId) -> Self {
-        match analysis.current_source(package, file) {
-            Some(source) => Self::Current { source, file },
-            None => Self::Saved(analysis.saved_source),
-        }
-    }
-
-    pub(super) fn current(&self) -> Option<&CurrentSource> {
-        match self {
-            Self::Current { source, .. } => Some(source),
-            Self::Saved(_) => None,
-        }
-    }
-
-    pub(super) fn text_for_span(&self, file: FileId, span: Span) -> anyhow::Result<Option<String>> {
-        match self {
-            Self::Current {
-                source,
-                file: source_file,
-            } if *source_file == file => Ok(source.text_for_span(span).map(ToString::to_string)),
-            Self::Current { .. } => Ok(None),
-            Self::Saved(sources) => Ok(sources.text_for_span(file, span)?),
-        }
-    }
-
-    pub(super) fn line_for_offset(&self, file: FileId, offset: u32) -> anyhow::Result<Option<u32>> {
-        match self {
-            Self::Current {
-                source,
-                file: source_file,
-            } if *source_file == file => Ok(source.line_for_offset(offset)),
-            Self::Current { .. } => Ok(None),
-            Self::Saved(sources) => Ok(Some(sources.line_index(file)?.position(offset).line)),
-        }
     }
 }

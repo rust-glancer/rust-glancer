@@ -15,14 +15,14 @@ use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 /// `api.rs`. An inline `mod api { ... }` holds both in the declaration's syntax. A crate root
 /// has only a definition file, with no `mod` declaration elsewhere.
 pub struct ModuleDocumentationSource {
-    /// The saved file and span of the `mod` item; absent for a crate root.
+    /// The file and span of the `mod` item; absent for a crate root.
     pub declaration: Option<(FileId, Span)>,
     /// The crate root or out-of-line module's definition file. Inline modules have no separate
     /// file; an out-of-line module can also lack one if its file could not be found.
     pub definition: Option<FileId>,
 }
 
-/// Find documentation owners by saved header position without scanning every declaration.
+/// Find documentation owners by header position without scanning every declaration.
 /// Most spans cover just a name, but tuple fields and unnamed items can cover wider syntax.
 /// Keep overlapping spans so a position with distinct owners remains ambiguous.
 pub struct DocumentationDeclarationIndex {
@@ -49,7 +49,7 @@ impl DocumentationDeclarationIndex {
         }
     }
 
-    /// Match all spans containing this saved byte offset. Repeated occurrences of the same
+    /// Match all spans containing this byte offset. Repeated occurrences of the same
     /// declaration count as one owner; distinct declarations leave the association unknown.
     pub fn declaration_at(&self, offset: u32) -> Option<DeclarationRef> {
         // Skip the prefix in which every span ends before the cursor, then stop once starts
@@ -68,9 +68,7 @@ impl DocumentationDeclarationIndex {
     }
 }
 
-/// Read the saved declarations and module locations needed to attach source docs to a scope.
-/// The syntax being edited may have different offsets, so callers associate its declaration
-/// headers with these saved names before choosing a documentation owner.
+/// Read declarations and module locations to attach source docs to their resolution scope.
 pub struct DocumentationSourceView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -80,8 +78,8 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
         Self { db }
     }
 
-    /// Index saved declaration spans for link resolution. Build this once for a file, then
-    /// look up each documented item's header after translating it into saved coordinates.
+    /// Index declaration spans for link resolution. Build this once for a file, then
+    /// look up each documented item's header.
     ///
     /// Collecting declarations alone avoids requiring body analysis just to find doc owners.
     /// TODO: Include body-local doc owners when their declarations can be read without scanning
@@ -94,7 +92,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
         let resolution = ResolutionView::new(self.db);
         let mut declarations = Vec::new();
         for occurrence in SourceOccurrenceView::new(self.db)
-            .saved_declaration_occurrences(crate_ref, file, None)
+            .declaration_occurrences(crate_ref, file, None)
             .context("read documentation owner declarations")?
         {
             let (fact, _, _, span, role, _, _) = occurrence.into_parts();
@@ -124,7 +122,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
             .context("read documented file module")
     }
 
-    /// Locate the saved syntax that can contribute this module's outer and inner docs.
+    /// Locate the syntax that can contribute this module's outer and inner docs.
     /// Synthetic modules have no authored module syntax to inspect, so they return no source.
     pub fn module_source(
         &self,

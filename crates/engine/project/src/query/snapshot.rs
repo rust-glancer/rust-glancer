@@ -7,7 +7,7 @@ use rg_semantic_ir::TargetDeclarationReader;
 use rg_source::QueryContext;
 
 use super::reference_search::ReferenceSearchPlanner;
-use crate::state::ProjectState;
+use crate::{source_index::ProjectSourceIndex, state::ProjectState};
 
 /// Immutable project view used to answer LSP-shaped queries. The operation fixes its inputs:
 /// either the accepted saved generation or that generation with a complete editor capture.
@@ -16,6 +16,9 @@ use crate::state::ProjectState;
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectSnapshot<'a> {
     pub(crate) state: &'a ProjectState,
+    /// Saved membership is usable only when the operation has no editor overrides. An edit can
+    /// add a higher-priority owner even if the previously selected owner still contains the file.
+    pub(super) saved_sources: Option<&'a ProjectSourceIndex>,
     db: &'a QueryContext<'a>,
     declarations: &'a TargetDeclarationReader<'a>,
 }
@@ -25,9 +28,11 @@ impl<'a> ProjectSnapshot<'a> {
         state: &'a ProjectState,
         db: &'a QueryContext<'a>,
         declarations: &'a TargetDeclarationReader<'a>,
+        saved_sources: Option<&'a ProjectSourceIndex>,
     ) -> Self {
         Self {
             state,
+            saved_sources,
             db,
             declarations,
         }

@@ -5,14 +5,16 @@
 //! and builds the narrow document or completion context required by each handler. Feature logic,
 //! protocol conversion, and async open/save/close work stay in their narrower handler files.
 //!
-//! `didChange` is the deliberate exception. `EditorIngress` applies all of its edits to the stored
-//! document before any async handler can start. The trait method therefore has no remaining work
-//! to move into a separate handler file.
+//! `EditorIngress` applies `didChange` edits before any async handler can start. The trait method
+//! only tells the engine to release the superseded capture.
 
-use std::{borrow::Cow, path::Path};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
-use rg_lsp_proto::ClientCapabilities as EngineClientCapabilities;
+use rg_lsp_proto::{ClientCapabilities as EngineClientCapabilities, file_uri_to_path};
 use rg_std::NormalizedPathBuf;
 use tokio::sync::OnceCell;
 use tower_lsp_server::{
@@ -26,7 +28,7 @@ use crate::{
     config::ServerConfig,
     engine_client::EngineClient,
     engine_registry::EngineRegistry,
-    ingress::{self, EditorStateHandle},
+    ingress::{self, EditorStateHandle, LifecycleEvent},
     inlay_refresher::InlayRefresher,
     methods::{self, CompletionMethodContext, DocumentMethodContext},
     project_watcher::ProjectWatcher,
@@ -155,7 +157,7 @@ impl Backend {
         let mut folders = workspace_folders
             .iter()
             .map(|folder| {
-                let path = rg_lsp_proto::file_uri_to_path(&folder.uri).with_context(|| {
+                let path = file_uri_to_path(&folder.uri).with_context(|| {
                     format!("while converting workspace URI `{}`", folder.uri.as_str())
                 })?;
                 NormalizedPathBuf::from_absolute(&path).with_context(|| {
@@ -174,12 +176,12 @@ impl Backend {
             None
         } else if let Some(uri) = params.root_uri.as_ref() {
             Some(
-                rg_lsp_proto::file_uri_to_path(uri)
+                file_uri_to_path(uri)
                     .with_context(|| format!("while converting root URI `{}`", uri.as_str()))?,
             )
         } else {
             match &params.root_path {
-                Some(RootPath::String(path)) => Some(std::path::PathBuf::from(path)),
+                Some(RootPath::String(path)) => Some(PathBuf::from(path)),
                 Some(RootPath::Null) | None => None,
             }
         };
@@ -292,10 +294,12 @@ impl LanguageServer for Backend {
         fields(rg.method = "didChange", rg.uri = %params.text_document.text_document_identifier.uri.as_str())
     )]
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        // `EditorIngress` already applied all accepted edits, or marked the synchronized text as
-        // unavailable if an edit was rejected, before this async method was allowed to start.
-        // There is no remaining operation to place in a separate method handler.
-        let _ = params;
+        if let Some(LifecycleEvent::Invalidate { route, revision }) =
+            ingress::lifecycle_event().await
+            && let Ok(engine) = route.engine_client()
+        {
+            engine.invalidate_editor_snapshot(revision).await;
+        }
     }
 
     #[tracing::instrument(
@@ -414,7 +418,16 @@ impl LanguageServer for Backend {
         let context = self
             .document_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
-        methods::text_document::rename::rename(context, params).await
+        methods::text_document::rename::rename(
+            context,
+            params,
+            self.client_capabilities
+                .get()
+                .copied()
+                .unwrap_or_default()
+                .versioned_document_edits,
+        )
+        .await
     }
 
     #[tracing::instrument(
@@ -459,12 +472,7 @@ impl LanguageServer for Backend {
         &self,
         params: CodeActionParams,
     ) -> Result<Option<Vec<CodeActionResponse>>> {
-        let client_capabilities = self
-            .client_capabilities
-            .get()
-            .copied()
-            .unwrap_or_default()
-            .code_action;
+        let client_capabilities = self.client_capabilities.get().copied().unwrap_or_default();
         let context = self.document_context_for(&params.text_document.uri).await?;
         methods::text_document::code_action::code_action(context, params, client_capabilities).await
     }
@@ -585,6 +593,7 @@ impl LanguageServer for Backend {
 mod tests {
     use std::{path::Path, str::FromStr};
 
+    use rg_lsp_proto::path_to_file_uri;
     use rg_std::NormalizedPathBuf;
     use tower_lsp_server::gen_lsp_types::{
         InitializeParams, Uri, WorkspaceFolder, WorkspaceFoldersInitializeParams,
@@ -630,9 +639,7 @@ mod tests {
             .expect("test process should have a current directory")
             .join("legacy-server-workspace");
         let params = InitializeParams {
-            root_uri: Some(
-                rg_lsp_proto::path_to_file_uri(&root).expect("test root should convert to a URI"),
-            ),
+            root_uri: Some(path_to_file_uri(&root).expect("test root should convert to a URI")),
             workspace_folders_initialize_params: WorkspaceFoldersInitializeParams {
                 workspace_folders: Some(Vec::<WorkspaceFolder>::new().into()),
             },
@@ -669,7 +676,7 @@ mod tests {
 
     fn workspace_folder(path: &Path) -> WorkspaceFolder {
         WorkspaceFolder {
-            uri: rg_lsp_proto::path_to_file_uri(path).expect("test path should convert to URI"),
+            uri: path_to_file_uri(path).expect("test path should convert to URI"),
             name: path
                 .file_name()
                 .expect("test path should have a file name")

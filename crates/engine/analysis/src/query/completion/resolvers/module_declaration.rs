@@ -67,7 +67,7 @@ impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
         };
         // Resolve child filenames relative to the declaration's module context. Source paths
         // need no crate lookup: the selected site already tells us how Rust interprets the file.
-        let path = self.analysis.saved_source.path(self.file_id)?;
+        let path = self.analysis.sources.path(self.file_id)?;
         let mut context = match site.source().file_base() {
             IndexedModuleFileBase::TargetRoot => ModuleFileContext::for_target_root(path),
             IndexedModuleFileBase::Conventional => ModuleFileContext::from_definition_file(path),

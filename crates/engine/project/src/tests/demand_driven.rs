@@ -9,6 +9,126 @@ use rg_std::CancellationToken;
 use crate::{Project, SavedFileChange, profile_descriptors, testonly::ProjectSourceFixture};
 
 #[test]
+fn ranged_inlay_hints_acquire_only_overlapping_owners() {
+    let source = r#"
+//- /src/lib.rs crate:ranged_hints
+#[rustc_builtin_macro]
+macro_rules! include { ($($args:tt)*) => {}; }
+fn take(count: u8) -> u8 { count }
+$function_start$fn first() { let value = 1u8; }$function_end$
+struct Value;
+impl Value {
+    fn next(&self) -> Self { Value }
+    fn finish(&self) -> u16 { 1 }
+    $method_start$fn selected(&self) {
+        let value = take(42);
+        let result = self
+            .next()
+            .finish();
+        // Padding for a closing-brace hint.
+    }$method_end$
+    fn offscreen(&self) { let value = 2u32; }
+}
+struct Other;
+impl Other { include!("methods.rs"); }
+fn use_late() { let value = Other::wanted(); let _ = $late$value; }
+//- /src/methods.rs
+pub fn wanted() -> u8 { 1u8 }
+"#
+    .replace("// Padding for a closing-brace hint.", &"\n".repeat(20));
+    let fixture = ProjectSourceFixture::build(&source);
+    let project = fixture.build_project();
+    let mut ranged = Vec::new();
+    for (start, end, labels, inferred) in [
+        ("function_start", "function_end", &[": u8"][..], 1),
+        (
+            "method_start",
+            "method_end",
+            &[": u8", "count:", ": u16", "Value", "// fn selected"][..],
+            1,
+        ),
+        ("method_end", "method_end", &["// fn selected"][..], 0),
+    ] {
+        let range = Span {
+            start: fixture.markers().position(start).offset,
+            end: fixture.markers().position(end).offset,
+        };
+        let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
+        let hints = project.inspect(|snapshot| {
+            let context = snapshot
+                .file_context_for_path(fixture.path("src/lib.rs"))
+                .expect("route source")
+                .expect("source target");
+            snapshot
+                .analysis()
+                .inlay_hints(context.crate_ref, context.file, range, None)
+                .expect("viewport hints")
+        });
+        assert_eq!(
+            hints
+                .iter()
+                .map(|hint| hint.label.as_str())
+                .collect::<Vec<_>>(),
+            labels,
+            "{start}"
+        );
+        let report = profile.finish();
+        for counter in ["body_ir.owner.owners", "body_ir.owner.inference_owners"] {
+            assert_eq!(
+                report.inner().counter(counter).unwrap_or_default(),
+                inferred,
+                "{start}: {counter}"
+            );
+        }
+        ranged.push((range, hints));
+    }
+
+    // Even the outline used by closing-brace hints must leave unrelated member macros lazy.
+    fs::write(
+        fixture.path("src/methods.rs"),
+        "pub fn wanted() -> u16 { 1u16 }\n",
+    )
+    .expect("write first include observation");
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route source")
+            .expect("source target");
+        let analysis = snapshot.analysis();
+        assert_eq!(
+            analysis
+                .type_at(
+                    context.crate_ref,
+                    context.file,
+                    fixture.markers().position("late").offset
+                )
+                .expect("included signature")
+                .expect("binding type")
+                .primitive(),
+            Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U16))
+        );
+
+        // Selecting owners early must give the same answers as filtering a complete request.
+        let text = snapshot
+            .sources()
+            .text(context.file)
+            .expect("fixture source");
+        let range = Span::full_file(text.len() as u32);
+        let all = analysis
+            .inlay_hints(context.crate_ref, context.file, range, None)
+            .expect("whole-file hints");
+        for (range, hints) in ranged {
+            let expected: Vec<_> = all
+                .iter()
+                .filter(|hint| range.touches(hint.text_offset()))
+                .cloned()
+                .collect();
+            assert_eq!(hints, expected, "{range:?}");
+        }
+    });
+}
+
+#[test]
 fn macro_binding_references_keep_their_local_scan_scope() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -25,7 +145,7 @@ fn second() { let value = 3u8; let _ = value; }
 "#,
     );
     let project = fixture.build_project();
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(fixture.path("src/lib.rs"))
@@ -60,7 +180,7 @@ fn second() { let value = 3u8; let _ = value; }
         }
     });
     profile.finish().assert_counter_path_with_message(
-        "body_ir.saved.owners",
+        "body_ir.owner.owners",
         1,
         "only the binding's function needs body preparation",
     );
@@ -96,13 +216,13 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         .expect("fixture source writes");
     }
     let fixture = ProjectSourceFixture::build(&source);
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     let project = fixture.build_project();
     assert_eq!(
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         0
     );
@@ -176,19 +296,19 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         });
     };
     for expected_owners in [3, 0] {
-        let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+        let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
         query(&project);
         assert_eq!(
             profile
                 .finish()
                 .inner()
-                .counter("body_ir.saved.owners")
+                .counter("body_ir.owner.owners")
                 .unwrap_or_default(),
             expected_owners
         );
     }
 
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let analysis = snapshot.analysis();
         assert_eq!(
@@ -218,21 +338,26 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         1
     );
 
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(fixture.path("src/untouched.rs"))
             .expect("route large file")
             .expect("large file belongs to target");
+        let text = snapshot
+            .sources()
+            .text(context.file)
+            .expect("fixture source");
+        let range = Span::full_file(text.len() as u32);
         assert!(
             !snapshot
                 .analysis()
-                .inlay_hints(context.crate_ref, context.file, None, None)
+                .inlay_hints(context.crate_ref, context.file, range, None)
                 .expect("file hints")
                 .is_empty()
         );
@@ -241,7 +366,7 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         79
     );
@@ -252,10 +377,12 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
             let context = snapshot
                 .file_context_for_path(fixture.path("src/lib.rs"))?
                 .expect("source target");
+            let text = snapshot.sources().text(context.file)?;
+            let range = Span::full_file(text.len() as u32);
             let result =
                 snapshot
                     .analysis()
-                    .inlay_hints(context.crate_ref, context.file, None, None)?;
+                    .inlay_hints(context.crate_ref, context.file, range, None)?;
             cancellation.cancel();
             Ok(result)
         })
@@ -263,14 +390,14 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
     query(&project);
     drop(project);
 
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     let warm = fixture.build_project();
     query(&warm);
     assert_eq!(
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         0
     );
@@ -380,7 +507,7 @@ mod other {
 "#,
     );
     let project = fixture.build_project();
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(fixture.path("src/lib.rs"))
@@ -425,7 +552,7 @@ mod other {
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.owners")
+            .counter("body_ir.owner.owners")
             .unwrap_or_default(),
         4
     );

@@ -9,7 +9,7 @@ pub(crate) async fn semantic_tokens(
     ctx: DocumentMethodContext,
     range: Option<Range>,
 ) -> Result<SemanticTokens> {
-    let document = ctx.target_document()?;
+    let document = ctx.semantic_document()?;
     let result = ctx
         .engine_client
         .query(
@@ -21,5 +21,5 @@ pub(crate) async fn semantic_tokens(
             },
         )
         .await;
-    ctx.finish_target_query(result)
+    ctx.finish_semantic_query(result)
 }

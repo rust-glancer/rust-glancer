@@ -1,13 +1,13 @@
 //! Exact source and path observations shared by providers in one saved or editor input view.
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use rg_ir_model::FileId;
-use rg_std::NativeOsString;
+use rg_std::{MemoryRecorder, MemorySize as _, NativeOsString};
 
 use crate::{CapturedSource, QueryContext, SourceEntry, SourceError, read_source_text};
 
@@ -123,6 +123,67 @@ impl SourceInput {
             if let Ok(entry) = entry {
                 entry.evict_saved_text();
             }
+        }
+    }
+
+    /// Repack source metadata only after the host has dropped its previous generation and request
+    /// working sets. Preserve entry sharing between the saved and editor tables.
+    /// Ajika checks that relocation preserves each key, content stamp and input policy.
+    pub fn relocate<'a>(views: impl IntoIterator<Item = &'a ajika::Inputs>) -> ajika::Result<()> {
+        let mut relocated = HashMap::new();
+        for inputs in views {
+            inputs.relocate(Self::CAPTURE, |file, entry| {
+                let entry = entry
+                    .as_ref()
+                    .map(|entry| {
+                        // Keep the old allocation alive until the pass ends so its address cannot
+                        // be reused while it serves as the sharing key.
+                        let (_, copy) = relocated
+                            .entry(Arc::as_ptr(entry))
+                            .or_insert_with(|| (Arc::clone(entry), Arc::new(entry.relocated())));
+                        Arc::clone(copy)
+                    })
+                    .map_err(Arc::clone);
+                (*file, entry)
+            })?;
+            inputs.relocate(SourcePresence::OBSERVATION, |path, observation| {
+                (path.clone(), *observation)
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Account for source-owned allocations in addition to Ajika's input table estimate. The
+    /// recorder deduplicates entries shared by saved and editor views; enumerating never captures
+    /// a new file or reloads text.
+    pub fn record_memory<'a>(
+        views: impl IntoIterator<Item = &'a ajika::Inputs>,
+        recorder: &mut MemoryRecorder,
+    ) {
+        let mut paths = HashSet::new();
+        for inputs in views {
+            for (_, entry) in inputs.entries(Self::CAPTURE) {
+                match entry {
+                    Ok(entry) if recorder.visit_shared_allocation(Arc::as_ptr(&entry).cast()) => {
+                        entry.record_memory_children(recorder);
+                    }
+                    Err(error) if recorder.visit_shared_allocation(Arc::as_ptr(&error).cast()) => {
+                        error.record_memory_children(recorder);
+                    }
+                    _ => {}
+                }
+            }
+            paths.extend(
+                inputs
+                    .entries(SourcePresence::OBSERVATION)
+                    .into_iter()
+                    .map(|(path, _)| path),
+            );
+        }
+        // Input enumeration exposes effective keys, not which backing table owns each string.
+        // Estimate path storage once per spelling, excluding duplicate keys in overridden tables.
+        for path in paths {
+            recorder.record_approximate::<NativeOsString>(path.as_encoded_bytes().len());
         }
     }
 

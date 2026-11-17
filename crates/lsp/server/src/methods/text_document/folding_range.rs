@@ -23,7 +23,7 @@ pub(crate) async fn folding_range(
             },
         )
         .await;
-    let ranges = ctx.finish_target_query(result)?;
+    let ranges = ctx.finish_syntax_query(result)?;
     tracing::trace!(
         result_count = ranges.len(),
         "folding range request answered"

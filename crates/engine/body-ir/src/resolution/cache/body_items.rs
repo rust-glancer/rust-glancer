@@ -52,50 +52,10 @@ impl BodyLocalItemCache {
 #[derive(Default)]
 pub(crate) struct BodyLocalItemIndex {
     pub(crate) inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
-    pub(crate) inherent_item_names_by_type: HashMap<TypeDefRef, BodyLocalInherentItemNames>,
     pub(crate) trait_impls: UniqueVec<TraitImplRef>,
     pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
     pub(crate) traits_with_functions: UniqueVec<TraitDefRef>,
     pub(crate) traits_with_associated_items: UniqueVec<TraitDefRef>,
     pub(crate) traits_by_function_name: HashMap<Name, UniqueVec<TraitDefRef>>,
     pub(crate) traits_by_const_name: HashMap<Name, UniqueVec<TraitDefRef>>,
-}
-
-/// Names declared by body-local inherent impls, separated by associated-item kind.
-///
-/// An active source impl replaces the saved impl's member of the same kind and name. If the saved
-/// snapshot has `fn render(&self) -> Old` and the overlay has `fn render(&self) -> New`, retaining
-/// `render` here lets consumers suppress the stale function without hiding unrelated saved consts
-/// or type aliases that happen to use other names.
-#[derive(Default)]
-pub(crate) struct BodyLocalInherentItemNames {
-    pub(crate) functions: UniqueVec<Name>,
-    pub(crate) consts: UniqueVec<Name>,
-    pub(crate) type_aliases: UniqueVec<Name>,
-}
-
-impl BodyLocalInherentItemNames {
-    pub(crate) fn extend(&mut self, other: &Self) {
-        self.functions.extend(other.functions.iter().cloned());
-        self.consts.extend(other.consts.iter().cloned());
-        self.type_aliases.extend(other.type_aliases.iter().cloned());
-    }
-
-    pub(crate) fn contains_function(&self, name: &str) -> bool {
-        self.functions
-            .iter()
-            .any(|candidate| candidate.as_str() == name)
-    }
-
-    pub(crate) fn contains_const(&self, name: &str) -> bool {
-        self.consts
-            .iter()
-            .any(|candidate| candidate.as_str() == name)
-    }
-
-    pub(crate) fn contains_type_alias(&self, name: &str) -> bool {
-        self.type_aliases
-            .iter()
-            .any(|candidate| candidate.as_str() == name)
-    }
 }

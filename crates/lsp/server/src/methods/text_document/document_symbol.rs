@@ -7,7 +7,7 @@ pub(crate) async fn document_symbol(
     ctx: DocumentMethodContext,
     _params: DocumentSymbolParams,
 ) -> Result<Option<DocumentSymbolResponse>> {
-    let document = ctx.target_document()?;
+    let document = ctx.semantic_document()?;
     tracing::trace!("document symbol request received");
 
     let result = ctx
@@ -21,7 +21,7 @@ pub(crate) async fn document_symbol(
             },
         )
         .await;
-    let symbols = ctx.finish_target_query(result)?;
+    let symbols = ctx.finish_semantic_query(result)?;
     tracing::trace!(
         result_count = symbols.len(),
         "document symbol request answered"

@@ -13,13 +13,13 @@ mod model {
 macro_rules! declare {
     ($ty:ident) => { fn generated(_: model::$ty) {} };
 }
-declare!(Rec$0); // complete_with_source("copied type").matching("Record")
+declare!(Rec$0); // complete("copied type").matching("Record")
 
 mod imports {
     macro_rules! import {
         ($name:ident) => { use crate::model::$name; };
     }
-    import!(Rec$0); // complete_with_source("copied import").matching("Record")
+    import!(Rec$0); // complete("copied import").matching("Record")
 }
 
 pub trait Parameterized<T> {
@@ -28,7 +28,7 @@ pub trait Parameterized<T> {
 macro_rules! bound {
     ($name:ident) => { fn bound<T: Parameterized<u8, $name>>() {} };
 }
-bound!(Out$0); // complete_with_source("copied binding").matching("Output")
+bound!(Out$0); // complete("copied binding").matching("Output")
 "#,
         expect![[r#"
             st Record // copied type
@@ -43,7 +43,7 @@ fn completes_explicit_empty_import_type_expression_argument_and_generic_argument
     check_analysis(
         r#"
 //- /src/lib.rs crate:analysis_empty_path_completions
-use $0; // complete_with_source("empty import path")
+use $0; // complete("empty import path")
 
 pub struct ModuleType;
 pub struct Wrapper<T>(T);
@@ -51,13 +51,13 @@ pub const MODULE_VALUE: u8 = 1;
 
 pub fn consume(value: u8) {}
 
-pub fn signature<T, const N: usize>(value: $0) {} // complete_with_source("empty type path")
+pub fn signature<T, const N: usize>(value: $0) {} // complete("empty type path")
 
 pub fn body(param: u8) {
     let before = param;
-    let _: ModuleType = $0; // complete_with_source("empty expression path")
-    consume($0); // complete_with_source("empty argument path")
-    let _: Wrapper<$0>; // complete_with_source("empty generic argument path")
+    let _: ModuleType = $0; // complete("empty expression path")
+    consume($0); // complete("empty argument path")
+    let _: Wrapper<$0>; // complete("empty generic argument path")
 }
 "#,
         expect![[r#"

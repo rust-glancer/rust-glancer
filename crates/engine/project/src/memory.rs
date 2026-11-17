@@ -3,6 +3,7 @@
 pub enum ProjectMemoryPurgePoint {
     AfterProjectBuild,
     AfterProjectChange,
+    Idle,
 }
 
 impl ProjectMemoryPurgePoint {
@@ -10,6 +11,7 @@ impl ProjectMemoryPurgePoint {
         match self {
             Self::AfterProjectBuild => "after project build",
             Self::AfterProjectChange => "after project change",
+            Self::Idle => "engine idle",
         }
     }
 }

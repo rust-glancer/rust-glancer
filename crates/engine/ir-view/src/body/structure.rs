@@ -87,17 +87,19 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         Self { db }
     }
 
-    /// Return known types for method calls that feed another method call.
+    /// Return known types for method calls that feed another method call in overlapping bodies.
+    /// The caller selects the exact hint positions from these candidates.
     pub fn method_chain_expr_tys(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
+        range: Span,
     ) -> anyhow::Result<Vec<MethodChainExprTy>> {
         let mut expr_tys = Vec::new();
         for (_, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, SourceSelection::written_file(file_id))?
+            .bodies(crate_ref, SourceSelection::in_range(file_id, range))?
         {
             rg_std::check_cancel!(self.db, "body structure");
             let parent_dot_by_receiver = Self::method_parent_dots_by_receiver(body);
@@ -133,11 +135,13 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         Ok(expr_tys)
     }
 
-    /// Return body-owned blocks whose source extent ends at their closing brace.
+    /// Return blocks from overlapping body owners whose source extent ends at their closing brace.
+    /// The caller selects the exact closing positions from these candidates.
     pub fn closing_brace_blocks(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
+        range: Span,
     ) -> anyhow::Result<Vec<BodyClosingBraceBlock>> {
         // Design note:
         // The source span and structural kind are enough for callers to place block-end annotations
@@ -148,7 +152,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         for (_, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, SourceSelection::written_file(file_id))?
+            .bodies(crate_ref, SourceSelection::in_range(file_id, range))?
         {
             rg_std::check_cancel!(self.db, "body structure");
             let body_source = body.source();

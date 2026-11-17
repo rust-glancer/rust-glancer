@@ -1,15 +1,71 @@
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 
 use rg_analysis::{ReferenceLocation, ReferenceQuery, RenameEdit};
-use rg_body_ir::saved_body;
+use rg_body_ir::body_store;
 use rg_ir_model::{BodyKey, PrimitiveTy, Span, UnsignedIntTy};
 use rg_semantic_ir::target_declarations;
 use rg_std::CancellationToken;
+use rg_text::RustEdition;
 
 use crate::{
     SavedFileChange,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
+
+#[test]
+fn syntax_edition_uses_collected_sources_and_package_metadata() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /outer/src/lib.rs crate:outer root:outer edition:2024
+pub struct Modern;
+
+//- /outer/legacy/src/lib.rs crate:legacy root:outer/legacy edition:2015
+#[rustc_builtin_macro]
+macro_rules! include { ($($args:tt)*) => {}; }
+#[path = "../../../shared.rs"]
+mod shared;
+pub struct Value;
+impl Value { include!("methods.rs"); }
+
+//- /outer/legacy/src/methods.rs
+pub fn async() {}
+
+//- /shared.rs
+pub fn async() {}
+
+//- /outer/legacy/loose.rs
+fn async() {}
+
+//- /outer/loose.rs
+async fn demo() {}
+
+//- /standalone.rs
+async fn demo() {}
+"#,
+    );
+    let project = fixture.build_project();
+    for (path, expected) in [
+        ("outer/src/lib.rs", Some(RustEdition::Edition2024)),
+        ("outer/legacy/src/lib.rs", Some(RustEdition::Edition2015)),
+        (
+            "outer/legacy/src/methods.rs",
+            Some(RustEdition::Edition2015),
+        ),
+        ("shared.rs", Some(RustEdition::Edition2015)),
+        ("outer/legacy/loose.rs", Some(RustEdition::Edition2015)),
+        ("outer/loose.rs", Some(RustEdition::Edition2024)),
+        ("standalone.rs", None),
+    ] {
+        let source_path = fixture.path(path).canonicalize().expect("fixture source");
+        assert_eq!(
+            project
+                .source_edition(&source_path)
+                .expect("source edition"),
+            expected,
+            "{path}"
+        );
+    }
+}
 
 #[test]
 fn queries_bodies_in_primary_and_secondary_targets() {
@@ -116,7 +172,7 @@ fn main() {
             .is_some()
     }));
     let path = fixture.path("src/main.rs");
-    let text = std::fs::read_to_string(&path).expect("read binary source");
+    let text = fs::read_to_string(&path).expect("read binary source");
     let (definitions, body) = warm.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(&path)
@@ -203,7 +259,7 @@ fn main() {
             .value(db)
             .expect("binary body owners");
         let body = db
-            .query::<saved_body>(BodyKey {
+            .query::<body_store>(BodyKey {
                 krate: context.crate_ref,
                 owner: owners[0].owner,
             })
@@ -332,7 +388,7 @@ fn main() {}
     );
     let mut project = fixture.build_project();
     let tool = fixture.path("src/bin/tool.rs");
-    std::fs::remove_file(&tool).expect("remove autodiscovered target");
+    fs::remove_file(&tool).expect("remove autodiscovered target");
     project
         .apply_changes([SavedFileChange::fs_path(tool)])
         .expect("reload Cargo metadata after deleting a target");

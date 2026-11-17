@@ -86,24 +86,21 @@ where
         let lookup = self.context.item_lookup_query();
         let mut candidates = Vec::new();
 
-        // Body-local declarations replace saved declarations of the same name. A named call
-        // reads the name index; only completion expands the whole inherent declaration surface.
+        // Combine body-local impls with the crate index. A named call filters crate declarations
+        // by name; only completion expands the whole inherent declaration surface.
         if qualification.is_none() {
             let mut functions = UniqueVec::new();
-            let local_names = if let Some(adt) = receiver.as_adt() {
+            if let Some(adt) = receiver.as_adt() {
                 for &impl_ref in body_items.inherent_impls_for_type(adt.def)? {
                     functions.extend(items.associated_functions(impl_ref.member_store())?);
                 }
-                let names = body_items.inherent_item_names_for_type(adt.def)?;
                 match name {
-                    Some(name) if names.is_some_and(|names| names.contains_function(name)) => {}
                     Some(name) => {
                         functions
                             .extend(lookup.inherent_functions_for_type_and_name(adt.def, name)?);
                     }
                     None => functions.extend(lookup.inherent_functions_for_type(&items, adt.def)?),
                 }
-                names
             } else {
                 if !matches!(
                     receiver.shape(),
@@ -124,17 +121,13 @@ where
                         }
                     }
                 }
-                None
-            };
+            }
             for function in functions {
                 let Some(data) = items.function_data(function)? else {
                     continue;
                 };
                 if name.is_some_and(|name| data.name != name)
                     || needs_self && !data.has_self_receiver()
-                    || function.store.origin.as_crate_ref().is_some()
-                        && local_names
-                            .is_some_and(|names| names.contains_function(data.name.as_str()))
                 {
                     continue;
                 }

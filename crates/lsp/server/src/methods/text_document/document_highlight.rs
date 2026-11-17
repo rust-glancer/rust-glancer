@@ -13,7 +13,7 @@ pub(crate) async fn document_highlight(
     params: DocumentHighlightParams,
 ) -> Result<Option<Vec<DocumentHighlight>>> {
     let position = params.text_document_position_params.position;
-    let input = ctx.target_position(position)?;
+    let input = ctx.position(position)?;
     tracing::trace!("document highlight request received");
     let result = ctx
         .engine_client
@@ -26,7 +26,7 @@ pub(crate) async fn document_highlight(
             },
         )
         .await;
-    let highlights = ctx.finish_target_query(result)?;
+    let highlights = ctx.finish_semantic_query(result)?;
     tracing::trace!(
         result_count = highlights.len(),
         "document highlight request answered"

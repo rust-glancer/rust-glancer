@@ -1053,7 +1053,7 @@ async def run(argv: Sequence[str]) -> None:
             },
         )
 
-        # Readiness includes the configured body indexes.
+        # Readiness publishes declarations; bodies are computed when a query needs them.
         if plan["readinessBarrier"] == "ready":
             await wait_until_ready(client, options.timeout_ms)
             readiness_ms = (time.perf_counter_ns() - startup_started) / 1_000_000

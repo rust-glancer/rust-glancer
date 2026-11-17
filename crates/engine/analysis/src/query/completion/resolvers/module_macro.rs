@@ -11,7 +11,7 @@ use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem},
     query::completion::{
-        CompletionQuery,
+        CompletionContext,
         candidates::CompletionCandidateSource,
         render::{
             CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
@@ -24,11 +24,11 @@ use crate::{
 /// Restricts an item-position name lookup to macros that can be invoked with `!`.
 pub(super) struct ModuleMacroCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
 }
 
 impl<'a, 'db, 'source> ModuleMacroCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
         Self { analysis, query }
     }
 

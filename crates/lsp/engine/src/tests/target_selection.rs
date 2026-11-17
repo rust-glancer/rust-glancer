@@ -80,7 +80,7 @@ $start$pub fn inspect() {
         )
         .await;
 
-    // Moving the body forces current-source preparation without changing its selected owner.
+    // Moving the body changes source coordinates without changing its preferred crate.
     let current = fixture
         .did_open_dirty(
             "src/shared.rs",

@@ -255,10 +255,10 @@ fn completes_pattern_keywords_from_request_local_source() {
         r#"
 //- /src/lib.rs crate:analysis_pattern_keyword_completions
 pub fn inspect(value: bool) {
-    if let r$0 = value {} // complete_verbose_with_source("ref pattern keyword")
-    if let m$0 = value {} // complete_with_source("mut pattern keyword")
-    if let t$0 = value {} // complete_with_source("true pattern keyword")
-    if let f$0 = value {} // complete_with_source("false pattern keyword")
+    if let r$0 = value {} // complete_verbose("ref pattern keyword")
+    if let m$0 = value {} // complete("mut pattern keyword")
+    if let t$0 = value {} // complete("true pattern keyword")
+    if let f$0 = value {} // complete("false pattern keyword")
 }
 "#,
         expect![[r#"

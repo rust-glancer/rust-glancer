@@ -481,7 +481,7 @@ mod tests {
         for (source, expected_edit) in cases {
             let offset = u32::try_from(source.find("HashM").expect("fixture should have cursor"))
                 .expect("fixture offset should fit");
-            let syntax = CompletionSyntaxContext::at(Some(source), offset + 5)
+            let syntax = CompletionSyntaxContext::at(source, offset + 5)
                 .expect("completion syntax should parse");
             let planner = ImportEditPlanner::for_completion(&syntax, primary(offset));
             let ImportEditPlan::Edit(edit) =
@@ -506,7 +506,7 @@ mod tests {
             let source = format!("{existing_import}\nfn main() {{ let _: Missing; }}");
             let offset = u32::try_from(source.find("Missing").expect("fixture should have cursor"))
                 .expect("fixture offset should fit");
-            let syntax = CompletionSyntaxContext::at(Some(&source), offset + 7)
+            let syntax = CompletionSyntaxContext::at(&source, offset + 7)
                 .expect("completion syntax should parse");
             let planner =
                 ImportEditPlanner::for_source(&source, syntax.speculative_file_tree(), offset);
@@ -537,7 +537,7 @@ mod tests {
         let source = "use std::{collections::HashMap};\nfn main() { let _: HashM; }";
         let offset = u32::try_from(source.rfind("HashM").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let syntax = CompletionSyntaxContext::at(Some(source), offset + 5)
+        let syntax = CompletionSyntaxContext::at(source, offset + 5)
             .expect("completion syntax should parse");
         let planner = ImportEditPlanner::for_completion(&syntax, primary(offset));
         assert!(matches!(
@@ -551,8 +551,8 @@ mod tests {
         let source = "use crate::alpha::User;\nfn main() { let _: User; }";
         let offset = u32::try_from(source.rfind("User").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let syntax = CompletionSyntaxContext::at(Some(source), offset + 4)
-            .expect("fixture source should parse");
+        let syntax =
+            CompletionSyntaxContext::at(source, offset + 4).expect("fixture source should parse");
         let desired = Path::from_macro_path_text("crate::beta::User", None)
             .expect("fixture path should parse");
         let planner = ImportEditPlanner::for_source(source, syntax.speculative_file_tree(), offset);
@@ -568,8 +568,8 @@ mod tests {
         let source = "#[cfg(any())]\nuse std::collections::BTreeMap;\nfn main() { let _: HashM; }";
         let offset = u32::try_from(source.find("HashM").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let syntax = CompletionSyntaxContext::at(Some(source), offset + 5)
-            .expect("fixture source should parse");
+        let syntax =
+            CompletionSyntaxContext::at(source, offset + 5).expect("fixture source should parse");
         let planner = ImportEditPlanner::for_source(source, syntax.speculative_file_tree(), offset);
 
         let ImportEditPlan::Edit(edit) =
@@ -595,7 +595,7 @@ mod tests {
         let source = "mod nested {\n    fn main() { let _: HashM; }\n}\n";
         let offset = u32::try_from(source.find("HashM").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let syntax = CompletionSyntaxContext::at(Some(source), offset + 5)
+        let syntax = CompletionSyntaxContext::at(source, offset + 5)
             .expect("completion syntax should parse");
         let planner = ImportEditPlanner::for_completion(&syntax, primary(offset));
         let ImportEditPlan::Edit(edit) =
@@ -623,8 +623,8 @@ mod tests {
             let start = u32::try_from(source.find(prefix).expect("fixture should have cursor"))
                 .expect("fixture offset should fit");
             let end = start + u32::try_from(prefix.len()).expect("fixture prefix should fit");
-            let syntax = CompletionSyntaxContext::at(Some(&source), end)
-                .expect("completion syntax should parse");
+            let syntax =
+                CompletionSyntaxContext::at(&source, end).expect("completion syntax should parse");
             let planner = ImportEditPlanner::for_completion(
                 &syntax,
                 CompletionEdit {

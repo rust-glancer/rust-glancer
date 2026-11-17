@@ -1,4 +1,4 @@
-//! Trait lookup that depends on the current body's names and source overlay.
+//! Trait lookup that depends on the body's local names and visible declarations.
 //!
 //! This query handles two related Rust lookup forms:
 //!
@@ -38,9 +38,9 @@ where
         Self { context }
     }
 
-    /// Merge body-origin declarations before saved-project declaration indexes.
+    /// Merge body-origin declarations before crate-level declaration indexes.
     ///
-    /// For `value.render()`, body-local and saved reverse-name indexes first answer which traits
+    /// For `value.render()`, body-local and crate-level reverse-name indexes first answer which traits
     /// declare `render`. The combined declaration list is then intersected with the traits visible
     /// at this `scope`. The result still says nothing about `value`'s type; receiver matching starts
     /// only after this name-and-scope filter has selected a small trait universe.
@@ -122,9 +122,8 @@ where
 
         self.push_local_traits(&mut traits, def_maps.traits_in_lexical_scope(body_scope)?)?;
 
-        // Saved source overlays can resolve first through a body-owned module and then through
-        // the original crate module. Both modules may contribute trait candidates even when they
-        // use the same path spelling, matching the accumulation across ordinary lexical layers.
+        // A nested function can see traits in its parent body as well as the surrounding module.
+        // Accumulate both lexical layers even when they contribute the same path spelling.
         let owner_module = self.context.body().owner_module();
         self.push_local_traits(
             &mut traits,

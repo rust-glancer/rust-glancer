@@ -1,4 +1,4 @@
-//! Select saved bodies worth scanning for references before paying for their inference.
+//! Select bodies worth scanning for references before paying for their inference.
 //!
 //! Declaration metadata tells us where functions and initializers are written. Their source tokens
 //! can rule out many unrelated bodies without opening Body IR. This selection only limits body
@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use rg_def_map::DefMapSource as _;
 use rg_ir_model::{
-    CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, ModuleRef, SavedBodyOwner, Span, TypeDefRef,
+    CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, ModuleRef, OuterBodyOwner, Span, TypeDefRef,
 };
 use rg_semantic_ir::{BodyOwnerData, ItemStoreQuery, SourceSelection};
 use rg_syntax::{
@@ -38,16 +38,15 @@ pub struct ReferenceSourceSelection {
 }
 
 impl ReferenceSourceSelection {
-    /// Choose outer saved owners in one file; selecting one also includes its nested bodies.
+    /// Choose outer owners in one file; selecting one also includes its nested bodies.
     ///
-    /// This reads declaration metadata and saved syntax, never inferred bodies. Bodies rebuilt
-    /// from current editor text are added separately by the body reader and are not filtered here.
+    /// This reads declaration metadata and syntax, never inferred bodies.
     pub(crate) fn owners(
         &self,
         db: &IndexedViewDb<'_>,
         krate: CrateRef,
         file: FileId,
-    ) -> anyhow::Result<HashSet<SavedBodyOwner>> {
+    ) -> anyhow::Result<HashSet<OuterBodyOwner>> {
         let owners = db.body_ir.owners(krate, SourceSelection::AllInFile(file))?;
         if owners.clone().next().is_none() {
             return Ok(HashSet::new());
@@ -203,7 +202,7 @@ impl ReferenceSourceSelection {
         if self.types.is_empty() {
             return Ok(true);
         }
-        let SavedBodyOwner::Function {
+        let OuterBodyOwner::Function {
             store: ItemStoreId::Impl(id),
             ..
         } = owner.owner

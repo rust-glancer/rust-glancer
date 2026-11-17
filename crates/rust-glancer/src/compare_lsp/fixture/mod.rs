@@ -5,7 +5,10 @@
 //! Keeping this validation ahead of the client layer makes benchmark failures about protocol
 //! or server behavior, not missing checkout files.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
 
@@ -163,14 +166,20 @@ impl Fixture {
     /// Text visible to the editor after fixture setup has finished.
     pub(crate) fn editor_source_text(&self, source_path: &str) -> anyhow::Result<String> {
         let path = self.root.join(source_path);
-        let saved = std::fs::read_to_string(&path).with_context(|| {
+        let saved = fs::read_to_string(&path).with_context(|| {
             format!(
                 "Reading LSP comparison source file {} failed",
                 path.display()
             )
         })?;
         if self.kind.uses_dirty_editor_text() {
-            Ok(format!("{DIRTY_EDITOR_PREFIX}{saved}"))
+            let mut text = format!("{DIRTY_EDITOR_PREFIX}{saved}");
+            // A new declaration and its caller also exercise semantic invalidation. The comment
+            // prefix alone only moves locations and can reuse all declaration meaning.
+            if source_path == "crates/stdx/src/process.rs" {
+                text.push_str("\nfn compare_lsp_added_value() -> u16 { 42 }\nfn compare_lsp_added_caller() {\n    let value = compare_lsp_added_value();\n    let _copy = value;\n}\n");
+            }
+            Ok(text)
         } else {
             Ok(saved)
         }

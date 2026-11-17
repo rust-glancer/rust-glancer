@@ -26,7 +26,8 @@ use tower_lsp_server::{
 };
 
 use super::state::{
-    CapturedDocument, DocumentUnavailable, EditorStateHandle, SequencedLifecycleEvent,
+    CapturedDocument, CapturedEditor, DocumentUnavailable, EditorStateHandle,
+    SequencedLifecycleEvent,
 };
 use crate::{
     completion_scheduler::{CompletionRequest, CompletionScheduler},
@@ -94,6 +95,7 @@ impl<S> EditorIngress<S> {
     /// take an immutable snapshot here. Engine and registry calls remain in the async handlers.
     fn prepare_call(&self, request: &Request) -> IngressCall {
         match request.method() {
+            "workspace/symbol" => IngressCall::Workspace(self.editor.capture()),
             "textDocument/didOpen" => {
                 let Some(params) = Self::request_params::<DidOpenTextDocumentParams>(request)
                 else {
@@ -144,7 +146,9 @@ impl<S> EditorIngress<S> {
                 }
 
                 self.inlay_refresher.document_changed();
-                IngressCall::Other
+                self.editor
+                    .invalidate(&path)
+                    .map_or(IngressCall::Other, IngressCall::Lifecycle)
             }
             "textDocument/didSave" => {
                 let Some(params) = Self::request_params::<DidSaveTextDocumentParams>(request)
@@ -178,7 +182,10 @@ impl<S> EditorIngress<S> {
                 };
                 self.editor
                     .close(&path)
-                    .map(IngressCall::Lifecycle)
+                    .map(|event| {
+                        self.inlay_refresher.document_changed();
+                        IngressCall::Lifecycle(event)
+                    })
                     .unwrap_or_else(|| {
                         tracing::debug!(
                             path = %path.display(),
@@ -301,6 +308,7 @@ where
 #[derive(Debug)]
 enum IngressCall {
     Other,
+    Workspace(CapturedEditor),
     Lifecycle(SequencedLifecycleEvent),
     Document {
         document: Mutex<Option<Result<CapturedDocument, DocumentUnavailable>>>,
@@ -312,7 +320,7 @@ impl IngressCall {
     fn lifecycle(&self) -> Option<SequencedLifecycleEvent> {
         match self {
             Self::Lifecycle(sequenced) => Some(sequenced.clone()),
-            Self::Other | Self::Document { .. } => None,
+            Self::Other | Self::Workspace(_) | Self::Document { .. } => None,
         }
     }
 }
@@ -322,12 +330,22 @@ pub(crate) async fn lifecycle_event() -> Option<super::state::LifecycleEvent> {
     let sequenced = CURRENT_INGRESS_CALL
         .try_with(|call| match call {
             IngressCall::Lifecycle(sequenced) => Some(sequenced.clone()),
-            IngressCall::Other | IngressCall::Document { .. } => None,
+            IngressCall::Other | IngressCall::Workspace(_) | IngressCall::Document { .. } => None,
         })
         .ok()
         .flatten()?;
     sequenced.wait_for_previous().await;
     Some(sequenced.event())
+}
+
+pub(crate) fn workspace_request() -> Option<CapturedEditor> {
+    CURRENT_INGRESS_CALL
+        .try_with(|call| match call {
+            IngressCall::Workspace(captured) => Some(captured.clone()),
+            _ => None,
+        })
+        .ok()
+        .flatten()
 }
 
 /// Take the document snapshot chosen before this handler could run alongside a later edit.
@@ -341,7 +359,7 @@ pub(crate) fn document_request() -> Option<Result<CapturedDocument, DocumentUnav
                 .lock()
                 .expect("ingress document mutex should not be poisoned")
                 .take(),
-            IngressCall::Other | IngressCall::Lifecycle(_) => None,
+            IngressCall::Other | IngressCall::Workspace(_) | IngressCall::Lifecycle(_) => None,
         })
         .ok()
         .flatten()
@@ -356,7 +374,7 @@ pub(crate) fn completion_request() -> Option<CompletionRequest> {
     CURRENT_INGRESS_CALL
         .try_with(|call| match call {
             IngressCall::Document { completion, .. } => completion.clone(),
-            IngressCall::Other | IngressCall::Lifecycle(_) => None,
+            IngressCall::Other | IngressCall::Workspace(_) | IngressCall::Lifecycle(_) => None,
         })
         .ok()
         .flatten()

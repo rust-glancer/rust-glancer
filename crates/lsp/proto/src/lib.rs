@@ -42,7 +42,8 @@ pub use self::{
         NotificationsServiceClient, ProjectInitialization,
     },
     snapshot::{
-        DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentRevision, EditorDocumentSnapshot,
-        GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision, TargetDocumentRevision,
+        DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentRevision, DocumentSnapshot,
+        EditorDocumentSnapshot, EditorSnapshot, OpenDocumentSession, OpenDocumentsRevision,
+        TargetDocumentRevision,
     },
 };

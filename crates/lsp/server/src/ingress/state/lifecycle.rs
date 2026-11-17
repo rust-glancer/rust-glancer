@@ -21,7 +21,9 @@ use std::{
     },
 };
 
-use rg_lsp_proto::{EditorDocumentSnapshot, OpenDocumentSession, SaveProposal};
+use rg_lsp_proto::{
+    EditorDocumentSnapshot, OpenDocumentSession, OpenDocumentsRevision, SaveProposal,
+};
 use rg_std::NormalizedPathBuf;
 use tokio::sync::watch;
 
@@ -41,8 +43,16 @@ pub(crate) enum LifecycleEvent {
         proposal: SaveProposal,
         route: SessionRoute,
     },
-    /// Remove the registry route after earlier work finishes.
-    Close { route: SessionRoute },
+    /// Release obsolete engine inputs after an edit, including reverting to saved text.
+    Invalidate {
+        route: SessionRoute,
+        revision: OpenDocumentsRevision,
+    },
+    /// Remove the registry route and release retained inputs after earlier work finishes.
+    Close {
+        route: SessionRoute,
+        revision: OpenDocumentsRevision,
+    },
 }
 
 /// One async lifecycle step together with the earlier step it must wait for.
@@ -92,7 +102,7 @@ impl SequencedLifecycleEvent {
 ///
 /// The lookup starts when the document opens. A request may take its snapshot before the result is
 /// ready; that snapshot reports the route as unavailable rather than choosing another engine.
-/// When the result is stored, the open-documents revision advances. A later global operation will
+/// When the result is stored, the open-documents revision advances. A later semantic request will
 /// therefore capture the document under its resolved engine. The same route is reused until the
 /// session closes.
 #[derive(Clone, Debug)]

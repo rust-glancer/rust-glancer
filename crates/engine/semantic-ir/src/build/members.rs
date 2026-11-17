@@ -1,4 +1,4 @@
-//! Build and read the members of one saved trait or impl without opening neighboring owners.
+//! Build and read the members of one trait or impl without opening neighboring owners.
 //!
 //! Target indexing publishes the headers first. For `impl<T> Bag<T> { methods!(); }`, the header
 //! already describes `Bag<T>` and its generics, but the functions emitted by `methods!()` belong
@@ -13,13 +13,15 @@ use rg_def_map::{
     GeneratedSourceStoreId,
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, FileId, ItemOwner, ItemStoreId, ItemStoreRef};
+use rg_item_tree::SourceLocations as _;
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, ItemStore, LangItemIndex,
-    SavedSourceResolver, SourceSelection, TargetDeclarationReader, target_declarations,
+    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, DeclarationSourceResolver,
+    ItemSourceView, ItemStore, LangItemIndex, SourceSelection, TargetDeclarationReader,
+    target_declarations,
 };
 
 const OWNERS_PER_PAGE: usize = 64;
@@ -115,7 +117,7 @@ pub struct AssociatedDeclarations {
     body_owners: Vec<BodyOwnerData>,
 }
 
-/// Open one saved member store using the trait or impl ID from its header.
+/// Open one member store using the trait or impl ID from its header.
 ///
 /// The target query supplies replay inputs and frozen macro scopes, never a prebuilt member list.
 /// Expansion finishes before lowering allocates any member IDs. A direct member or body reference
@@ -173,8 +175,8 @@ pub fn associated_declarations(
     AssociatedDeclarations::new(db, items, lang_items, sources, files, bodies).map(Some)
 }
 
-/// Gather body metadata through the same source selection used by signature scans. Owners are
-/// restricted to the selected file; matching an individual body range belongs to the caller.
+/// Select body owners before preparing or inferring them. Header bounds first narrow trait/impl
+/// stores; declaration bounds then select individual functions and initializers within them.
 pub fn body_owners(
     db: &QueryContext<'_>,
     krate: CrateRef,
@@ -190,7 +192,7 @@ pub fn body_owners(
         .copied()
         .filter(in_selected_file)
         .collect();
-    for store in SavedSourceResolver::new(db, krate).member_stores(selection)? {
+    for store in DeclarationSourceResolver::new(db, krate).member_stores(selection)? {
         let Some(members) = associated_declarations(db, krate, store.id)? else {
             continue;
         };
@@ -203,11 +205,24 @@ pub fn body_owners(
                 .filter(in_selected_file),
         );
     }
-    Ok(owners)
+    let Some(bounds) = selection.bounds() else {
+        return Ok(owners);
+    };
+    let mut selected = Vec::new();
+    for owner in owners {
+        let sources = ItemSourceView::new(db, krate, owner.source)?;
+        if sources
+            .location(owner.location)
+            .is_some_and(|location| location.span.touches_span(bounds))
+        {
+            selected.push(owner);
+        }
+    }
+    Ok(selected)
 }
 
 /// Direct body identity already contains its member store; do not enumerate neighboring owners.
-pub fn saved_body_owner<'db>(
+pub fn body_owner<'db>(
     db: &'db QueryContext<'db>,
     key: BodyKey,
 ) -> ajika::Result<Option<&'db BodyOwnerData>> {

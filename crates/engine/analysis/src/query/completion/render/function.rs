@@ -19,7 +19,7 @@ use crate::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
     },
-    query::completion::CompletionQuery,
+    query::completion::CompletionContext,
 };
 
 /// Signature metadata and insertion text for one function completion.
@@ -51,12 +51,12 @@ pub(crate) struct FunctionCompletionRequest<'label, 'member> {
 
 /// Applies shared display, documentation, and call-snippet policy to function candidates.
 pub(crate) struct FunctionCompletionRenderer<'source> {
-    query: CompletionQuery<'source>,
+    query: CompletionContext<'source>,
     syntax: SyntaxRenderer,
 }
 
 impl<'source> FunctionCompletionRenderer<'source> {
-    pub(crate) fn new(query: CompletionQuery<'source>, syntax: SyntaxRenderer) -> Self {
+    pub(crate) fn new(query: CompletionContext<'source>, syntax: SyntaxRenderer) -> Self {
         Self { query, syntax }
     }
 
@@ -140,13 +140,10 @@ impl<'source> FunctionCompletionRenderer<'source> {
     }
 
     fn call_parens_already_present(&self, edit: CompletionEdit) -> bool {
-        let Some(source) = self.query.source_text else {
-            return false;
-        };
         let Ok(end) = usize::try_from(edit.replace.end) else {
             return false;
         };
-        let Some(after_completion) = source.get(end..) else {
+        let Some(after_completion) = self.query.source_text.get(end..) else {
             return false;
         };
 

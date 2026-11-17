@@ -9,23 +9,23 @@ fn completes_specialized_strings_macro_fragments_and_postfix_transforms() {
 const MODULE_CAPTURE: usize = 1;
 static STATIC_CAPTURE: usize = 2;
 
-extern "C-un$0" fn foreign(); // complete_verbose_with_source("extern ABI").matching("C-unwind")
+extern "C-un$0" fn foreign(); // complete_verbose("extern ABI").matching("C-unwind")
 
 macro_rules! capture {
-    ($value: ex$0) => { $value }; // complete_verbose_with_source("macro fragment").matching("expr")
+    ($value: ex$0) => { $value }; // complete_verbose("macro fragment").matching("expr")
 }
 
 fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i32) {
     let nested_capture = local_capture;
-    let _ = format!("{loc$0}", explicit_name = value); // complete_verbose_with_source("format local").matching("local_capture")
-    let _ = format!("{exp$0}", explicit_name = value); // complete_verbose_with_source("format named argument").matching("explicit_name")
-    let _ = format!("{MOD$0}"); // complete_with_source("format module const").matching("MODULE_CAPTURE")
-    let _ = env!("CARGO_MAN$0"); // complete_verbose_with_source("Cargo environment").matching("CARGO_MANIFEST_DIR")
-    let _ = option_env!("CARGO_BIN$0"); // complete_with_source("Cargo option environment").matching("CARGO_BIN_NAME")
-    let _ = write!("ordinary$0", "{nes$1}"); // complete_with_source("write destination is ordinary").matching("nested_capture"), complete_with_source("write format").matching("nested_capture")
-    let _ = (value + 1).ma$0; // complete_verbose_with_source("postfix match").matching("match")
-    let _ = condition.i$0; // complete_verbose_with_source("boolean postfix").matching("if")
-    let _ = value.i$0; // complete_with_source("non-boolean postfix").matching("if")
+    let _ = format!("{loc$0}", explicit_name = value); // complete_verbose("format local").matching("local_capture")
+    let _ = format!("{exp$0}", explicit_name = value); // complete_verbose("format named argument").matching("explicit_name")
+    let _ = format!("{MOD$0}"); // complete("format module const").matching("MODULE_CAPTURE")
+    let _ = env!("CARGO_MAN$0"); // complete_verbose("Cargo environment").matching("CARGO_MANIFEST_DIR")
+    let _ = option_env!("CARGO_BIN$0"); // complete("Cargo option environment").matching("CARGO_BIN_NAME")
+    let _ = write!("ordinary$0", "{nes$1}"); // complete("write destination is ordinary").matching("nested_capture"), complete("write format").matching("nested_capture")
+    let _ = (value + 1).ma$0; // complete_verbose("postfix match").matching("match")
+    let _ = condition.i$0; // complete_verbose("boolean postfix").matching("if")
+    let _ = value.i$0; // complete("non-boolean postfix").matching("if")
 }
 "#,
         expect![[r#"
@@ -116,48 +116,48 @@ pub struct Dependency;
 const LIMIT: usize = 8;
 static STATIC_LIMIT: usize = 16;
 
-#[der$0] // complete_with_source("attribute path").in_lib("app").matching("derive")
+#[der$0] // complete("attribute path").in_lib("app").matching("derive")
 struct AttributePath;
 
-#[macros::tra$0] // complete_with_source("attribute proc macro").in_lib("app").matching("traced")
+#[macros::tra$0] // complete("attribute proc macro").in_lib("app").matching("traced")
 struct AttributeMacro;
 
-#[derive(Debug, Cl$0)] // complete_with_source("builtin derive").in_lib("app").matching("Clone")
+#[derive(Debug, Cl$0)] // complete("builtin derive").in_lib("app").matching("Clone")
 struct BuiltinDerive;
 
-#[derive(macros::Sto$0)] // complete_with_source("derive proc macro").in_lib("app").matching("Stored")
+#[derive(macros::Sto$0)] // complete("derive proc macro").in_lib("app").matching("Stored")
 struct MacroDerive;
 
-#[allow(dead$0)] // complete_with_source("lint input").in_lib("app").matching("dead_code")
-#[repr(tra$0)] // complete_with_source("repr input").in_lib("app").matching("transparent")
-#[cfg(tar$0)] // complete_with_source("cfg key").in_lib("app").matching("target_arch")
-#[cfg(feature = "serde-$0")] // complete_verbose_with_source("cfg Cargo feature").in_lib("app").matching("serde-support")
-#[diagnostic::on_unimplemented(mes$0)] // complete_with_source("diagnostic input").in_lib("app").matching("message")
-#[deprecated(si$0)] // complete_with_source("compatibility input").in_lib("app").matching("since")
+#[allow(dead$0)] // complete("lint input").in_lib("app").matching("dead_code")
+#[repr(tra$0)] // complete("repr input").in_lib("app").matching("transparent")
+#[cfg(tar$0)] // complete("cfg key").in_lib("app").matching("target_arch")
+#[cfg(feature = "serde-$0")] // complete_verbose("cfg Cargo feature").in_lib("app").matching("serde-support")
+#[diagnostic::on_unimplemented(mes$0)] // complete("diagnostic input").in_lib("app").matching("message")
+#[deprecated(si$0)] // complete("compatibility input").in_lib("app").matching("since")
 struct AttributeInputs;
 
 pub mod outer {
     pub mod inner {
-        pub(in crate::outer::in$0) struct Restricted; // complete_with_source("visibility module").in_lib("app").matching("inner")
+        pub(in crate::outer::in$0) struct Restricted; // complete("visibility module").in_lib("app").matching("inner")
     }
 }
 
-extern crate dep$0; // complete_with_source("extern crate").in_lib("app").matching("dependency")
+extern crate dep$0; // complete("extern crate").in_lib("app").matching("dependency")
 
-struct Buffer<const N: usize = LIM$0>([u8; N]); // complete_with_source("const default").in_lib("app").matching("LIMIT")
-struct Array([u8; LIM$0]); // complete_with_source("array length").in_lib("app").matching("LIMIT")
+struct Buffer<const N: usize = LIM$0>([u8; N]); // complete("const default").in_lib("app").matching("LIMIT")
+struct Array([u8; LIM$0]); // complete("array length").in_lib("app").matching("LIMIT")
 
-fn signature_lifetime<'outer>(value: &'outer u8) -> &'out$0 u8 { // complete_with_source("lifetime").in_lib("app").matching("'outer")
+fn signature_lifetime<'outer>(value: &'outer u8) -> &'out$0 u8 { // complete("lifetime").in_lib("app").matching("'outer")
     value
 }
 
 fn const_body<const N: usize>() {
-    let _: [u8; N$0]; // complete_with_source("const parameter").in_lib("app").matching("N")
-    let _: Buffer<{ LIM$0 }>; // complete_with_source("braced const argument").in_lib("app").matching("LIMIT")
+    let _: [u8; N$0]; // complete("const parameter").in_lib("app").matching("N")
+    let _: Buffer<{ LIM$0 }>; // complete("braced const argument").in_lib("app").matching("LIMIT")
 
     'outer: loop {
         'inner: loop {
-            break 'inn$0; // complete_with_source("loop label").in_lib("app").matching("'inner")
+            break 'inn$0; // complete("loop label").in_lib("app").matching("'inner")
         }
     }
 }
@@ -217,7 +217,7 @@ impl Service<u8> for Worker {
     type Output = u16;
     fn defaulted(&self) -> u8 { 0 }
 
-    req$0 // complete_verbose_with_source("missing trait members")
+    req$0 // complete_verbose("missing trait members")
 }
 
 mod nested {
@@ -267,17 +267,17 @@ trait Service {
 
 struct FunctionWorker;
 impl Service for FunctionWorker {
-    fn re$0 // complete_verbose_with_source("function trait member prefix")
+    fn re$0 // complete_verbose("function trait member prefix")
 }
 
 struct TypeWorker;
 impl Service for TypeWorker {
-    type Ou$0 // complete_verbose_with_source("type trait member prefix")
+    type Ou$0 // complete_verbose("type trait member prefix")
 }
 
 struct ConstWorker;
 impl Service for ConstWorker {
-    const LI$0 // complete_verbose_with_source("const trait member prefix")
+    const LI$0 // complete_verbose("const trait member prefix")
 }
 "#,
         expect![[r#"
@@ -329,8 +329,8 @@ mod tools {
     pub(crate) use nested_item;
 }
 
-local_i$0!(); // complete_verbose_with_source("unqualified module macro")
-tools::nested_i$0!(); // complete_verbose_with_source("qualified module macro")
+local_i$0!(); // complete_verbose("unqualified module macro")
+tools::nested_i$0!(); // complete_verbose("qualified module macro")
 "#,
         expect![[r#"
             // unqualified module macro
@@ -354,12 +354,12 @@ fn completes_conventional_out_of_line_module_names() {
         r#"
 //- /src/lib.rs crate:analysis_module_declaration_completions
 mod already;
-mod pars$0; // complete_verbose_with_source("root module declaration")
+mod pars$0; // complete_verbose("root module declaration")
 #[path = "custom.rs"]
-mod cust$0; // complete_verbose_with_source("path-attributed module declaration")
+mod cust$0; // complete_verbose("path-attributed module declaration")
 
 mod inner {
-    mod chi$0; // complete_verbose_with_source("inline module declaration")
+    mod chi$0; // complete_verbose("inline module declaration")
 }
 
 //- /src/already.rs
@@ -411,7 +411,7 @@ fn completes_modules_from_semantic_file_contexts() {
 mod implementation;
 
 //- /src/custom_imp.rs
-mod bes$0; // complete_verbose_with_source("path-selected definition file").matching("beside")
+mod bes$0; // complete_verbose("path-selected definition file").matching("beside")
 
 //- /src/beside.rs
 pub struct Beside;
@@ -420,7 +420,7 @@ pub struct Beside;
 pub struct Below;
 
 //- /src/tool.rs crate:semantic_module_context_completions kind:bin name:semantic-context-tool
-mod roo$0; // complete_verbose_with_source("custom target root").in_bin("semantic_module_context_completions").matching("root_child")
+mod roo$0; // complete_verbose("custom target root").in_bin("semantic_module_context_completions").matching("root_child")
 
 //- /src/root_child.rs
 pub struct RootChild;
@@ -572,32 +572,32 @@ pub mod unqualified;
 use completion_proc_macros::emit;
 
 fn use_macro() {
-    let _ = em$0 // complete_verbose_with_source("unqualified function-like proc macro at EOF").in_lib("completion_proc_macro_app").matching("emit")
+    let _ = em$0 // complete_verbose("unqualified function-like proc macro at EOF").in_lib("completion_proc_macro_app").matching("emit")
 
 //- /app/src/already_invoked.rs
 use completion_proc_macros::emit;
 
 fn use_macro() {
-    let _ = em$0!(); // complete_verbose_with_source("function-like proc macro with invocation already typed").in_lib("completion_proc_macro_app").matching("emit")
+    let _ = em$0!(); // complete_verbose("function-like proc macro with invocation already typed").in_lib("completion_proc_macro_app").matching("emit")
 }
 
 //- /app/src/qualified.rs
 fn use_macro() {
-    let _ = completion_proc_macros::em$0 // complete_verbose_with_source("qualified function-like proc macro at EOF").in_lib("completion_proc_macro_app").matching("emit")
+    let _ = completion_proc_macros::em$0 // complete_verbose("qualified function-like proc macro at EOF").in_lib("completion_proc_macro_app").matching("emit")
 
 //- /app/src/attribute.rs
-#[completion_proc_macros::tra$0 // complete_verbose_with_source("attribute proc macro keeps macro detail").in_lib("completion_proc_macro_app").matching("traced")
+#[completion_proc_macros::tra$0 // complete_verbose("attribute proc macro keeps macro detail").in_lib("completion_proc_macro_app").matching("traced")
 
 //- /app/src/derive.rs
-#[derive(completion_proc_macros::Sto$0 // complete_verbose_with_source("derive proc macro keeps export name and macro detail").in_lib("completion_proc_macro_app").matching("Stored")
+#[derive(completion_proc_macros::Sto$0 // complete_verbose("derive proc macro keeps export name and macro detail").in_lib("completion_proc_macro_app").matching("Stored")
 
 //- /app/src/implementation.rs
 fn cannot_call_implementation() {
-    let _ = completion_proc_macros::sto$0 // complete_with_source("implementation function is hidden downstream").in_lib("completion_proc_macro_app").matching("stored")
+    let _ = completion_proc_macros::sto$0 // complete("implementation function is hidden downstream").in_lib("completion_proc_macro_app").matching("stored")
 
 //- /app/src/leaked.rs
 fn cannot_name_other_exports() {
-    let _ = completion_proc_macros::Lea$0 // complete_with_source("ordinary proc-macro crate exports are hidden downstream").in_lib("completion_proc_macro_app").matching("Leaked")
+    let _ = completion_proc_macros::Lea$0 // complete("ordinary proc-macro crate exports are hidden downstream").in_lib("completion_proc_macro_app").matching("Leaked")
 "#,
         expect![[r#"
             // unqualified function-like proc macro at EOF

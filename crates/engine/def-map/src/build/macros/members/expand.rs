@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, rc::Rc};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{CrateRef, FileId, Path};
@@ -63,6 +63,10 @@ struct PendingMember {
     order: ItemOrder,
     /// Number of enclosing expansions. Siblings do not consume each other's recursion allowance.
     depth: usize,
+    /// Files entered through `include!` on this branch, retained through other macro expansions.
+    /// Sibling branches and other owners can still include the same file independently.
+    /// Children share this history until another include extends it.
+    include_ancestors: Rc<[FileId]>,
 }
 
 /// Macro output either reuses source declarations or supplies syntax needing a new source map.
@@ -156,6 +160,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
         // This is a stack: push siblings in reverse order so an expansion is fully visited before
         // the following written member. For `methods!(); fn last() {}`, generated functions must
         // precede `last` when semantic lowering allocates their IDs.
+        let include_ancestors = Rc::<[FileId]>::default();
         for (index, &id) in self.input.items.iter().enumerate().rev() {
             let source = self.input.source.with_item(id);
             self.pending.push(PendingMember {
@@ -165,6 +170,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                 dollar_crate: self.input.dollar_crate,
                 order: self.input.order.generated_child(index),
                 depth: 0,
+                include_ancestors: Rc::clone(&include_ancestors),
             });
         }
         while let Some(member) = self.pending.pop() {
@@ -325,6 +331,17 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
     ) -> anyhow::Result<()> {
         match expansion {
             MemberExpansion::IncludedFile(file) => {
+                // Stop a recursive include before it contributes another copy of its members.
+                if parent.include_ancestors.contains(&file) {
+                    return Ok(());
+                }
+                let include_ancestors: Rc<[FileId]> = parent
+                    .include_ancestors
+                    .iter()
+                    .copied()
+                    .chain([file])
+                    .collect();
+
                 // Included text starts a written source chain. It does not inherit the definition
                 // crate used to interpret `$crate` in the macro that emitted the include call.
                 self.files.insert(file);
@@ -343,6 +360,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                         dollar_crate: None,
                         order: parent.order.generated_child(index),
                         depth: parent.depth + 1,
+                        include_ancestors: Rc::clone(&include_ancestors),
                     });
                 }
             }
@@ -356,6 +374,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                         dollar_crate: parent.dollar_crate,
                         order: parent.order.generated_child(index),
                         depth: parent.depth + 1,
+                        include_ancestors: Rc::clone(&parent.include_ancestors),
                     });
                 }
             }
@@ -387,6 +406,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                         dollar_crate,
                         order: parent.order.generated_child(index),
                         depth: parent.depth + 1,
+                        include_ancestors: Rc::clone(&parent.include_ancestors),
                     });
                 }
             }

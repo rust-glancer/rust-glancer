@@ -1,13 +1,13 @@
 use gen_lsp_types::{
-    BaseSymbolInformation, DocumentSymbol as LspDocumentSymbol, Location,
-    SymbolKind as LspSymbolKind, WorkspaceSymbol as LspWorkspaceSymbol,
+    BaseSymbolInformation, DocumentSymbol as LspDocumentSymbol, SymbolKind as LspSymbolKind,
+    WorkspaceSymbol as LspWorkspaceSymbol,
 };
 use rg_analysis::{DocumentSymbol, SymbolKind, WorkspaceSymbol};
-use rg_lsp_proto::path_to_file_uri;
+use rg_lsp_proto::EditorSnapshot;
 use rg_parse::LineIndex;
 use rg_project::ProjectSnapshot;
 
-use crate::proto::{navigation, position};
+use crate::proto::{navigation::SourceLocations, position};
 
 /// Convert a syntax outline using the line index for the same editor text.
 #[allow(deprecated)]
@@ -32,13 +32,14 @@ pub(crate) fn document_symbol(line_index: &LineIndex, symbol: DocumentSymbol) ->
 
 pub(crate) fn workspace_symbol(
     snapshot: ProjectSnapshot<'_>,
+    editor: &EditorSnapshot,
     symbol: WorkspaceSymbol,
 ) -> anyhow::Result<Option<LspWorkspaceSymbol>> {
-    let path = snapshot.sources().path(symbol.file_id)?;
-    let Ok(uri) = path_to_file_uri(path) else {
+    let Some(location) =
+        SourceLocations::new(snapshot, editor).for_source(symbol.file_id, symbol.span)?
+    else {
         return Ok(None);
     };
-    let range = navigation::range_for_file(snapshot, symbol.file_id, symbol.span)?;
 
     Ok(Some(LspWorkspaceSymbol {
         base_symbol_information: BaseSymbolInformation {
@@ -47,7 +48,7 @@ pub(crate) fn workspace_symbol(
             tags: None,
             container_name: symbol.container_name,
         },
-        location: Location { uri, range }.into(),
+        location: location.into(),
         data: None,
     }))
 }

@@ -26,11 +26,10 @@ use super::{
     symbol_names::{MemberNameData, macro_symbol_names},
 };
 use crate::{
-    AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
-    ItemLookupShard, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer, LookupKeys,
-    LookupQuestion, SavedSourceResolver, SemanticItemSource, SemanticItemView,
-    SourceOwnershipIndex, SourceSelection, SymbolNameData, SymbolNameIndex,
-    item::AssociatedItemHints,
+    AssociatedItemStore, BodyOwnerData, CrateItemSource, DeclarationSourceResolver, ItemLookupEnv,
+    ItemLookupIndex, ItemLookupShard, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
+    LookupKeys, LookupQuestion, SemanticItemSource, SemanticItemView, SourceOwnershipIndex,
+    SourceSelection, SymbolNameData, SymbolNameIndex, item::AssociatedItemHints,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
@@ -506,7 +505,7 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
                     .is_none_or(|file| item.source().file_id == file)
             })
             .collect();
-        for owner in SavedSourceResolver::new(self.db, krate)
+        for owner in DeclarationSourceResolver::new(self.db, krate)
             .member_stores(selection)
             .map_err(ReadError::Query)?
         {

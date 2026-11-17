@@ -1,16 +1,18 @@
 //! Request data passed from `Backend` to document-scoped method handlers.
 //!
 //! Every document handler starts with editor state captured by ingress before the async handler
-//! runs. Ordinary document reads send the target text to the engine. Cross-file operations also
-//! send the other open documents needed to check saved source ranges.
+//! runs. Semantic reads send all applicable documents to the engine; pure syntax reads need only
+//! their target. Publication checks use the same captured scope as analysis.
 //!
 //! Completion has a second context for its scheduler's logical request and client capabilities.
 //! The document context still describes one attempt. Completion and inlay queries can replace
 //! that capture before retrying after an edit.
 
+use std::path::Path;
+
 use rg_lsp_proto::{
     CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
-    EditorDocumentSnapshot, GlobalPositionSnapshot, QueryError, QueryValue,
+    DocumentSnapshot, EditorDocumentSnapshot, QueryError, QueryValue,
 };
 use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Error};
 
@@ -53,7 +55,7 @@ impl DocumentMethodContext {
             .target_document(&self.engine_client)
             .map_err(|unavailable| {
                 tracing::debug!(
-                    path = ?unavailable.path().map(std::path::Path::display),
+                    path = ?unavailable.path().map(Path::display),
                     reason = unavailable.reason(),
                     "exact target document input is temporarily unavailable"
                 );
@@ -61,48 +63,32 @@ impl DocumentMethodContext {
             })
     }
 
-    pub(crate) fn target_position(
-        &self,
-        position: Position,
-    ) -> Result<DocumentPositionSnapshot, Error> {
-        Ok(self.target_document()?.with_position(position))
-    }
-
-    pub(crate) fn target_range(&self, range: Range) -> Result<DocumentRangeSnapshot, Error> {
-        Ok(self.target_document()?.with_range(range))
-    }
-
-    /// Build cross-file input with the target position and all relevant open documents.
-    pub(crate) fn global_position(
-        &self,
-        position: Position,
-    ) -> Result<GlobalPositionSnapshot, Error> {
+    pub(crate) fn semantic_document(&self) -> Result<DocumentSnapshot, Error> {
         self.captured
-            .global_position(&self.engine_client, position)
-            .map_err(|unavailable| {
-                tracing::debug!(
-                    path = ?unavailable.path().map(std::path::Path::display),
-                    reason = unavailable.reason(),
-                    "global operation input is temporarily unavailable"
-                );
-                temporarily_unavailable(unavailable.reason())
-            })
+            .semantic_document(&self.engine_client)
+            .map_err(|unavailable| temporarily_unavailable(unavailable.reason()))
     }
 
-    /// Finish a global operation only if all documents used by it are still unchanged.
-    pub(crate) fn finish_global_operation<T>(
-        &self,
-        result: Result<QueryValue<T>, QueryError>,
-    ) -> Result<T, Error> {
-        query_response::validate_global_operation(result, &self.captured).map_err(into_lsp_error)
+    pub(crate) fn position(&self, position: Position) -> Result<DocumentPositionSnapshot, Error> {
+        Ok(self.semantic_document()?.with_position(position))
     }
 
-    /// Return a document result after checking that its target is still unchanged.
-    pub(crate) fn finish_target_query<T>(
+    pub(crate) fn range(&self, range: Range) -> Result<DocumentRangeSnapshot, Error> {
+        Ok(self.semantic_document()?.with_range(range))
+    }
+
+    pub(crate) fn finish_semantic_query<T>(
         &self,
         result: Result<QueryValue<T>, QueryError>,
     ) -> Result<T, Error> {
         self.finish_attempt(result).map_err(into_lsp_error)
+    }
+
+    pub(crate) fn finish_syntax_query<T>(
+        &self,
+        result: Result<QueryValue<T>, QueryError>,
+    ) -> Result<T, Error> {
+        query_response::validate_target_document(result, &self.captured).map_err(into_lsp_error)
     }
 
     /// Check one completed engine attempt without deciding whether the LSP request should end.
@@ -113,7 +99,7 @@ impl DocumentMethodContext {
         &self,
         result: Result<QueryValue<T>, QueryError>,
     ) -> Result<T, QueryError> {
-        query_response::validate_target_document(result, &self.captured)
+        query_response::validate_document(result, &self.captured)
     }
 }
 
@@ -142,8 +128,8 @@ impl CompletionMethodContext {
         }
     }
 
-    /// Build completion input from the target document only.
+    /// Select the completion position within the complete editor capture.
     pub(crate) fn input(&self, position: Position) -> Result<DocumentPositionSnapshot, Error> {
-        self.document.target_position(position)
+        self.document.position(position)
     }
 }

@@ -152,10 +152,10 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
         }))
     }
 
-    /// Follow a current inline-module path through the saved module tree.
+    /// Follow an inline-module path recovered from completion syntax through the module tree.
     ///
-    /// Start from the saved module backed by `file_id`, then follow names such as `outer::inner`.
-    /// This still works when edits moved the module away from its saved byte range. Return `None`
+    /// Start from the module backed by `file_id`, then follow names such as `outer::inner`.
+    /// This does not require the incomplete expression to have an indexed source range. Return `None`
     /// if the file has more than one possible root or any path component is missing or ambiguous.
     pub(crate) fn module_for_inline_path(
         def_map_txn: &DefinitionReader<'_>,
@@ -166,8 +166,7 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
         def_map_txn.module_for_inline_path(crate_ref, file_id, inline_module_path)
     }
 
-    /// Return module ownership from a path recovered from current syntax rather than a saved
-    /// source offset.
+    /// Return module ownership from a path recovered from completion syntax.
     pub(crate) fn site_for_inline_path(
         def_map_txn: &DefinitionReader<'_>,
         crate_ref: CrateRef,

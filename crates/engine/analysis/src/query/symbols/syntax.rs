@@ -1,11 +1,10 @@
 //! Exact-source document outlines.
 //!
-//! A document outline describes the text the editor is showing, so it does not need identities
-//! from the saved project. This collector walks named Rust syntax and keeps its nesting.
+//! A document outline describes the text the editor is showing. This collector walks named Rust
+//! syntax and keeps its nesting.
 //!
-//! It intentionally does not expand macros or add information from semantic analysis. Saving may
-//! make those declarations available to workspace-wide features, but the outline of the current
-//! document should still match what is on screen before save.
+//! It intentionally does not expand macros or add information from semantic analysis: every
+//! entry should correspond to syntax visible in the document.
 
 use rg_ir_model::Span;
 use rg_ir_view::SymbolKind;

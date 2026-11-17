@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 pub struct CodeActionClientCapabilities {
     /// The client accepts full `CodeAction` literals instead of commands alone.
     pub literal_support: bool,
-    /// Workspace edits may use versioned `documentChanges`.
-    pub versioned_document_edits: bool,
     /// The client understands the optional `isPreferred` marker.
     pub preferred_support: bool,
 }
@@ -20,26 +18,14 @@ impl CodeActionClientCapabilities {
             .text_document
             .as_ref()
             .and_then(|text_document| text_document.code_action.as_ref());
-        let workspace_edit = capabilities
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.workspace_edit.as_ref());
         Self {
             literal_support: code_action
                 .and_then(|capability| capability.code_action_literal_support.as_ref())
                 .is_some(),
-            versioned_document_edits: workspace_edit
-                .and_then(|capability| capability.document_changes)
-                .unwrap_or(false),
             preferred_support: code_action
                 .and_then(|capability| capability.is_preferred_support)
                 .unwrap_or(false),
         }
-    }
-
-    /// Return whether a full action with versioned edits can be sent without a resolve request.
-    pub const fn supports_eager_actions(self) -> bool {
-        self.literal_support && self.versioned_document_edits
     }
 }
 

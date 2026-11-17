@@ -1,7 +1,7 @@
 use std::fs;
 
 use rg_analysis::ReferenceQuery;
-use rg_body_ir::{BodyReader, CurrentSourceSelection};
+use rg_body_ir::BodyReader;
 use rg_ir_model::{
     DefMapRef, FunctionId, ImplRef, ItemStoreId, PrimitiveTy, SemanticItemRef, Span, TraitDefRef,
     UnsignedIntTy,
@@ -13,7 +13,7 @@ use rg_std::CancellationToken;
 use crate::{Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
-fn member_identity_survives_access_order_editor_bodies_and_restart() {
+fn member_identity_survives_restart_and_access_order() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /src/lib.rs crate:member_identity
@@ -48,79 +48,59 @@ fn calls() {
 "#,
     );
     let path = fixture.path("src/lib.rs");
-    let text = fs::read_to_string(&path).expect("fixture source");
-    let check = |project: &Project, reverse: bool, current: bool| {
-        project.inspect(|snapshot| {
-            let context = snapshot
-                .file_context_for_path(&path)
-                .expect("route source")
-                .expect("target");
-            let target = (context.crate_ref, context.file);
-            let analysis = if current {
-                let source = snapshot
-                    .prepare_current_source(target, &text, &CancellationToken::new())
-                    .expect("editor source");
-                let (analysis, summary) = snapshot
-                    .analysis_for_current_source(
-                        target,
-                        source,
-                        CurrentSourceSelection::IntersectingRange(Span {
-                            start: 0,
-                            end: text.len() as u32,
-                        }),
-                        |_| Ok(()),
-                    )
-                    .expect("editor bodies");
-                assert!(summary.is_complete(), "{summary:?}");
-                analysis
-            } else {
-                snapshot.analysis()
-            };
-            let mut cases = vec![
-                ("left", "first", UnsignedIntTy::U8),
-                ("right", "first", UnsignedIntTy::U16),
-                ("generated_left", "copied", UnsignedIntTy::U32),
-                ("generated_right", "copied", UnsignedIntTy::U64),
-            ];
-            if reverse {
-                cases.reverse();
-            }
-            for (name, spelling, expected) in cases {
-                let offset = |suffix| {
-                    fixture
-                        .markers()
-                        .position(&format!("{name}_{suffix}"))
-                        .offset
-                };
-                assert_eq!(
-                    analysis
-                        .type_at(target.0, target.1, offset("value"))
-                        .expect("call type")
-                        .expect("inferred result")
-                        .primitive(),
-                    Some(PrimitiveTy::UnsignedInt(expected)),
-                    "{name}"
-                );
-                let destinations = analysis
-                    .goto_definition(target.0, target.1, offset("call"))
-                    .expect("method navigation");
-                let declaration = Span {
-                    start: offset("decl"),
-                    end: offset("decl") + spelling.len() as u32,
-                };
-                assert_eq!(destinations.len(), 1, "{name}");
-                assert_eq!(destinations[0].span, Some(declaration), "{name}");
-                if spelling == "first" {
+    let check = |project: &Project, reverse: bool| {
+        project
+            .with_snapshot(CancellationToken::new(), |snapshot| {
+                let context = snapshot
+                    .file_context_for_path(&path)
+                    .expect("route source")
+                    .expect("target");
+                let target = (context.crate_ref, context.file);
+                let analysis = snapshot.analysis();
+                let mut cases = vec![
+                    ("left", "first", UnsignedIntTy::U8),
+                    ("right", "first", UnsignedIntTy::U16),
+                    ("generated_left", "copied", UnsignedIntTy::U32),
+                    ("generated_right", "copied", UnsignedIntTy::U64),
+                ];
+                if reverse {
+                    cases.reverse();
+                }
+                for (name, spelling, expected) in cases {
+                    let offset = |suffix| {
+                        fixture
+                            .markers()
+                            .position(&format!("{name}_{suffix}"))
+                            .offset
+                    };
                     assert_eq!(
                         analysis
-                            .type_at(target.0, target.1, offset("body"))
-                            .expect("method body type")
-                            .expect("inferred local")
+                            .type_at(target.0, target.1, offset("value"))
+                            .expect("call type")
+                            .expect("inferred result")
                             .primitive(),
                         Some(PrimitiveTy::UnsignedInt(expected)),
                         "{name}"
                     );
-                    if !current {
+                    let destinations = analysis
+                        .goto_definition(target.0, target.1, offset("call"))
+                        .expect("method navigation");
+                    let declaration = Span {
+                        start: offset("decl"),
+                        end: offset("decl") + spelling.len() as u32,
+                    };
+                    assert_eq!(destinations.len(), 1, "{name}");
+                    assert_eq!(destinations[0].span, Some(declaration), "{name}");
+                    if spelling == "first" {
+                        assert_eq!(
+                            analysis
+                                .type_at(target.0, target.1, offset("body"))
+                                .expect("method body type")
+                                .expect("inferred local")
+                                .primitive(),
+                            Some(PrimitiveTy::UnsignedInt(expected)),
+                            "{name}"
+                        );
                         let crates = [target.0];
                         let references = analysis
                             .references(
@@ -146,95 +126,95 @@ fn calls() {
                         );
                     }
                 }
-            }
 
-            let reader = ItemReader(snapshot.declarations());
-            let items = ItemStoreQuery::new(&reader);
-            let declarations = reader
-                .all_items(DefMapRef::Crate(target.0))
-                .expect("declarations");
-            let mut first = Vec::new();
-            let bodies = BodyReader::new(snapshot.query_context(), snapshot.declarations());
-            for item in &declarations {
-                match item.item() {
-                    SemanticItemRef::Function(function)
-                        if item.name().is_some_and(|name| name.as_str() == "first") =>
-                    {
-                        first.push(function)
+                let reader = ItemReader(snapshot.declarations());
+                let items = ItemStoreQuery::new(&reader);
+                let declarations = reader
+                    .all_items(DefMapRef::Crate(target.0))
+                    .expect("declarations");
+                let mut first = Vec::new();
+                let bodies = BodyReader::new(snapshot.query_context(), snapshot.declarations());
+                for item in &declarations {
+                    match item.item() {
+                        SemanticItemRef::Function(function)
+                            if item.name().is_some_and(|name| name.as_str() == "first") =>
+                        {
+                            first.push(function)
+                        }
+                        SemanticItemRef::Function(function)
+                            if item.name().is_some_and(|name| name.as_str() == "echo") =>
+                        {
+                            let generics = GenericsQuery::new(&reader)
+                                .generics(function.into())
+                                .expect("inherited generics");
+                            assert_eq!(
+                                generics.parent_len(),
+                                2,
+                                "trait Self and T belong to the header"
+                            );
+                        }
+                        SemanticItemRef::Const(konst) => {
+                            let ItemStoreId::Impl(id) = konst.store.id else {
+                                panic!("associated const");
+                            };
+                            let owner = items
+                                .impl_data(ImplRef {
+                                    origin: konst.store.origin,
+                                    id,
+                                })
+                                .expect("impl header")
+                                .expect("impl");
+                            let expected = if owner.self_ty.to_string() == "Left" {
+                                "2"
+                            } else {
+                                "5"
+                            };
+                            assert_eq!(
+                                bodies
+                                    .initializer_value(konst.into())
+                                    .expect("const body")
+                                    .expect("const value")
+                                    .to_string(),
+                                expected
+                            );
+                        }
+                        _ => {}
                     }
-                    SemanticItemRef::Function(function)
-                        if item.name().is_some_and(|name| name.as_str() == "echo") =>
-                    {
-                        let generics = GenericsQuery::new(&reader)
-                            .generics(function.into())
-                            .expect("inherited generics");
-                        assert_eq!(
-                            generics.parent_len(),
-                            2,
-                            "trait Self and T belong to the header"
-                        );
-                    }
-                    SemanticItemRef::Const(konst) => {
-                        let ItemStoreId::Impl(id) = konst.store.id else {
-                            panic!("associated const");
-                        };
-                        let owner = items
-                            .impl_data(ImplRef {
-                                origin: konst.store.origin,
-                                id,
-                            })
-                            .expect("impl header")
-                            .expect("impl");
-                        let expected = if owner.self_ty.to_string() == "Left" {
-                            "2"
-                        } else {
-                            "5"
-                        };
-                        assert_eq!(
-                            bodies
-                                .initializer_value(konst.into())
-                                .expect("const body")
-                                .expect("const value")
-                                .to_string(),
-                            expected
-                        );
-                    }
-                    _ => {}
                 }
-            }
-            assert_eq!(first.len(), 2);
-            assert_eq!(first[0].id, FunctionId(0));
-            assert_eq!(first[1].id, FunctionId(0));
-            assert_ne!(first[0], first[1]);
+                assert_eq!(first.len(), 2);
+                assert_eq!(first[0].id, FunctionId(0));
+                assert_eq!(first[1].id, FunctionId(0));
+                assert_ne!(first[0], first[1]);
 
-            let lookup = ItemLookupQuery::build_from(reader, target.0, &CancellationToken::new())
-                .expect("language items");
-            let output = lookup
-                .lang_type_alias(LangItem::FnOnceOutput)
-                .expect("associated language item");
-            let ItemStoreId::Trait(id) = output.store.id else {
-                panic!("trait member identity");
-            };
-            let owner = items
-                .trait_data(TraitDefRef {
-                    origin: output.store.origin,
-                    id,
-                })
-                .expect("trait header")
-                .expect("trait");
-            assert_eq!(owner.name.as_str(), "Other");
-            declarations
-                .iter()
-                .map(|item| item.item())
-                .collect::<Vec<_>>()
-        })
+                let lookup =
+                    ItemLookupQuery::build_from(reader, target.0, &CancellationToken::new())
+                        .expect("language items");
+                let output = lookup
+                    .lang_type_alias(LangItem::FnOnceOutput)
+                    .expect("associated language item");
+                let ItemStoreId::Trait(id) = output.store.id else {
+                    panic!("trait member identity");
+                };
+                let owner = items
+                    .trait_data(TraitDefRef {
+                        origin: output.store.origin,
+                        id,
+                    })
+                    .expect("trait header")
+                    .expect("trait");
+                assert_eq!(owner.name.as_str(), "Other");
+                Ok(declarations
+                    .iter()
+                    .map(|item| item.item())
+                    .collect::<Vec<_>>())
+            })
+            .expect("query source view")
     };
     let project = fixture.build_project();
-    let identities = check(&project, false, false);
-    assert_eq!(check(&project, true, true), identities);
+    let identities = check(&project, false);
     drop(project);
     let restarted = fixture.build_project();
-    assert_eq!(check(&restarted, true, false), identities);
+    assert_eq!(check(&restarted, true), identities);
 }
 
 #[test]

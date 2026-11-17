@@ -2,8 +2,7 @@
 //!
 //! Cross-file reference work has a two-step shape. First, resolve the cursor far enough to find
 //! candidate crates and safe identifier labels. Those labels can often prefilter the scan to exact
-//! source files. Complete any targets skipped by the startup policy, then run the semantic query
-//! against a fresh snapshot using that file selection.
+//! source files. Then run the semantic query with that selection.
 //!
 //! Rename uses the same search plan, but has a stricter publication boundary: every target must be
 //! workspace-owned and every source span must still contain the text analysis expected to replace.
@@ -12,14 +11,17 @@
 use std::{path::Path, time::Instant};
 
 use anyhow::Context as _;
+use gen_lsp_types::{DocumentHighlight, Location, Position, PrepareRenameResult, WorkspaceEdit};
 use rg_analysis::{ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget};
 use rg_ir_model::CrateRef;
-use rg_lsp_proto::{DocumentPositionSnapshot, GlobalPositionSnapshot};
+use rg_lsp_proto::DocumentPositionSnapshot;
 use rg_project::{FileContext, ProjectSnapshot};
 use rg_std::UniqueVec;
 
-use super::{DocumentSelection, QueryCancellation, QueryRunError, QueryRunner};
-use crate::proto::{references as references_proto, rename as rename_proto};
+use super::{DocumentSelection, QueryCancellation, QueryRunner};
+use crate::proto::{
+    navigation::SourceLocations, references as references_proto, rename as rename_proto,
+};
 
 /// Source coverage selected before a reference-like query can run.
 ///
@@ -50,7 +52,7 @@ impl QueryRunner<'_> {
     fn reference_search_plan_for_position(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
-        position: gen_lsp_types::Position,
+        position: Position,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Option<(FileContext, u32, ReferenceSearchPlan)>> {
         let Some((context, offset)) = Self::file_offset(snapshot, path, position)? else {
@@ -86,13 +88,12 @@ impl QueryRunner<'_> {
     /// Find references to the symbol resolved in the selected cursor context.
     pub(crate) fn references(
         &mut self,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         include_declaration: bool,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
-        self.with_saved_snapshot(cancellation, |snapshot| {
-            Self::require_saved_documents(snapshot, &input, cancellation)?;
-            let document = Self::global_operation_target(&input)?;
+    ) -> anyhow::Result<Vec<Location>> {
+        self.with_editor_snapshot(input.snapshot().editor(), cancellation, |snapshot| {
+            let document = input.document();
             let path = document.source_path().to_path_buf();
             let position = input.position();
             let started = Instant::now();
@@ -104,6 +105,7 @@ impl QueryRunner<'_> {
             };
             let analysis = snapshot.analysis();
             let mut locations = UniqueVec::new();
+            let sources = SourceLocations::new(snapshot, input.snapshot().editor());
 
             // The search still visits several crates, which can share physical source locations.
             let reference_query = search_plan.query(include_declaration);
@@ -112,7 +114,8 @@ impl QueryRunner<'_> {
                 .context("find references")?
             {
                 rg_std::check_cancel!(cancellation, "reference locations");
-                let Some(location) = references_proto::location_for_reference(snapshot, &reference)
+                let Some(location) = sources
+                    .for_source(reference.file_id, Some(reference.span))
                     .context("convert reference location")?
                 else {
                     continue;
@@ -120,7 +123,14 @@ impl QueryRunner<'_> {
                 locations.push(location);
             }
 
-            let locations = locations.into_vec();
+            let mut locations = locations.into_vec();
+            locations.sort_by(|left, right| {
+                left.uri
+                    .as_str()
+                    .cmp(right.uri.as_str())
+                    .then_with(|| left.range.start.cmp(&right.range.start))
+                    .then_with(|| left.range.end.cmp(&right.range.end))
+            });
 
             tracing::trace!(
                 path = %path.display(),
@@ -134,18 +144,16 @@ impl QueryRunner<'_> {
 
             Ok(locations)
         })
-        .map_err(Into::into)
     }
 
     /// Return a rename range only for a workspace-owned target whose source still matches.
     pub(crate) fn prepare_rename(
         &mut self,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Option<gen_lsp_types::PrepareRenameResult>, QueryRunError> {
-        self.with_saved_snapshot(cancellation, |snapshot| {
-            Self::require_saved_documents(snapshot, &input, cancellation)?;
-            let document = Self::global_operation_target(&input)?;
+    ) -> anyhow::Result<Option<PrepareRenameResult>> {
+        self.with_editor_snapshot(input.snapshot().editor(), cancellation, |snapshot| {
+            let document = input.document();
             let path = document.source_path().to_path_buf();
             let position = input.position();
             let started = Instant::now();
@@ -178,7 +186,6 @@ impl QueryRunner<'_> {
 
             Ok(response)
         })
-        .map_err(Into::into)
     }
 
     /// Build one all-or-nothing workspace edit for the selected symbol.
@@ -187,13 +194,36 @@ impl QueryRunner<'_> {
     /// and verifies all old text after analysis before converting anything to protocol edits.
     pub(crate) fn rename(
         &mut self,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         new_name: String,
+        versioned_document_edits: bool,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Option<gen_lsp_types::WorkspaceEdit>, QueryRunError> {
-        self.with_saved_snapshot(cancellation, |snapshot| {
-            Self::require_saved_documents(snapshot, &input, cancellation)?;
-            let document = Self::global_operation_target(&input)?;
+    ) -> anyhow::Result<Option<WorkspaceEdit>> {
+        // Without versioned document changes a client cannot guard edits to dirty buffers.
+        if !versioned_document_edits {
+            self.project
+                .saved_project()?
+                .with_snapshot(cancellation.token(), |snapshot| {
+                    for document in input.snapshot().editor().documents() {
+                        let unchanged = if let Some(context) =
+                            Self::file_context(snapshot, document.source_path())?
+                        {
+                            snapshot.sources().text(context.file)?.as_ref() == document.text()
+                        } else {
+                            false
+                        };
+                        if !unchanged {
+                            return Err(super::lifecycle::SaveRequired(
+                                document.path().to_path_buf(),
+                            )
+                            .into());
+                        }
+                    }
+                    Ok(())
+                })?;
+        }
+        self.with_editor_snapshot(input.snapshot().editor(), cancellation, |snapshot| {
+            let document = input.document();
             let path = document.source_path().to_path_buf();
             let position = input.position();
             let started = Instant::now();
@@ -227,11 +257,15 @@ impl QueryRunner<'_> {
             let edit = match Self::verified_rename_edits(snapshot, edits, cancellation)
                 .context("verify rename edit sources")?
             {
-                Some(edits) if !edits.is_empty() => {
-                    rename_proto::workspace_edit(snapshot, edits, &cancellation.token())
-                        .map(Some)
-                        .context("build rename workspace edit")?
-                }
+                Some(edits) if !edits.is_empty() => rename_proto::workspace_edit(
+                    snapshot,
+                    input.snapshot().editor(),
+                    edits,
+                    versioned_document_edits,
+                    &cancellation.token(),
+                )
+                .map(Some)
+                .context("build rename workspace edit")?,
                 Some(_) | None => None,
             };
 
@@ -247,7 +281,6 @@ impl QueryRunner<'_> {
 
             Ok(edit)
         })
-        .map_err(Into::into)
     }
 
     /// Reuse file-scoped reference search to highlight occurrences in the requested document.
@@ -255,9 +288,9 @@ impl QueryRunner<'_> {
         &mut self,
         input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::DocumentHighlight>, QueryRunError> {
+    ) -> anyhow::Result<Vec<DocumentHighlight>> {
         let (document, position) = input.into_parts();
-        let path = document.source_path().to_path_buf();
+        let path = document.document().source_path().to_path_buf();
         let started = Instant::now();
         self.with_document_analysis(
             "document_highlight",
@@ -269,7 +302,7 @@ impl QueryRunner<'_> {
                     return Ok(Vec::new());
                 };
                 let mut highlights = Vec::new();
-                let offset = current.offset();
+                let offset = current.selection.start;
 
                 let target = current.target;
                 rg_std::check_cancel!(cancellation, "document highlights");
@@ -284,8 +317,8 @@ impl QueryRunner<'_> {
                     .context("find current document references")?
                 {
                     rg_std::check_cancel!(cancellation, "highlight conversion");
-                    highlights.push(references_proto::document_highlight_for_current_document(
-                        current.source.line_index(),
+                    highlights.push(references_proto::document_highlight(
+                        current.line_index,
                         reference.span,
                     ));
                 }
@@ -295,7 +328,6 @@ impl QueryRunner<'_> {
                     line = position.line,
                     character = position.character,
                     result_count = highlights.len(),
-                    source = current.source.name(),
                     elapsed_ms = started.elapsed().as_millis(),
                     "document highlight query finished"
                 );
@@ -304,7 +336,6 @@ impl QueryRunner<'_> {
             },
         )
         .context("prepare document highlights")
-        .map_err(Into::into)
     }
 
     /// Check that the selected declaration still contains the placeholder seen by analysis.

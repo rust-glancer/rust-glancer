@@ -1,20 +1,15 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rg_def_map::CrateDependencies;
-use rg_ir_model::{
-    BodyId, BodyKey, BodyRef, DefMapRef, ExprId, FileId, ModuleRef, SavedBodyOwner, SemanticItemRef,
-};
+use rg_ir_model::{BodyId, BodyKey, BodyRef, DefMapRef, ExprId, ModuleRef, SemanticItemRef};
+use rg_item_tree::testonly::fixture_database;
 use rg_profile::test_support::ProfileTest;
-use rg_semantic_ir::{
-    CrateItemSource as _, SemanticItemSource as _, SourceSelection, TargetDeclarationReader,
-};
+use rg_semantic_ir::{CrateItemSource as _, SemanticItemSource as _, TargetDeclarationReader};
 use rg_source::{CapturedSource, QueryContext, SourceInput};
 use rg_ty::{ConstValue, GenericArg};
 use rg_workspace::{TargetKind, testonly::WorkspaceFixture};
 
-use crate::{
-    BodyReader, CurrentSourceStore, ExprKind, profile_descriptors, testonly::BodyIrFixture,
-};
+use crate::{BodyReader, ExprKind, profile_descriptors, testonly::BodyIrFixture};
 
 static SEMANTIC_BODY_READS: AtomicUsize = AtomicUsize::new(0);
 
@@ -24,26 +19,21 @@ static SEMANTIC_BODY_READS: AtomicUsize = AtomicUsize::new(0);
 fn body_local_meaning(
     db: &QueryContext<'_>,
     body: BodyRef,
-    masked_file: Option<FileId>,
 ) -> ajika::Result<Option<(Vec<String>, ModuleRef)>> {
     SEMANTIC_BODY_READS.fetch_add(1, Ordering::Relaxed);
     let declarations = TargetDeclarationReader::for_target(db, body.crate_ref)?;
-    let reader = BodyReader::new(db, &declarations).with_current_source(CurrentSourceStore {
-        masked_file: masked_file.map(|file| (body.crate_ref, file)),
-        ..CurrentSourceStore::default()
-    });
+    let reader = BodyReader::new(db, &declarations);
     let Some(def_map) = reader.body_def_map(body)? else {
         return Ok(None);
     };
     let module = def_map.module_refs().next().expect("body has a root scope");
-    let lookup = reader.signature_lookup_module(module)?;
     let mut names: Vec<_> = (&reader)
         .all_items(DefMapRef::Body(body))?
         .into_iter()
         .filter_map(|item| item.name().map(ToString::to_string))
         .collect();
     names.sort();
-    Ok(Some((names, lookup)))
+    Ok(Some((names, module)))
 }
 
 #[test]
@@ -51,55 +41,34 @@ fn semantic_body_reads_reuse_meaning_after_source_movement() {
     let workspace = WorkspaceFixture::build(
         r#"
 //- /src/lib.rs crate:body_meaning
-mod other;
 pub fn outer() { struct Local; const VALUE: usize = 2 + 2; fn nested() {} }
-//- /src/other.rs
-pub fn other() {}
 "#,
     );
-    let mut database = rg_item_tree::testonly::fixture_database(workspace.metadata());
+    let mut database = fixture_database(workspace.metadata());
     let targets = database
         .update_inputs(|update| CrateDependencies::write_inputs(workspace.metadata(), update))
         .expect("fixture targets");
     let target = targets[0];
-    let (body, owner_file, other_file) = database
+    let body = database
         .run(|db| {
             let declarations = TargetDeclarationReader::for_target(db, target)?;
-            let reader = BodyReader::new(db, &declarations);
-            let owners: Vec<_> = reader.owners(target, SourceSelection::All)?.collect();
             let outer = declarations
-                .all_items(DefMapRef::Crate(target))?
+                .scope_items(DefMapRef::Crate(target))?
                 .into_iter()
                 .find_map(|item| match item.item() {
                     SemanticItemRef::Function(function)
                         if item.name().is_some_and(|name| name.as_str() == "outer") =>
                     {
-                        Some(SavedBodyOwner::Function {
-                            store: function.store.id,
-                            id: function.id,
-                        })
+                        Some(function.into())
                     }
                     _ => None,
                 })
                 .expect("fixture outer function");
-            let owner = owners
-                .iter()
-                .find(|owner| owner.owner == outer)
-                .expect("outer function has a body");
-            let other_file = owners
-                .iter()
-                .find(|other| other.file != owner.file)
-                .expect("fixture has owners in two files")
-                .file;
-            Ok((
-                BodyKey {
-                    krate: target,
-                    owner: owner.owner,
-                }
-                .body(BodyId(0)),
-                owner.file,
-                other_file,
-            ))
+            Ok(BodyKey {
+                krate: target,
+                owner: outer,
+            }
+            .body(BodyId(0)))
         })
         .expect("fixture body identity");
 
@@ -111,19 +80,19 @@ pub fn other() {}
     let profile = ProfileTest::start(profile_descriptors(), "body_ir.const_eval");
     for (source, expected_name, expected_reads) in [
         (
-            "mod other; pub fn outer() { struct Local; const VALUE: usize = 2 + 2; fn nested() {} }",
+            "pub fn outer() { struct Local; const VALUE: usize = 2 + 2; fn nested() {} }",
             "Local",
-            3,
+            1,
         ),
         (
-            "// moved owner\nmod other; pub fn outer() { /* moved item */ struct Local; const VALUE: usize = 2  + 2; fn nested() {} }",
+            "// moved owner\npub fn outer() { /* moved item */ struct Local; const VALUE: usize = 2  + 2; fn nested() {} }",
             "Local",
-            3,
+            1,
         ),
         (
-            "mod other; pub fn outer() { struct Changed; const VALUE: usize = 2 + 2; fn nested() {} }",
+            "pub fn outer() { struct Changed; const VALUE: usize = 2 + 2; fn nested() {} }",
             "Changed",
-            5,
+            2,
         ),
     ] {
         let source = CapturedSource::new(&path, source).expect("fixture source");
@@ -132,14 +101,10 @@ pub fn other() {}
             .expect("update fixture source");
         database
             .run(|db| {
-                // An overlay in another file leaves this owner visible; its own file hides it.
-                for masked_file in [None, Some(other_file)] {
-                    let meaning = body_local_meaning(db, body, masked_file)?;
-                    let (names, module) = meaning.as_ref().as_ref().expect("visible body");
-                    assert_eq!(names, &[expected_name, "VALUE", "nested"]);
-                    assert_eq!(module.origin, DefMapRef::Body(body));
-                }
-                assert!(body_local_meaning(db, body, Some(owner_file))?.is_none());
+                let meaning = body_local_meaning(db, body)?;
+                let (names, module) = meaning.as_ref().as_ref().expect("visible body");
+                assert_eq!(names, &[expected_name, "VALUE", "nested"]);
+                assert_eq!(module.origin, DefMapRef::Body(body));
                 Ok(())
             })
             .expect("read local meaning");

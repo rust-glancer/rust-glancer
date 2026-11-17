@@ -4,7 +4,7 @@
 //! stricter policy: only declaration-like names with unambiguous source occurrences become edits.
 
 use anyhow::Context as _;
-use rg_ir_model::{FileId, Span, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
@@ -36,7 +36,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Returns the source span and placeholder shown by editor prepare-rename requests.
     pub(crate) fn prepare_rename(
         &self,
-        crate_ref: rg_ir_model::CrateRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<RenameTarget>> {
@@ -53,7 +53,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Produces all text edits needed to rename the symbol selected at `offset`.
     pub(crate) fn rename(
         &self,
-        crate_ref: rg_ir_model::CrateRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
         new_name: &str,
@@ -255,7 +255,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Reads the exact source text covered by a rename surface span.
     fn source_text_for_span(&self, symbol: &SourceSymbol, span: Span) -> anyhow::Result<String> {
         self.analysis
-            .saved_source
+            .sources
             .text_for_span(symbol.file_id(), span)
             .with_context(|| "while attempting to read source text for rename edit")?
             .with_context(|| "rename edit span should have source text")

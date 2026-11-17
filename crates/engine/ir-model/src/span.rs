@@ -11,6 +11,11 @@ pub struct Span {
 }
 
 impl Span {
+    /// Creates a span from 0 to `len`.
+    pub fn full_file(len: u32) -> Self {
+        Self { start: 0, end: len }
+    }
+
     /// Converts a syntax-level text range into the internal span representation.
     pub fn from_text_range(text_range: TextRange) -> Self {
         let start = u32::from(text_range.start());
@@ -49,6 +54,12 @@ impl Span {
     /// Returns true when `offset` is inside the range or exactly at its end.
     pub fn touches(self, offset: u32) -> bool {
         self.start <= offset && offset <= self.end
+    }
+
+    /// Whether the ranges overlap or share an endpoint. This also selects a declaration when
+    /// an editor range contains only the position immediately after its closing token.
+    pub fn touches_span(self, other: Self) -> bool {
+        self.start <= other.end && other.start <= self.end
     }
 
     /// Returns the byte length of the range, saturating if invalid input ever appears.

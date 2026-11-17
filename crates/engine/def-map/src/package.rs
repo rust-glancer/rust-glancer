@@ -18,7 +18,7 @@ pub struct CrateData {
     // Const arithmetic must use the compilation target even when it differs from the host.
     target_pointer_width: Option<u32>,
     name: String,
-    root_module: Option<ModuleId>,
+    root_module: ModuleId,
     // Crate-wide extern roots from Cargo dependencies and root `extern crate` declarations.
     extern_prelude: HashMap<Name, ModuleRef>,
     // Standard prelude module selected for this crate, if sysroot sources are available.
@@ -28,11 +28,11 @@ pub struct CrateData {
 
 impl CrateData {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         target_kind: TargetKind,
         target_pointer_width: Option<u32>,
         name: String,
-        root_module: Option<ModuleId>,
+        root_module: ModuleId,
         extern_prelude: HashMap<Name, ModuleRef>,
         prelude: Option<ModuleRef>,
         def_map: DefMap,
@@ -67,9 +67,8 @@ impl CrateData {
         &self.name
     }
 
-    /// Returns the root module of this crate, if the map has been populated.
-    // TODO: The root should become required now that def-map construction has a builder phase.
-    pub fn root_module(&self) -> Option<ModuleId> {
+    /// The builder supplies the root before publishing the completed crate.
+    pub fn root_module(&self) -> ModuleId {
         self.root_module
     }
 

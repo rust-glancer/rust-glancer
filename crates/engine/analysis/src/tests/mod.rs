@@ -45,18 +45,18 @@
 //! and `rename`. For example, `rename("field", "new_name")` supplies the new name, while
 //! `references("uses", ReferenceQuery::all())` supplies the search scope.
 //!
-//! Completion queries can use `.matching("prefix")` to keep only relevant candidates; use
-//! `complete_verbose` when details or edits matter. The `complete_with_source` variants test
-//! completion with captured document text. Use `.in_lib("package")` or `.in_bin("package")`
+//! Completion queries can use `.matching("prefix")` to keep only relevant candidates or
+//! `.members()` to focus on fields and methods, excluding postfix suggestions. Both filter the
+//! full query's results. Use `complete_verbose` when details or edits matter.
+//! Use `.in_lib("package")` or `.in_bin("package")`
 //! to select a target in a workspace fixture. `check_analysis_with_fake_sysroot` adds the shared
 //! small standard-library fixture when the test needs it.
 //!
 //! Use `check_analysis_queries` with an explicit `AnalysisQuery` list when one marker needs
 //! several queries, a line is too crowded, or an unfinished string would swallow the comment.
 //! Named markers help here: `AnalysisQuery::hover("type", "cursor")` targets `$cursor$`.
-//! Each marker name must identify one position in the fixture. For outlines, workspace symbol
-//! searches and inlay hints, use `check_document_symbols`, `check_workspace_symbols` or
-//! `check_inlay_hints` instead.
+//! Each marker name must identify one position in the fixture. For workspace symbol searches
+//! and inlay hints, use `check_workspace_symbols` or `check_inlay_hints` instead.
 //!
 //! Run a focused test with `just agent-debug test -p rg_analysis test_name`. To generate or
 //! update snapshots, add `--env UPDATE_EXPECT=1` before `test` and select one test at a time;
@@ -68,7 +68,6 @@ mod utils;
 
 mod code_actions;
 mod completions_at;
-mod document_symbols;
 mod goto_definition;
 mod goto_implementation;
 mod goto_type_definition;

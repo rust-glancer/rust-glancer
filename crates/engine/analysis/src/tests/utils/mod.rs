@@ -20,10 +20,9 @@ use test_fixture::{
 use crate::{
     Analysis, CodeAction, CodeActionKind, CodeActionQuery, CodeActionTrigger,
     CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
-    CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
-    NavigationTargetKind, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SymbolAt, SymbolKind,
-    WorkspaceSymbol,
+    CompletionKind, CompletionQuery, HoverInfo, InlayHint, NavigationTarget, NavigationTargetKind,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
+    RenameResult, RenameTarget, SymbolAt, WorkspaceSymbol,
 };
 
 /// Queries written beside their markers are removed before the fixture reaches analysis.
@@ -53,26 +52,6 @@ pub(super) fn check_analysis_queries_with_fake_sysroot(
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let db = AnalysisFixtureDb::build_with_fake_sysroot(fixture);
     AnalysisQuerySnapshot::check(db, &markers, queries, expect);
-}
-
-pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
-    check_document_symbol_queries(fixture, &[query], expect);
-}
-
-pub(super) fn check_document_symbol_queries(
-    fixture: &str,
-    queries: &[DocumentSymbolsQuery],
-    expect: Expect,
-) {
-    AnalysisFixtureDb::build_from_crate(fixture_crate(fixture)).inspect(|db| {
-        let renderer = AnalysisSymbolSnapshot { db };
-        let actual = test_fixture::testonly::render_responses(
-            queries
-                .iter()
-                .map(|query| (query.title, renderer.render_document_symbols(query))),
-        );
-        expect.assert_eq(&actual);
-    });
 }
 
 pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect) {
@@ -118,6 +97,7 @@ pub(super) struct AnalysisQuery {
     target: AnalysisTarget,
     kind: AnalysisQueryKind,
     completion_label_prefix: Option<String>,
+    completion_members_only: bool,
 }
 
 impl AnalysisQuery {
@@ -169,33 +149,16 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtVerbose)
     }
 
-    /// Run completion as if the saved fixture text were the document captured for this request.
-    pub(super) fn complete_with_source(title: &str, marker: &str) -> Self {
-        Self::new(title, marker, AnalysisQueryKind::CompletionsAtWithSource)
-    }
-
-    pub(super) fn complete_verbose_with_source(title: &str, marker: &str) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::CompletionsAtVerboseWithSource,
-        )
-    }
-
     /// Render only keyword rows from a full request-local completion query.
-    pub(super) fn complete_keywords_with_source(title: &str, marker: &str) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::CompletionKeywordsAtWithSource,
-        )
+    pub(super) fn complete_keywords(title: &str, marker: &str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::CompletionKeywordsAt)
     }
 
-    pub(super) fn complete_keywords_verbose_with_source(title: &str, marker: &str) -> Self {
+    pub(super) fn complete_keywords_verbose(title: &str, marker: &str) -> Self {
         Self::new(
             title,
             marker,
-            AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource,
+            AnalysisQueryKind::CompletionKeywordsAtVerbose,
         )
     }
 
@@ -235,6 +198,12 @@ impl AnalysisQuery {
         self
     }
 
+    /// Keep field and method rows after running the full completion query.
+    pub(super) fn members(mut self) -> Self {
+        self.completion_members_only = true;
+        self
+    }
+
     fn new(title: &str, marker: &str, kind: AnalysisQueryKind) -> Self {
         Self {
             title: title.to_string(),
@@ -242,28 +211,8 @@ impl AnalysisQuery {
             target: AnalysisTarget::lib(),
             kind,
             completion_label_prefix: None,
+            completion_members_only: false,
         }
-    }
-}
-
-pub(super) struct DocumentSymbolsQuery {
-    title: &'static str,
-    path: &'static str,
-    target: AnalysisTarget,
-}
-
-impl DocumentSymbolsQuery {
-    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
-        Self {
-            title,
-            path,
-            target: AnalysisTarget::lib(),
-        }
-    }
-
-    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
-        self.target = AnalysisTarget::bin(package_name);
-        self
     }
 }
 
@@ -342,10 +291,8 @@ enum AnalysisQueryKind {
     CodeActions(CodeActionTrigger),
     CompletionsAt,
     CompletionsAtVerbose,
-    CompletionsAtWithSource,
-    CompletionsAtVerboseWithSource,
-    CompletionKeywordsAtWithSource,
-    CompletionKeywordsAtVerboseWithSource,
+    CompletionKeywordsAt,
+    CompletionKeywordsAtVerbose,
     Hover,
 }
 
@@ -757,7 +704,10 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .expect("fixture code action query should resolve");
                 self.render_code_actions(actions, &source_text, &mut dump);
             }
-            AnalysisQueryKind::CompletionsAt => {
+            AnalysisQueryKind::CompletionsAt
+            | AnalysisQueryKind::CompletionsAtVerbose
+            | AnalysisQueryKind::CompletionKeywordsAt
+            | AnalysisQueryKind::CompletionKeywordsAtVerbose => {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_client_capabilities(CompletionClientCapabilities {
                         snippet_support: true,
@@ -767,51 +717,18 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .analysis()
                     .completions_at(completion_query)
                     .expect("fixture completion query should resolve");
-                Self::filter_completion_labels(query, &mut completions);
-                self.render_completions(completions, &mut dump);
-            }
-            AnalysisQueryKind::CompletionsAtVerbose => {
-                let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_client_capabilities(CompletionClientCapabilities {
-                        snippet_support: true,
-                    });
-                let mut completions = self
-                    .db
-                    .analysis()
-                    .completions_at(completion_query)
-                    .expect("fixture completion query should resolve");
-                Self::filter_completion_labels(query, &mut completions);
-                self.render_completions_verbose(completions, &mut dump);
-            }
-            AnalysisQueryKind::CompletionsAtWithSource
-            | AnalysisQueryKind::CompletionsAtVerboseWithSource
-            | AnalysisQueryKind::CompletionKeywordsAtWithSource
-            | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource => {
-                let source_text = SourceReader::new(self.db.semantic.db())
-                    .text(file_id)
-                    .expect("completion source text should load");
-                let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_source_text(&source_text)
-                    .with_client_capabilities(CompletionClientCapabilities {
-                        snippet_support: true,
-                    });
-                let mut completions = self
-                    .db
-                    .analysis()
-                    .completions_at(completion_query)
-                    .expect("fixture completion query should resolve");
-                Self::filter_completion_labels(query, &mut completions);
+                Self::filter_completions(query, &mut completions);
                 if matches!(
                     query.kind,
-                    AnalysisQueryKind::CompletionKeywordsAtWithSource
-                        | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource
+                    AnalysisQueryKind::CompletionKeywordsAt
+                        | AnalysisQueryKind::CompletionKeywordsAtVerbose
                 ) {
                     completions.retain(|completion| completion.kind == CompletionKind::Keyword);
                 }
                 if matches!(
                     query.kind,
-                    AnalysisQueryKind::CompletionsAtVerboseWithSource
-                        | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource
+                    AnalysisQueryKind::CompletionsAtVerbose
+                        | AnalysisQueryKind::CompletionKeywordsAtVerbose
                 ) {
                     self.render_completions_verbose(completions, &mut dump);
                 } else {
@@ -833,9 +750,19 @@ impl AnalysisQuerySnapshot<'_, '_> {
         dump
     }
 
-    fn filter_completion_labels(query: &AnalysisQuery, completions: &mut Vec<CompletionItem>) {
+    fn filter_completions(query: &AnalysisQuery, completions: &mut Vec<CompletionItem>) {
         if let Some(prefix) = &query.completion_label_prefix {
             completions.retain(|completion| completion.label.starts_with(prefix));
+        }
+        if query.completion_members_only {
+            completions.retain(|completion| {
+                matches!(
+                    completion.kind,
+                    CompletionKind::Field
+                        | CompletionKind::InherentMethod
+                        | CompletionKind::TraitMethod
+                )
+            });
         }
     }
 
@@ -1402,30 +1329,6 @@ struct AnalysisSymbolSnapshot<'db> {
 }
 
 impl AnalysisSymbolSnapshot<'_> {
-    fn render_document_symbols(&self, query: &DocumentSymbolsQuery) -> String {
-        let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
-        let outline = self
-            .db
-            .analysis()
-            .document_symbols(target, file_id)
-            .expect("fixture document symbols should resolve");
-        let mut dump = String::new();
-
-        if outline.symbols.is_empty() {
-            writeln!(dump, "<none>").expect("string writes should not fail");
-            return dump;
-        }
-
-        self.render_document_symbol_list(
-            target.package,
-            outline.file_id,
-            &outline.symbols,
-            0,
-            &mut dump,
-        );
-        dump
-    }
-
     fn render_workspace_symbols(&self, query: &str) -> String {
         let symbols = self
             .db
@@ -1447,10 +1350,14 @@ impl AnalysisSymbolSnapshot<'_> {
 
     fn render_inlay_hints(&self, query: &InlayHintsQuery) -> String {
         let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
+        let text = SourceReader::new(self.db.semantic.db())
+            .text(file_id)
+            .expect("fixture source");
+        let range = Span::full_file(text.len() as u32);
         let hints = self
             .db
             .analysis()
-            .inlay_hints(target, file_id, None, None)
+            .inlay_hints(target, file_id, range, None)
             .expect("fixture inlay hints should resolve");
         let mut dump = String::new();
 
@@ -1463,53 +1370,6 @@ impl AnalysisSymbolSnapshot<'_> {
             self.render_inlay_hint(&hint, &mut dump);
         }
         dump
-    }
-
-    fn render_document_symbol_list(
-        &self,
-        package: PackageSlot,
-        file_id: FileId,
-        symbols: &[DocumentSymbol],
-        depth: usize,
-        dump: &mut String,
-    ) {
-        for symbol in symbols {
-            self.render_document_symbol(package, file_id, symbol, depth, dump);
-        }
-    }
-
-    fn render_document_symbol(
-        &self,
-        package: PackageSlot,
-        file_id: FileId,
-        symbol: &DocumentSymbol,
-        depth: usize,
-        dump: &mut String,
-    ) {
-        let indent = "  ".repeat(depth);
-        let selection = if symbol.selection_span == symbol.span {
-            String::new()
-        } else {
-            format!(
-                " selection {}",
-                self.render_source_span(file_id, symbol.selection_span)
-            )
-        };
-        let label = if symbol.kind == SymbolKind::Impl {
-            symbol.name.clone()
-        } else {
-            format!("{} {}", symbol.kind, symbol.name)
-        };
-
-        writeln!(
-            dump,
-            "{indent}{label} @ {}{}",
-            self.render_source_span(file_id, symbol.span),
-            selection
-        )
-        .expect("string writes should not fail");
-
-        self.render_document_symbol_list(package, file_id, &symbol.children, depth + 1, dump);
     }
 
     fn render_workspace_symbol(&self, symbol: &WorkspaceSymbol, dump: &mut String) {

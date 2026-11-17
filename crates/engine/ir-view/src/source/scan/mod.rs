@@ -5,7 +5,6 @@
 //! the storage crates do not expose editor-shaped candidate families.
 
 mod body;
-mod current_use;
 mod definition;
 mod import_completion;
 mod module_scope;
@@ -13,7 +12,7 @@ mod signature;
 mod trait_impl;
 mod type_path;
 
-use rg_item_tree::TypeRef;
+use rg_item_tree::{TypePath, TypeRef};
 
 pub(super) use self::{
     body::{
@@ -23,7 +22,6 @@ pub(super) use self::{
         RecordFieldKeySurface, UnqualifiedCompletionSiteScanner, ValueReferenceSource,
         ValueReferenceSurface,
     },
-    current_use::CurrentUsePathScanner,
     definition::{DefinitionSourceCandidate, DefinitionSourceScanner},
     import_completion::ImportPathCompletionSiteScanner,
     module_scope::{ModuleFileBase, ModuleSourceSiteScanner},
@@ -65,7 +63,7 @@ pub(super) enum TypeNamePosition {
 impl TypeNamePosition {
     /// Keeps const ambiguity only for a whole, unqualified generic argument such as `Array<N>`.
     /// Once syntax adds structure (`&N`, `(N,)`, or `Wrapper<N>`), the path names a type again.
-    fn for_path(self, path: &rg_item_tree::TypePath) -> Self {
+    fn for_path(self, path: &TypePath) -> Self {
         if matches!(self, Self::BareGenericArgument)
             && !path.absolute
             && path.anchor.is_none()
