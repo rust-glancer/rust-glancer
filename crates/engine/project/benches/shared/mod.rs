@@ -4,7 +4,9 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     process::Command,
+    rc::Rc,
     sync::{Mutex, OnceLock},
+    time::Duration,
 };
 
 use rg_def_map::{DefMapDb, GeneratedItemStores};
@@ -182,11 +184,62 @@ impl fmt::Display for BenchTarget {
     }
 }
 
-pub(crate) struct BenchFixture {
-    pub(crate) workspace: WorkspaceMetadata,
+pub(crate) struct BenchFilePhases {
+    pub(crate) database: RefCell<ajika::Database>,
     pub(crate) parse: ParseDb,
     pub(crate) parse_before_def_map: ParseDb,
     pub(crate) item_tree_before_def_map: ItemTreeDb,
+    pub(crate) workspace_inputs: ajika::Inputs,
+    pub(crate) def_map_inputs: ajika::Inputs,
+}
+
+impl BenchFilePhases {
+    fn build(workspace: &WorkspaceMetadata) -> Self {
+        let workspace_inputs = ajika::Inputs::default()
+            .edit(|update| workspace.write_inputs(update))
+            .expect("benchmark workspace inputs should install");
+        // Keep results available within a sample. The harness clears them between iterations.
+        let mut database = ajika::Database::memory(
+            workspace_inputs.clone(),
+            (),
+            ajika::Retention {
+                max_entries: usize::MAX,
+                max_bytes: u64::MAX,
+                max_idle: Duration::MAX,
+            },
+        );
+        let parse = ParseDb::build(workspace, database.interner())
+            .expect("benchmark workspace should parse");
+        let mut parse_before_def_map = parse.clone();
+        let item_tree_before_def_map =
+            rg_project::bench_support::build_item_tree(&mut database, &mut parse_before_def_map)
+                .expect("benchmark item trees should build");
+        let def_map_inputs = database.inputs().clone();
+
+        Self {
+            database: RefCell::new(database),
+            parse,
+            parse_before_def_map,
+            item_tree_before_def_map,
+            workspace_inputs,
+            def_map_inputs,
+        }
+    }
+
+    pub(crate) fn reset_queries(&self, inputs: &ajika::Inputs) {
+        let mut database = self.database.borrow_mut();
+        database.replace_inputs(inputs.clone());
+        // The prepared snapshots use this database's interner. Clear query results while
+        // preserving those assignments so each iteration starts with the same source IDs.
+        database
+            .invalidate()
+            .expect("benchmark memory database should invalidate");
+    }
+}
+
+pub(crate) struct BenchFixture {
+    pub(crate) workspace: WorkspaceMetadata,
+    file_phases: RefCell<Vec<Rc<BenchFilePhases>>>,
     pub(crate) parse_after_def_map: ParseDb,
     pub(crate) item_tree_after_def_map: ItemTreeDb,
     pub(crate) def_map: DefMapDb,
@@ -224,6 +277,22 @@ impl BenchFixture {
         })
     }
 
+    pub(crate) fn file_phases(&self) -> Rc<BenchFilePhases> {
+        let mut fixtures = self.file_phases.borrow_mut();
+        // Divan prepares every iteration in a sample before timing it. Keep one database per
+        // pending iteration when --sample-size is overridden, and reuse it in the next sample.
+        if let Some(fixture) = fixtures
+            .iter()
+            .find(|fixture| Rc::strong_count(fixture) == 1)
+        {
+            return Rc::clone(fixture);
+        }
+
+        let fixture = Rc::new(BenchFilePhases::build(&self.workspace));
+        fixtures.push(Rc::clone(&fixture));
+        fixture
+    }
+
     fn load(target: BenchTarget) -> Self {
         target.prepare();
 
@@ -236,29 +305,22 @@ impl BenchFixture {
             WorkspaceLoweringConfig::default(),
         )
         .unwrap_or_else(|error| panic!("{target} workspace metadata should lower: {error}"));
-        let parse = ParseDb::build(&workspace)
-            .unwrap_or_else(|error| panic!("{target} parse db should build: {error}"));
-        let source_files = Self::count_source_files(&parse);
-        let source_bytes = Self::count_source_bytes(&parse);
+        let mut file_phases = BenchFilePhases::build(&workspace);
+        let source_files = Self::count_source_files(&file_phases.parse);
+        let source_bytes = Self::count_source_bytes(&file_phases.parse);
+        let item_tree_items =
+            Self::count_item_tree_items(&workspace, &file_phases.item_tree_before_def_map);
 
-        // Building item trees evicts syntax from its parse input. Keep the original parsed syntax
-        // for the item-tree benchmark, and use the post-item-tree parse for downstream phases.
-        let mut parse_before_def_map = parse.clone();
-        let item_tree_before_def_map =
-            rg_project::bench_support::build_item_tree(&mut parse_before_def_map)
-                .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
-        let item_tree_items = Self::count_item_tree_items(&workspace, &item_tree_before_def_map);
-
-        // DefMap source discovery can grow both inputs. Preserve the phase boundary above for
-        // measured DefMap iterations, while downstream benchmarks receive the completed state.
-        let mut parse_after_def_map = parse_before_def_map.clone();
-        let mut item_tree_after_def_map = item_tree_before_def_map.clone();
+        let mut parse_after_def_map = file_phases.parse_before_def_map.clone();
+        let mut item_tree_after_def_map = file_phases.item_tree_before_def_map.clone();
         let def_map_output = rg_project::bench_support::build_def_map(
+            file_phases.database.get_mut(),
             &workspace,
             &mut parse_after_def_map,
             &mut item_tree_after_def_map,
         )
         .unwrap_or_else(|error| panic!("{target} def map should build: {error}"));
+        file_phases.reset_queries(&file_phases.workspace_inputs);
         let (def_map, generated_items) = def_map_output.into_parts();
         let def_map_imports = def_map.stats(&workspace).import_count;
 
@@ -286,9 +348,7 @@ impl BenchFixture {
 
         Self {
             workspace,
-            parse,
-            parse_before_def_map,
-            item_tree_before_def_map,
+            file_phases: RefCell::new(vec![Rc::new(file_phases)]),
             parse_after_def_map,
             item_tree_after_def_map,
             def_map,

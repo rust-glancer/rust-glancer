@@ -15,6 +15,7 @@
 //! packages/
 //!   graph-<workspace fingerprint>/
 //!     update-in-progress
+//!     staging/
 //!     package-<slot>-<name>-<package fingerprint>.rgpkg
 //! ```
 //!
@@ -39,7 +40,8 @@ use super::{
     codec::EncodedPackageCacheArtifact, reader::PackageArtifactReader,
 };
 
-const CACHE_PACKAGES_DIR_NAME: &str = "packages";
+// Package payloads now contain canonical IDs assigned by the adjacent Ajika database.
+const CACHE_PACKAGES_DIR_NAME: &str = "packages-canonical-files";
 const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
 const PACKAGE_ARTIFACT_EXTENSION: &str = "rgpkg";
 const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
@@ -67,12 +69,6 @@ impl PackageCacheStore {
             root: instance.root().to_path_buf(),
             generation: cache_plan.generation_fingerprint(),
         }
-    }
-
-    /// Expose the selected cache root to cache layout tests.
-    #[cfg(test)]
-    pub(crate) fn root(&self) -> &Path {
-        &self.root
     }
 
     /// Return the complete path for one package identity in this cache generation.
@@ -148,7 +144,7 @@ impl PackageCacheStore {
         Ok(())
     }
 
-    /// Start a package-set update and publish its incomplete marker before any package write.
+    /// Start a package-set update and publish its incomplete marker before replacing artifacts.
     ///
     /// The returned guard does not remove the marker on drop. The caller must write every intended
     /// artifact and call [`PackageCacheUpdate::commit`]. Any early return leaves evidence that the
@@ -199,7 +195,13 @@ impl PackageCacheStore {
                 marker.display(),
             )
         })? {
-            return Ok(());
+            // An interruption during preparation can leave staged files without a marker.
+            // The instance lock guarantees that no writer still owns them here.
+            return match fs::remove_dir_all(self.staging_dir()) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error).context("discard staged package cache artifacts"),
+            };
         }
 
         self.clear_package_artifacts().with_context(|| {
@@ -283,15 +285,17 @@ impl PackageCacheStore {
         header: &PackageCacheHeader,
         encoded: EncodedPackageCacheArtifact,
     ) -> anyhow::Result<PreparedPackageArtifact> {
-        let path = self.package_artifact_path(&header.package);
-        fs::create_dir_all(self.generation_dir()).context("create package artifact directory")?;
-        let mut file = AtomicWriteFile::options()
-            .open(&path)
-            .context("start package artifact preparation")?;
-        encoded
-            .write_to(&mut file)
-            .context("write prepared package artifact")?;
-        Ok(PreparedPackageArtifact { file })
+        let destination = self.package_artifact_path(&header.package);
+        let staging_dir = self.staging_dir();
+        fs::create_dir_all(&staging_dir).context("create package artifact staging directory")?;
+        let staged = staging_dir.join(destination.file_name().expect("artifact has a file name"));
+        // Sync the payload and close its file before waiting for the rest of the package set.
+        // Final publication then only has to rename files within this cache generation.
+        Self::write_atomically(&staged, |file| encoded.write_to(file))?;
+        Ok(PreparedPackageArtifact {
+            staged,
+            destination,
+        })
     }
 
     /// Replace one complete file without exposing a partially written payload.
@@ -299,7 +303,7 @@ impl PackageCacheStore {
         path: &Path,
         write: impl FnOnce(&mut AtomicWriteFile) -> std::io::Result<()>,
     ) -> anyhow::Result<()> {
-        // Marker creation is atomic too: startup sees either a complete marker or no marker.
+        // Startup sees either a complete file or no file.
         let mut file = AtomicWriteFile::options().open(path).with_context(|| {
             format!(
                 "while attempting to start atomic package cache write {}",
@@ -328,6 +332,10 @@ impl PackageCacheStore {
         self.packages_dir().join(self.generation_dir_name())
     }
 
+    fn staging_dir(&self) -> PathBuf {
+        self.generation_dir().join("staging")
+    }
+
     fn generation_dir_name(&self) -> String {
         format!("{CACHE_GENERATION_DIR_PREFIX}{}", self.generation)
     }
@@ -343,14 +351,24 @@ impl PackageCacheStore {
 /// This lets the caller check cancellation after encoding and writing, before changing the cache
 /// that other readers will see.
 pub(crate) struct PreparedPackageArtifact {
-    file: AtomicWriteFile,
+    staged: PathBuf,
+    destination: PathBuf,
 }
 
 impl PreparedPackageArtifact {
     pub(crate) fn commit(self) -> anyhow::Result<()> {
-        self.file
-            .commit()
-            .context("commit prepared package artifact")
+        fs::rename(&self.staged, &self.destination)
+            .with_context(|| format!("commit package artifact {}", self.destination.display()))
+    }
+}
+
+impl Drop for PreparedPackageArtifact {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_file(&self.staged)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, path = %self.staged.display(), "could not discard staged package artifact");
+        }
     }
 }
 
@@ -368,6 +386,7 @@ impl PackageCacheUpdate<'_> {
     /// Success here is not a package-set commit. The marker remains until the owner has written all
     /// affected packages and calls `commit`. The borrowed resident phases are encoded directly into
     /// write-ready fragments rather than cloned into an owned aggregate first.
+    #[cfg(test)]
     pub(crate) fn write_input(&self, input: PackageCacheWriteInput<'_>) -> anyhow::Result<()> {
         self.store
             .prepare_write_input(input, &rg_std::CancellationToken::new())

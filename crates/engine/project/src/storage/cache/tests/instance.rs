@@ -65,7 +65,8 @@ fn package_header(
     workspace: &rg_workspace::WorkspaceMetadata,
     cache_plan: &WorkspaceCachePlan,
 ) -> crate::storage::cache::PackageCacheHeader {
-    let parse = ParseDb::build(workspace).expect("fixture parse db should build");
+    let parse =
+        ParseDb::build(workspace, Default::default()).expect("fixture parse db should build");
     let fingerprints = cache_plan
         .source_fingerprints(workspace.workspace_root(), &parse)
         .expect("fixture source fingerprints should compute");

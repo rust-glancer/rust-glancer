@@ -125,7 +125,8 @@ impl MacroSourceFileRequest {
                 ..
             } => format!(
                 "macro-generated include from file {} for package {}",
-                origin_file.0, package.0
+                origin_file.as_raw(),
+                package.0
             ),
         }
     }

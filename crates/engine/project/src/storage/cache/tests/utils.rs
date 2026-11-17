@@ -28,8 +28,7 @@ pub(super) fn write_resident_package_artifact(
         .parse
         .package(package.0)
         .expect("fixture package should have parse data")
-        .parse_snapshot()
-        .expect("fixture parse metadata should snapshot");
+        .parse_snapshot();
     let def_map = state
         .def_map
         .resident_package(package)
@@ -117,8 +116,7 @@ pub(super) fn assert_reader_matches_resident_package(
         .parse
         .package(package.0)
         .expect("fixture package should have parse data")
-        .parse_snapshot()
-        .expect("fixture parse metadata should snapshot");
+        .parse_snapshot();
     assert_eq!(reader.probe().header, expected_header);
     assert_eq!(reader.probe().parse, expected_parse);
     assert_eq!(

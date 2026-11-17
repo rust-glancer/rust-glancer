@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rg_ir_model::{CrateId, CrateRef, PackageSlot};
-use rg_item_tree::ItemTreeDb;
+use rg_item_tree::{ItemTreeDb, testonly::fixture_database};
 use rg_package_store::PackageStoreError;
 use rg_parse::ParseDb;
 use rg_workspace::WorkspaceMetadata;
@@ -13,7 +13,7 @@ use crate::{
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
-    let fixture = RebuildFixture::build(
+    let mut fixture = RebuildFixture::build(
         r#"
 //- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub mod api {
@@ -51,7 +51,7 @@ pub use dep::api::Api as Renamed;
 
 #[test]
 fn rebuild_expands_dirty_macro_calls_from_clean_packages() {
-    let fixture = RebuildFixture::build(
+    let mut fixture = RebuildFixture::build(
         r#"
 //- /crates/dep/src/lib.rs crate:dep root:crates/dep
 #[macro_export]
@@ -88,7 +88,7 @@ make_dep_item!();
 
 #[test]
 fn rebuild_collects_foreign_declarations_in_the_dirty_package() {
-    let fixture = RebuildFixture::build(
+    let mut fixture = RebuildFixture::build(
         r#"
 //- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct Dep;
@@ -130,6 +130,7 @@ struct RebuildFixture {
     workspace: WorkspaceMetadata,
     old: DefMapDb,
     clean_package: PackageSlot,
+    database: ajika::Database,
     clean_payload: Arc<PackageDefMaps>,
 }
 
@@ -137,7 +138,8 @@ impl RebuildFixture {
     fn build(fixture: &str, clean_package: &str) -> Self {
         let fixture = fixture_crate(fixture);
         let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
-        let (mut parse, mut item_tree) = Self::build_item_tree(&workspace);
+        let mut database = fixture_database(&workspace);
+        let (mut parse, mut item_tree) = Self::build_item_tree(&workspace, &mut database);
         let output =
             crate::testonly::build_source_closed_def_map(&workspace, &mut parse, &mut item_tree);
         let (mut old, _) = output.into_parts();
@@ -155,14 +157,15 @@ impl RebuildFixture {
             workspace,
             old,
             clean_package,
+            database,
             clean_payload,
         }
     }
 
-    fn rebuild_package_after_edit(&self, edit: &str, package_name: &str) -> RebuiltDefMaps {
+    fn rebuild_package_after_edit(&mut self, edit: &str, package_name: &str) -> RebuiltDefMaps {
         self.fixture.write_fixture_files(edit);
 
-        let (mut parse, mut item_tree) = Self::build_item_tree(&self.workspace);
+        let (mut parse, mut item_tree) = Self::build_item_tree(&self.workspace, &mut self.database);
         let package = package_slot(&parse, package_name);
         let old_read = self.old.read_txn(DefMapLoader::new(ExpectedPackageLoader {
             package: self.clean_package,
@@ -187,10 +190,14 @@ impl RebuildFixture {
         RebuiltDefMaps { parse, def_map }
     }
 
-    fn build_item_tree(workspace: &WorkspaceMetadata) -> (ParseDb, ItemTreeDb) {
-        let mut parse = ParseDb::build(workspace).expect("fixture parse db should build");
+    fn build_item_tree(
+        workspace: &WorkspaceMetadata,
+        database: &mut ajika::Database,
+    ) -> (ParseDb, ItemTreeDb) {
+        let mut parse =
+            ParseDb::build(workspace, database.interner()).expect("fixture parse db should build");
         let packages = (0..parse.package_count()).collect::<Vec<_>>();
-        let item_tree = ItemTreeDb::build_packages(&mut parse, &packages)
+        let item_tree = ItemTreeDb::build_packages(database, &mut parse, &packages)
             .expect("fixture item-tree db should build");
 
         (parse, item_tree)

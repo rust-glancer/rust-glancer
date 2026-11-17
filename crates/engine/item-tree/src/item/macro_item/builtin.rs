@@ -5,11 +5,11 @@
 //! payload as anonymous generated syntax.
 
 use rg_cfg_eval::CfgPredicate;
-use rg_ir_model::{BuiltinMacroExprKind, FileId};
+use rg_ir_model::BuiltinMacroExprKind;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{BuiltinDeriveKind, ItemTreeId};
+use crate::{BuiltinDeriveKind, IncludePathExpression, ItemTreeId};
 
 /// Compiler-provided macro definition selected through normal macro resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -53,8 +53,8 @@ impl BuiltinMacroKind {
 /// Source-like builtin payload discovered during item-tree lowering.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum BuiltinMacroItem {
-    /// Literal `include!("...")` resolves to a real source file.
-    Include { file: FileId },
+    /// Path expression to resolve in the package that uses the include.
+    Include { path: IncludePathExpression },
     /// `cfg_select!` stores all lowered arms; def-map later picks one for the target cfg.
     CfgSelect { arms: Vec<CfgSelectArmItem> },
 }

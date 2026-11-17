@@ -41,6 +41,8 @@ mod plan;
 mod reader;
 mod store;
 
+#[cfg(test)]
+pub(crate) use self::store::PackageCacheUpdate;
 pub use self::{
     cached::{
         CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageOrigin, CachedPackageSlot,
@@ -59,7 +61,7 @@ pub(crate) use self::{
         PackageCacheWriteInput,
     },
     reader::PackageArtifactReader,
-    store::PackageCacheUpdate,
+    store::PreparedPackageArtifact,
 };
 
 #[cfg(test)]

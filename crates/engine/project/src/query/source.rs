@@ -37,7 +37,7 @@ impl<'a> ProjectSnapshot<'a> {
         self.state.parse_db()
     }
 
-    /// Returns the source path for a package-local file id.
+    /// Returns the source path if the file belongs to the package.
     pub fn file_path(&self, package: PackageSlot, file: FileId) -> Option<&Path> {
         self.state.parse_db().package(package.0)?.file_path(file)
     }
@@ -101,7 +101,7 @@ impl<'a> ProjectSnapshot<'a> {
         ))
     }
 
-    /// Returns the line index used to convert offsets for a package-local file id.
+    /// Returns the line index for a file in the package.
     pub fn file_line_index(
         &self,
         package: PackageSlot,
@@ -161,7 +161,7 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(None)
     }
 
-    /// Returns crate contexts whose module tree contains a package-local file.
+    /// Returns crate contexts in this package whose module trees contain the file.
     pub fn crates_for_file(
         &self,
         package: PackageSlot,

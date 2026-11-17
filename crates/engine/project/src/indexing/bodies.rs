@@ -106,7 +106,7 @@ impl Project {
                     .parse
                     .package(package.0)
                     .expect("existing body package")
-                    .parse_snapshot()?;
+                    .parse_snapshot();
                 let artifact = state.cache_store.prepare_body_update(
                     package,
                     PackageCacheBodyUpdateInput {

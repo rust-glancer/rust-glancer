@@ -13,7 +13,7 @@ pub(crate) fn tt_span_for_parse_span(
     let text_range = TextRange::new(span.start.into(), span.end.into());
     SpanFactory::new(
         u32::try_from(package.0).expect("package slot should fit macro span storage"),
-        u32::try_from(file_id.0).expect("file id should fit macro span storage"),
+        file_id.as_raw(),
         edition,
     )
     .span_for(text_range)

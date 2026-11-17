@@ -10,22 +10,22 @@ use anyhow::Context as _;
 use rg_workspace::WorkspaceMetadata;
 
 use super::source;
-use crate::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad};
+use crate::{
+    AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad,
+    state::ProjectState, storage::cache::PackageCacheInstance,
+};
 
 pub(super) fn rebuild_workspace_graph(
-    project: &mut Project,
+    project: &mut ProjectState,
+    database: &mut ajika::Database,
     changes: &[SavedFileChange],
     startup_cache_load: StartupCacheLoad,
 ) -> anyhow::Result<AnalysisChangeSummary> {
-    let manifest_path = project
-        .state
-        .workspace()
-        .workspace_root()
-        .join("Cargo.toml");
-    let sysroot = project.state.workspace().sysroot_sources();
-    let workspace_lowering_config = project.state.workspace_lowering_config.clone();
-    let cargo_metadata_config = project.state.cargo_metadata_config.clone();
-    let memory_hooks = Arc::clone(&project.state.memory_hooks);
+    let manifest_path = project.workspace().workspace_root().join("Cargo.toml");
+    let sysroot = project.workspace().sysroot_sources();
+    let workspace_lowering_config = project.workspace_lowering_config.clone();
+    let cargo_metadata_config = project.cargo_metadata_config.clone();
+    let memory_hooks = Arc::clone(&project.memory_hooks);
     let loaded = cargo_metadata_config
         .load_metadata_with_target_cfg(&manifest_path)
         .with_context(|| format!("while attempting to load {}", manifest_path.display()))?;
@@ -36,22 +36,24 @@ pub(super) fn rebuild_workspace_graph(
     )
     .context("while attempting to normalize Cargo metadata")?
     .with_sysroot_sources(sysroot);
-    let body_ir_policy = project.state.body_ir_policy;
-    let package_residency_policy = project.state.package_residency_policy;
+    let body_ir_policy = project.body_ir_policy;
+    let package_residency_policy = project.package_residency_policy;
 
     // Cargo graph edits can add, remove, or reorder packages, targets, and dependencies. Starting
     // from scratch keeps every phase on one slot-stable snapshot instead of trying to partially
     // reuse state whose internal ids may no longer describe the refreshed metadata graph.
-    project.state = Project::builder(workspace)
+    // A private artifact instance keeps the accepted package readers valid if the graph
+    // rebuild is rejected. The file query runtime itself can validate across both graphs.
+    let instance = PackageCacheInstance::for_workspace(&workspace)?;
+    *project = Project::builder(workspace)
         .workspace_lowering_config(workspace_lowering_config)
         .cargo_metadata_config(cargo_metadata_config)
         .body_ir_policy(body_ir_policy)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
         .memory_hooks(memory_hooks)
-        .build()
-        .context("while attempting to build refreshed analysis project")?
-        .state;
+        .build_in(database, instance)
+        .context("while attempting to build refreshed analysis project")?;
 
     // A graph rebuild discovers its file set through Cargo and module traversal, but exact captured
     // Rust inputs still own their bytes. Reinstall them into the private candidate after discovery.
@@ -63,14 +65,14 @@ pub(super) fn rebuild_workspace_graph(
         .cloned()
         .collect::<Vec<_>>();
     if !captured_sources.is_empty() {
-        source::apply_source_changes(project, captured_sources)
+        source::apply_source_changes(project, database, captured_sources)
             .context("while attempting to install captured sources after workspace rebuild")?;
     }
 
     let mut changed_files = Vec::new();
     let mut changed_files_seen = HashSet::new();
     for change in changes {
-        for file in project.state.file_refs_for_path(change.path()) {
+        for file in project.file_refs_for_path(change.path()) {
             let changed_file = ChangedFile {
                 package: file.package,
                 file: file.file,
@@ -86,9 +88,9 @@ pub(super) fn rebuild_workspace_graph(
     // The rebuilt project has already restored its package residency, so payload-heavy phase
     // databases may be empty under aggressive offloading. ProjectState keeps the small graph
     // metadata that change summaries need resident.
-    for package_slot in project.state.non_sysroot_package_slots() {
+    for package_slot in project.non_sysroot_package_slots() {
         affected_packages.push(package_slot);
-        changed_crates.extend(project.state.crate_refs_for_package(package_slot));
+        changed_crates.extend(project.crate_refs_for_package(package_slot));
     }
 
     Ok(AnalysisChangeSummary {

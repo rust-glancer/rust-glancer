@@ -250,7 +250,7 @@ fn dummy_source() -> ItemSource {
     ItemSource {
         // Source coordinates are irrelevant for trait-selection tests; generated fixtures only
         // need stable dummy identities.
-        file_id: FileId(0),
+        file_id: FileId::from_raw(0),
         kind: ItemSourceKind::Generated(GeneratedItemRef {
             source: GeneratedSourceId(0),
             item: ItemTreeId(0),
@@ -699,7 +699,9 @@ impl<'a> TraitSelectionFixtureParser<'a> {
     ) -> TraitSelectionFixture {
         let mut def_map_builder = DefMapBuilder::new(origin());
         let root_module = def_map_builder.alloc_module(ModuleBuilder::new(
-            ModuleOrigin::Root { file_id: FileId(0) },
+            ModuleOrigin::Root {
+                file_id: FileId::from_raw(0),
+            },
             Visibility::Public,
             None,
         ));
@@ -719,7 +721,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 namespaces: NamespaceSet::TYPES,
                 visibility: VisibilityLevel::Public,
                 source: struct_data.source,
-                file_id: FileId(0),
+                file_id: FileId::from_raw(0),
                 name_span: None,
                 span: fixture_span(),
                 user_facing_attrs: Default::default(),
@@ -750,7 +752,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 namespaces: NamespaceSet::TYPES,
                 visibility: VisibilityLevel::Public,
                 source: trait_data.source,
-                file_id: FileId(0),
+                file_id: FileId::from_raw(0),
                 name_span: None,
                 span: fixture_span(),
                 user_facing_attrs: Default::default(),

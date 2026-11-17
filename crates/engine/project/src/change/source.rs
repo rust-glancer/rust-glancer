@@ -13,11 +13,13 @@ use rg_std::UniqueVec;
 
 use super::affected_packages;
 use crate::{
-    AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, indexing, selection::subset,
+    AnalysisChangeSummary, ChangedFile, ProjectMemoryPurgePoint, SavedFileChange, indexing,
+    selection::subset, state::ProjectState, storage::residency::ResidencyApplication,
 };
 
 pub(super) fn apply_source_changes(
-    project: &mut Project,
+    project: &mut ProjectState,
+    database: &mut ajika::Database,
     changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
     let mut changed_files = Vec::new();
@@ -30,12 +32,8 @@ pub(super) fn apply_source_changes(
     // changed paths in the batch.
     for change in changes {
         let refresh = match change.captured_source() {
-            Some(captured) => project
-                .state
-                .parse_db_mut()
-                .refresh_captured_saved_file(captured),
+            Some(captured) => project.parse_db_mut().refresh_captured_saved_file(captured),
             None => project
-                .state
                 .parse_db_mut()
                 .refresh_saved_file_from_disk(change.path()),
         };
@@ -66,7 +64,6 @@ pub(super) fn apply_source_changes(
                 // files through the normal Rust module rules.
                 fallback_saved_paths.insert(change.path().to_path_buf());
                 for package_slot in project
-                    .state
                     .workspace()
                     .package_slots_containing_path(change.path())
                 {
@@ -93,7 +90,7 @@ pub(super) fn apply_source_changes(
         fallback_package_roots.as_slice(),
     );
     if !affected_packages.is_empty() {
-        indexing::rebuild_packages(&mut project.state, &affected_packages)
+        indexing::rebuild_packages(project, database, &affected_packages)
             .context("while attempting to rebuild affected analysis packages")?;
     }
     promote_discovered_fallback_files(
@@ -106,16 +103,21 @@ pub(super) fn apply_source_changes(
     let changed_crates = crates_for_changed_files(project, &changed_files)
         .context("while attempting to report changed analysis crates")?;
 
-    // Package rebuilds finalize their source set before writing cache artifacts, but a watcher
-    // event can legitimately affect no package at all. Finalize again at the transaction boundary
-    // so every successfully published candidate has the same sealed-and-validated shape.
-    project.state.parse_db().seal_sources();
-    project
-        .state
-        .parse_db()
-        .validate_saved_sources()
-        .context("while attempting to validate captured project source generation")?;
-    project.state.parse_db().evict_saved_source_text();
+    // Rebuilds seal their source inventory once discovery finishes. A watcher event can also
+    // leave an open candidate without rebuilding a package.
+    if affected_packages.is_empty() {
+        project.parse_db().seal_sources();
+        project
+            .parse_db()
+            .validate_saved_sources()
+            .context("while attempting to validate captured project source generation")?;
+        project.parse_db().evict_saved_source_text();
+    } else {
+        ResidencyApplication::restore(project, &affected_packages).apply()?;
+        project
+            .memory_hooks
+            .purge(ProjectMemoryPurgePoint::AfterPackageRebuild);
+    }
 
     Ok(AnalysisChangeSummary {
         changed_files,
@@ -125,14 +127,14 @@ pub(super) fn apply_source_changes(
 }
 
 fn promote_discovered_fallback_files(
-    project: &Project,
+    project: &ProjectState,
     saved_paths: &HashSet<PathBuf>,
     fallback_package_roots: &[PackageSlot],
     changed_files: &mut Vec<ChangedFile>,
     changed_files_seen: &mut HashSet<ChangedFile>,
 ) {
     for package_slot in fallback_package_roots {
-        let Some(package) = project.state.parse_db().package(package_slot.0) else {
+        let Some(package) = project.parse_db().package(package_slot.0) else {
             continue;
         };
 
@@ -156,7 +158,7 @@ fn promote_discovered_fallback_files(
 }
 
 fn crates_for_changed_files(
-    project: &Project,
+    project: &ProjectState,
     changed_files: &[ChangedFile],
 ) -> anyhow::Result<UniqueVec<CrateRef>> {
     let packages = changed_files
@@ -166,8 +168,8 @@ fn crates_for_changed_files(
 
     // Reporting changed crates only needs package-local file ownership. Avoid materializing
     // dependency closures on the save path when semantic resolution is not involved.
-    let subset = subset::packages_only(project.state.workspace(), packages.as_slice());
-    let def_map = project.state.def_map_read_txn_for_subset(&subset);
+    let subset = subset::packages_only(project.workspace(), packages.as_slice());
+    let def_map = project.def_map_read_txn_for_subset(&subset);
     let mut crates = UniqueVec::new();
 
     for changed_file in changed_files {

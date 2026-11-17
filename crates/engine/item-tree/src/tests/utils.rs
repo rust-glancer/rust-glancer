@@ -301,9 +301,16 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 }
                 if let Some(builtin) = &macro_call.builtin {
                     match builtin {
-                        BuiltinMacroItem::Include { file } => {
-                            writeln!(dump, "{indent}  - include_file {}", self.file_label(*file))
+                        BuiltinMacroItem::Include { path } => {
+                            if let Some(file) = self.item_trees.included_file(file_tree.file, path)
+                            {
+                                writeln!(
+                                    dump,
+                                    "{indent}  - include_file {}",
+                                    self.file_label(file)
+                                )
                                 .expect("string writes should not fail");
+                            }
                         }
                         BuiltinMacroItem::CfgSelect { arms } => {
                             for (arm_idx, arm) in arms.iter().enumerate() {

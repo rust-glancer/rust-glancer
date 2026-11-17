@@ -12,7 +12,7 @@ use rg_syntax::{
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Active cfg facts for one package under one Cargo target selection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Shrink)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Shrink, SchemaRead, SchemaWrite)]
 pub struct CfgOptions {
     atoms: Vec<String>,
     key_values: Vec<CfgKeyValue>,
@@ -117,7 +117,7 @@ impl CfgOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Shrink)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Shrink, SchemaRead, SchemaWrite)]
 pub struct CfgKeyValue {
     key: String,
     value: String,

@@ -9,6 +9,7 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
+ajika.workspace = true
 blake3.workspace = true
 rg_std.workspace = true
 wincode.workspace = true

@@ -80,7 +80,7 @@ impl<T> ExpandedBodyMacro<T> {
         let span = self.source_map.span_for_range_in_file(
             range,
             self.call_package.0,
-            call_source.file_id.0,
+            call_source.file_id.as_raw(),
         )?;
         let span = Span::from_text_range(span.range);
         (call_source.span.contains_span(span) && span.len() == u32::from(range.len()))

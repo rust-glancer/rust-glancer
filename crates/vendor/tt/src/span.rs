@@ -33,10 +33,10 @@ impl fmt::Debug for Span {
     }
 }
 
-/// A token's source file, including the package that owns its file-table slot.
+/// A token's canonical source file and the package that supplied it.
 ///
-/// Expansion can mix tokens from several packages. Keep the package here so equal file IDs and
-/// ranges in a caller and a macro definition still refer to different source locations.
+/// Expansion can mix tokens from several packages. Keep the package context even when two
+/// packages share the same canonical file.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct SpanAnchor {
     pub package: u32,

@@ -198,7 +198,7 @@ pub struct DepOld;
 pub struct DepNew;
 "#,
     );
-    let parse_after_edit = rg_parse::ParseDb::build(&workspace)
+    let parse_after_edit = rg_parse::ParseDb::build(&workspace, Default::default())
         .expect("fixture parse db should build after source edit");
     let source_fingerprints = project
         .state

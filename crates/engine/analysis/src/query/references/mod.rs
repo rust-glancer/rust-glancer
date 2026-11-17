@@ -76,7 +76,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             (
                 location.crate_ref.package.0,
                 location.crate_ref.crate_id.0,
-                location.file_id.0,
+                location.file_id,
                 location.span.start,
                 location.span.end,
             )
@@ -189,7 +189,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             (
                 symbol.crate_ref().package.0,
                 symbol.crate_ref().crate_id.0,
-                symbol.file_id().0,
+                symbol.file_id(),
                 symbol.span().start,
                 symbol.span().end,
             )

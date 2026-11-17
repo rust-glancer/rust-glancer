@@ -1,26 +1,38 @@
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
+
 use rg_arena::Arena;
 use rg_ir_model::FileId;
 use rg_parse::CargoTargetId;
 use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef};
+use crate::{Documentation, IncludePathExpression, ItemNode, ItemTreeId, ItemTreeRef};
 
 /// Item trees for all files inside one parsed package, plus target entrypoints.
-#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct Package {
-    pub(crate) files: Arena<FileId, Option<FileTree>>,
+    pub(crate) files: BTreeMap<FileId, Arc<FileTree>>,
+    pub(crate) includes: HashMap<FileId, HashMap<IncludePathExpression, FileId>>,
     pub(crate) target_roots: Arena<CargoTargetId, TargetRoot>,
 }
 
 impl Package {
     /// Returns all file trees.
     pub fn files(&self) -> impl Iterator<Item = &FileTree> {
-        self.files.iter().filter_map(Option::as_ref)
+        self.files.values().map(Arc::as_ref)
     }
 
     /// Returns one file tree by parsed file id.
     pub fn file(&self, file_id: FileId) -> Option<&FileTree> {
-        self.files.get(file_id)?.as_ref()
+        self.files.get(&file_id).map(Arc::as_ref)
+    }
+
+    /// Routing captured before DefMap checks whether the call actually names the include builtin.
+    pub fn included_file(&self, origin: FileId, path: &IncludePathExpression) -> Option<FileId> {
+        self.includes.get(&origin)?.get(path).copied()
     }
 
     /// Returns one lowered item by stable item-tree reference.
@@ -40,7 +52,7 @@ impl Package {
 }
 
 /// File-local lowered item tree.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink, SchemaRead, SchemaWrite)]
 pub struct FileTree {
     pub file: FileId,
     pub docs: Option<Documentation>,
@@ -56,8 +68,7 @@ impl FileTree {
 }
 
 /// Target entrypoint into file-local item trees.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
-#[shrink(leaf)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct TargetRoot {
     pub target: CargoTargetId,
     pub root_file: FileId,

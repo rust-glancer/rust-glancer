@@ -16,6 +16,7 @@ use crate::{
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_state(
+    database: &mut ajika::Database,
     workspace: WorkspaceMetadata,
     workspace_lowering_config: WorkspaceLoweringConfig,
     cargo_metadata_config: CargoMetadataConfig,
@@ -86,7 +87,9 @@ pub(crate) fn build_state(
     cache_store
         .recover_incomplete_update()
         .context("while attempting to recover an incomplete package cache update")?;
+    database.update_inputs(|update| workspace.write_inputs(update))?;
     let phases = phases::build(
+        database,
         &workspace,
         body_ir_policy,
         package_residency_policy,

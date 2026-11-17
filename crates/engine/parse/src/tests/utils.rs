@@ -28,7 +28,8 @@ fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
         WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
             .expect("fixture workspace metadata should build")
     };
-    let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+    let mut parse =
+        ParseDb::build(&workspace, Default::default()).expect("fixture parse db should build");
     if matches!(mode, ParseFixtureMode::DiscoverModules) {
         let sources = parse.source_inventory_handle();
         for package in parse.packages_mut() {

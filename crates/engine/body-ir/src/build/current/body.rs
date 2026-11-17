@@ -418,7 +418,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         tracing::trace!(
             package = self.crate_ref.package.0,
             crate_id = self.crate_ref.crate_id.0,
-            file_id = self.file.0,
+            file_id = self.file.as_raw(),
             body_count = bodies.len(),
             unavailable_count = unavailable.len(),
             parse_us,

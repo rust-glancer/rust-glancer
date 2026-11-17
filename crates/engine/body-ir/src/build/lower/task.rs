@@ -100,10 +100,10 @@ impl<'a> BodyTaskLowering<'a> {
         macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<Vec<LoweredBodyTask>> {
         let mut tasks = tasks.to_vec();
-        tasks.sort_by_key(|task| task.file_id.0);
+        tasks.sort_by_key(|task| task.file_id);
 
         let mut file_ids = tasks.iter().map(|task| task.file_id).collect::<Vec<_>>();
-        file_ids.sort_by_key(|file_id| file_id.0);
+        file_ids.sort_unstable();
         file_ids.dedup();
 
         let mut lowered = Vec::new();
@@ -283,8 +283,8 @@ impl<'a> BodyTaskLowering<'a> {
     }
 
     fn task_range_for_file(tasks: &[BodyLoweringTask], file_id: FileId) -> std::ops::Range<usize> {
-        let start = tasks.partition_point(|task| task.file_id.0 < file_id.0);
-        let end = tasks.partition_point(|task| task.file_id.0 <= file_id.0);
+        let start = tasks.partition_point(|task| task.file_id < file_id);
+        let end = tasks.partition_point(|task| task.file_id <= file_id);
         start..end
     }
 }

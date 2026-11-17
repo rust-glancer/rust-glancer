@@ -11,10 +11,14 @@ use rg_def_map::DefMapDb;
 use rg_ir_model::PackageSlot;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
+use rg_std::CancellationToken;
 
 use crate::{
     state::ProjectState,
-    storage::cache::{Fingerprint, PackageCacheUpdate, PackageCacheWriteInput, WorkspaceCachePlan},
+    storage::cache::{
+        Fingerprint, PackageCacheStore, PackageCacheWriteInput, PreparedPackageArtifact,
+        WorkspaceCachePlan,
+    },
 };
 
 /// Mutable view of the phase databases backed by one package artifact.
@@ -59,9 +63,9 @@ impl<'a> PackageArtifactPhases<'a> {
 
 /// Encodes coherent package artifacts from a borrowed set of resident phase databases.
 ///
-/// All three phases and the parse snapshot are borrowed from one generation and written through
-/// a caller-owned cache transaction.
+/// All three phases and the parse snapshot are borrowed from one generation.
 pub(crate) struct PackageArtifactWriter<'a> {
+    cache_store: &'a PackageCacheStore,
     cache_plan: &'a WorkspaceCachePlan,
     package_source_fingerprints: &'a [Option<Fingerprint>],
     parse: &'a ParseDb,
@@ -73,6 +77,7 @@ pub(crate) struct PackageArtifactWriter<'a> {
 impl<'a> PackageArtifactWriter<'a> {
     pub(crate) fn for_project(project: &'a ProjectState) -> Self {
         Self {
+            cache_store: &project.cache_store,
             cache_plan: &project.cache_plan,
             package_source_fingerprints: &project.package_source_fingerprints,
             parse: &project.parse,
@@ -82,24 +87,22 @@ impl<'a> PackageArtifactWriter<'a> {
         }
     }
 
-    /// Writes package-local artifacts without committing the surrounding package-set update.
-    ///
-    /// The owner commits only after every selected package succeeds, so a failed write leaves
-    /// the cache's incomplete-update marker intact.
-    pub(crate) fn write_packages(
+    /// Writes temporary artifacts so the owner can check freshness before replacing them.
+    pub(crate) fn prepare_packages(
         &self,
-        update: &PackageCacheUpdate<'_>,
         packages: &[PackageSlot],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<PreparedPackageArtifact>> {
+        if packages.is_empty() {
+            return Ok(Vec::new());
+        }
         let thread_pool = Self::local_thread_pool("rg-cache-write")
             .context("while attempting to prepare package cache writers")?;
 
-        // Artifact serialization is package-local and usually more expensive than the final state
-        // mutation. Write every durable artifact first; only then can callers safely drop residents.
         thread_pool.install(|| {
             packages
                 .par_iter()
-                .try_for_each(|package| self.write_package(update, *package))
+                .map(|&package| self.prepare_package(package))
+                .collect()
         })
     }
 
@@ -107,11 +110,7 @@ impl<'a> PackageArtifactWriter<'a> {
     ///
     /// Fresh construction and saved-source updates supply all three resident phases from the
     /// same private candidate. Body-only publication prepares its artifact separately.
-    fn write_package(
-        &self,
-        update: &PackageCacheUpdate<'_>,
-        package: PackageSlot,
-    ) -> anyhow::Result<()> {
+    fn prepare_package(&self, package: PackageSlot) -> anyhow::Result<PreparedPackageArtifact> {
         let header = self
             .cache_plan
             .artifact_header(package, self.package_source_fingerprints)
@@ -134,12 +133,7 @@ impl<'a> PackageArtifactWriter<'a> {
             )
         })?;
 
-        let parse = parse.parse_snapshot().with_context(|| {
-            format!(
-                "while attempting to snapshot parse metadata for package {}",
-                package.0,
-            )
-        })?;
+        let parse = parse.parse_snapshot();
 
         let def_map = self
             .def_map
@@ -150,14 +144,9 @@ impl<'a> PackageArtifactWriter<'a> {
             .resident_package(package)
             .context("artifact needs resident semantic IR")?;
         let input = PackageCacheWriteInput::new(&header, &parse, def_map, semantic_ir, body_ir);
-        let write = update.write_input(input);
-
-        write.with_context(|| {
-            format!(
-                "while attempting to write package cache artifact for package {}",
-                package.0,
-            )
-        })
+        self.cache_store
+            .prepare_write_input(input, &CancellationToken::new())
+            .with_context(|| format!("prepare cache artifact for package {}", package.0))
     }
 
     /// Creates a short-lived Rayon pool for package artifact serialization.

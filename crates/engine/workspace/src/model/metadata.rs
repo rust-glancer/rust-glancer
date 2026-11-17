@@ -13,7 +13,9 @@ use super::{
     package::{Package, PackageId, PackageOrigin},
     target::{CargoTarget, TargetKind},
 };
-use crate::{CargoBuildOutputScanStats, SysrootCrate, SysrootSources};
+use crate::{
+    CargoBuildOutputScanStats, PackageInput, SysrootCrate, SysrootSources, WorkspaceInput,
+};
 
 /// Normalized workspace metadata used by the analysis pipeline.
 ///
@@ -63,6 +65,19 @@ impl WorkspaceMetadata {
             packages,
             package_by_id,
         }
+    }
+
+    /// Captures the settings used to interpret source. Later target providers will also need
+    /// the Cargo graph and generated-source configuration.
+    pub fn write_inputs(&self, update: &mut ajika::InputUpdate) -> ajika::Result<()> {
+        update.forget_all(PackageInput::EDITION);
+        update.forget_all(PackageInput::CFG);
+        for (slot, package) in self.packages().iter().enumerate() {
+            let input = PackageInput::at(PackageSlot(slot));
+            input.set_edition(update, package.edition)?;
+            input.set_cfg(update, package.cfg_options.clone())?;
+        }
+        WorkspaceInput::at(()).set_target_cfg(update, self.target_cfg_options.clone())
     }
 
     /// Returns this workspace with sysroot crates modeled as ordinary packages.

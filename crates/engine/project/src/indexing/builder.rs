@@ -12,6 +12,8 @@ use crate::{
     ProjectMemoryPurgePoint, StartupCacheLoad,
     memory::NoopProjectMemoryHooks,
     profile::{BuildMemorySampler, record_build_checkpoint},
+    project_queries::ProjectQueries,
+    state::ProjectState,
     storage::{cache::PackageCacheInstance, residency::ResidencyApplication},
 };
 
@@ -87,12 +89,24 @@ impl ProjectBuilder {
     }
 
     pub fn build(self) -> anyhow::Result<Project> {
-        let mut memory_sampler = self.memory_sampler;
-        // Claim an instance before startup probing so all cache reads and writes belong to this
-        // project/LSP owner.
         let cache_instance = PackageCacheInstance::for_workspace(&self.workspace)
             .context("while attempting to claim package cache instance")?;
+        let mut queries =
+            ProjectQueries::open(cache_instance.clone(), self.package_residency_policy)
+                .context("open Ajika database")?;
+        let state = self.build_in(&mut queries.database, cache_instance)?;
+        state.cleanup_cache();
+        Ok(Project { queries, state })
+    }
+
+    pub(crate) fn build_in(
+        self,
+        database: &mut ajika::Database,
+        cache_instance: PackageCacheInstance,
+    ) -> anyhow::Result<ProjectState> {
+        let mut memory_sampler = self.memory_sampler;
         let mut state = build_state(
+            database,
             self.workspace,
             self.workspace_lowering_config,
             self.cargo_metadata_config,
@@ -109,7 +123,7 @@ impl ProjectBuilder {
             .context("while attempting to apply package cache residency")?;
         // Once offloading separates the small saved state from transient indexing data, move that
         // retained state out of the allocator pages fragmented during the build.
-        state.reallocate_if_fully_offloaded();
+        Project::reallocate_offloaded_state(&mut state, database);
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
@@ -121,6 +135,6 @@ impl ProjectBuilder {
             project_bytes,
             process_memory,
         );
-        Ok(Project { state })
+        Ok(state)
     }
 }

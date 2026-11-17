@@ -233,7 +233,7 @@ impl PackageDefMaps {
                     .iter()
                     .flat_map(|module| module.origin.files())
                     .collect::<Vec<_>>();
-                files.sort_by_key(|file| file.0);
+                files.sort_unstable();
                 let files = files.into_iter().collect::<UniqueVec<_>>();
                 CrateDefMapManifest {
                     cargo_target: crate_data.cargo_target(),

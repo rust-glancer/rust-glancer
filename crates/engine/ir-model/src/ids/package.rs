@@ -1,7 +1,7 @@
-use rg_std::{MemorySize, Shrink};
-use wincode::{SchemaRead, SchemaWrite};
+use std::path::Path;
 
-use crate::declare_id;
+use rg_std::{MemorySize, NativeOsString, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable slot of one package inside a normalized workspace metadata snapshot.
 ///
@@ -25,10 +25,20 @@ use crate::declare_id;
 #[shrink(leaf)]
 pub struct PackageSlot(pub usize);
 
-declare_id! {
-    /// Index of a source file in one package's file table.
-    ///
-    /// The same physical file can have different IDs in different packages. The owning package
-    /// must be known before this index can be used to look up a file.
-    pub struct FileId;
+/// A canonical source path within the owning Ajika database.
+#[ajika::interned(namespace = "source-files")]
+#[derive(MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub struct FileId {
+    path: NativeOsString,
+}
+
+impl FileId {
+    pub fn for_path(interner: &ajika::Interner, canonical_path: &Path) -> ajika::Result<Self> {
+        Self::new(
+            interner,
+            NativeOsString::from_os_str(canonical_path.as_os_str()),
+        )
+    }
 }

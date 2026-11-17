@@ -53,7 +53,7 @@ pub enum CrateBodiesCoverage {
 
 impl CrateBodiesCoverage {
     pub fn files(mut files: Vec<FileId>) -> Self {
-        files.sort_unstable_by_key(|file| file.0);
+        files.sort_unstable();
         files.dedup();
         Self::Files(files.into_boxed_slice())
     }

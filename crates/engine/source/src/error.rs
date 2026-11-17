@@ -49,6 +49,11 @@ pub enum SourceError {
 }
 
 impl SourceError {
+    /// A best-effort source lookup can skip files that cannot be read or decoded.
+    pub fn is_unreadable(&self) -> bool {
+        matches!(self, Self::Io { .. } | Self::InvalidUtf8 { .. })
+    }
+
     /// Returns the path that invalidated an otherwise usable project generation.
     pub fn stale_path(&self) -> Option<&Path> {
         match self {

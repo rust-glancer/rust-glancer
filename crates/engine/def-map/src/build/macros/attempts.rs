@@ -50,6 +50,7 @@ impl MacroExpansionScan {
 /// Resolves pending macro calls into concrete attempts for the current scope snapshot.
 pub(crate) fn collect_expansion_attempts<E>(
     env: &E,
+    package: &ItemTreePackage,
     state: &CrateBuilder,
     scan: MacroExpansionScan,
     runtime: &mut MacroExpansionRuntime,
@@ -77,6 +78,7 @@ where
         let attempt = MacroExpansionAttempt::for_call(
             env,
             runtime,
+            package,
             state,
             call_id,
             &directive.call,
@@ -228,34 +230,39 @@ impl MacroExpansionAttempt {
         )
     }
 
-    /// Prepares a builtin `include!` either from eager ItemTree data or as a late source request.
+    /// Resolves an include after confirming the call names the builtin.
     ///
-    /// A call written directly in source may already carry `BuiltinMacroItem::Include`. A call
-    /// produced by another macro did not exist during ItemTree lowering, so its retained arguments
-    /// are parsed into an [`IncludePathExpression`] and DefMap pauses until the project lowers the
-    /// named file. Resolution has already identified the builtin here; a user macro named
-    /// `include` never enters this path.
+    /// Written calls already carry the path expression. Expanded calls recover it from tokens.
+    /// Both use the same host source boundary to obtain the file in the invocation's context.
     fn include_file(
         call_id: usize,
         call: &MacroCallSite,
+        package: &ItemTreePackage,
         state: &CrateBuilder,
         path_text: &str,
         macro_source_file_resolutions: &MacroSourceFileResolutions,
     ) -> Self {
-        if let Some(BuiltinMacroItem::Include { file }) = call.builtin.as_ref() {
-            return Self::new(
-                call_id,
-                call,
-                Some(path_text.to_string()),
-                MacroExpansionAttemptOutcome::ItemTreeFile(*file),
-                MacroExpansionAttemptRecord::BuiltinExpanded,
-            );
-        }
-
-        let Some(path) = call.args.as_ref().and_then(|arguments| {
-            IncludePathExpression::from_macro_arguments(arguments, state.edition)
-        }) else {
-            return Self::skipped(call_id, call);
+        let path = match call.builtin.as_ref() {
+            Some(BuiltinMacroItem::Include { path }) => {
+                if let Some(file) = package.included_file(call.file_id, path) {
+                    return Self::new(
+                        call_id,
+                        call,
+                        Some(path_text.to_string()),
+                        MacroExpansionAttemptOutcome::ItemTreeFile(file),
+                        MacroExpansionAttemptRecord::BuiltinExpanded,
+                    );
+                }
+                path.clone()
+            }
+            _ => {
+                let Some(path) = call.args.as_ref().and_then(|arguments| {
+                    IncludePathExpression::from_macro_arguments(arguments, state.edition)
+                }) else {
+                    return Self::skipped(call_id, call);
+                };
+                path
+            }
         };
         let request = MacroSourceFileRequest::include(
             state.crate_ref.package,
@@ -362,6 +369,7 @@ impl MacroExpansionAttempt {
     fn for_call<E>(
         env: &E,
         runtime: &mut MacroExpansionRuntime,
+        package: &ItemTreePackage,
         state: &CrateBuilder,
         call_id: usize,
         call: &MacroCallSite,
@@ -419,6 +427,7 @@ impl MacroExpansionAttempt {
                 kind,
                 call_id,
                 call,
+                package,
                 state,
                 path_text,
                 macro_source_file_resolutions,
@@ -475,6 +484,7 @@ impl MacroExpansionAttempt {
         kind: BuiltinMacroKind,
         call_id: usize,
         call: &MacroCallSite,
+        package: &ItemTreePackage,
         state: &CrateBuilder,
         macro_name: &str,
         macro_source_file_resolutions: &MacroSourceFileResolutions,
@@ -490,6 +500,7 @@ impl MacroExpansionAttempt {
             BuiltinMacroKind::Include => Self::include_file(
                 call_id,
                 call,
+                package,
                 state,
                 macro_name,
                 macro_source_file_resolutions,

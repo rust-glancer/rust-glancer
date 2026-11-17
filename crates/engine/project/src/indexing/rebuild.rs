@@ -13,30 +13,23 @@ use rg_item_tree::ItemTreeDb;
 
 use super::macro_source_files;
 use crate::{
-    ProjectMemoryPurgePoint,
-    selection::PhasePackageSet,
-    state::ProjectState,
-    stats::MacroExpansionLimitBuildSummary,
-    storage::{loaders::PackageReadLoaders, residency::ResidencyApplication},
+    ProjectMemoryPurgePoint, selection::PhasePackageSet, state::ProjectState,
+    stats::MacroExpansionLimitBuildSummary, storage::loaders::PackageReadLoaders,
 };
 
 pub(crate) fn rebuild_packages(
     state: &mut ProjectState,
+    database: &mut ajika::Database,
     packages: &[PackageSlot],
 ) -> anyhow::Result<()> {
     if packages.is_empty() {
         return Ok(());
     }
 
-    match try_rebuild_packages(state, packages) {
-        Ok(()) => {
-            state
-                .memory_hooks
-                .purge(ProjectMemoryPurgePoint::AfterPackageRebuild);
-            Ok(())
-        }
+    match try_rebuild_packages(state, database, packages) {
+        Ok(()) => Ok(()),
         Err(error) if ProjectState::is_recoverable_cache_load_failure(&error) => {
-            super::recovery::recover_from_cache_load_failure(state).with_context(|| {
+            super::recovery::recover_from_cache_load_failure(state, database).with_context(|| {
                 format!(
                     "while attempting to recover analysis project after package cache load failed during package rebuild: {error}",
                 )
@@ -46,7 +39,11 @@ pub(crate) fn rebuild_packages(
     }
 }
 
-fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> anyhow::Result<()> {
+fn try_rebuild_packages(
+    state: &mut ProjectState,
+    database: &mut ajika::Database,
+    packages: &[PackageSlot],
+) -> anyhow::Result<()> {
     let packages = PhasePackageSet::from_slice(packages);
     // Rebuilding one package can resolve names through its dependencies, but unrelated packages
     // should stay offloaded so save handling does not recreate full-project spikes.
@@ -66,7 +63,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
     let mut item_tree =
-        ItemTreeDb::build_packages(Arc::make_mut(&mut state.parse), &package_indices)
+        ItemTreeDb::build_packages(database, Arc::make_mut(&mut state.parse), &package_indices)
             .context("while attempting to rebuild affected item-tree packages")?;
 
     // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
@@ -95,7 +92,11 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             &mut item_tree,
             packages.as_slice(),
             reallocate_payloads,
-            &mut macro_source_files::MacroSourceFileLoader::new(&packages, memory_hooks.as_ref()),
+            &mut macro_source_files::MacroSourceFileLoader::new(
+                database,
+                &packages,
+                memory_hooks.as_ref(),
+            ),
         )
         .context("while attempting to rebuild affected def-map packages")?;
     let (def_map, generated_items) = def_map_output.into_parts();
@@ -103,6 +104,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // The selected package file tables now contain only sources reachable from this rebuild,
     // including late macro source files and excluding generated paths that disappeared.
     state.parse.seal_sources();
+    database.update_inputs(|update| state.parse.source_inventory().write_inputs(update))?;
     let macro_expansion_limit_summary =
         MacroExpansionLimitBuildSummary::capture(&def_map, packages.as_slice());
     let mut semantic_ir = state
@@ -152,12 +154,6 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     body_ir
         .replace_built_packages(products)
         .context("assemble body packages")?;
-    // Validate every late read and missing-path probe before the candidate replaces retained state.
-    state
-        .parse
-        .validate_saved_sources()
-        .context("while attempting to validate captured project source generation")?;
-    state.parse.evict_saved_source_text();
 
     // ItemTree is a transient rebuild input. Release its declarations before retaining the
     // completed phase databases.
@@ -167,9 +163,5 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
-    ResidencyApplication::restore(state, packages.as_slice())
-        .apply()
-        .context("while attempting to apply package cache residency after package rebuild")?;
-
     Ok(())
 }

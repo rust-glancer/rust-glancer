@@ -349,7 +349,7 @@ mod tests {
     };
 
     fn source() -> BodySource {
-        BodySource::written(FileId(0), Span { start: 0, end: 0 })
+        BodySource::written(FileId::from_raw(0), Span { start: 0, end: 0 })
     }
 
     fn module() -> ModuleRef {

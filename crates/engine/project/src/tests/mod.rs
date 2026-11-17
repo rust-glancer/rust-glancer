@@ -2,6 +2,7 @@ pub(crate) mod cancellation;
 mod cargo_build_outputs;
 mod current_source;
 mod eager_indexing;
+mod file_queries;
 mod generated_modules;
 mod utils;
 
@@ -169,10 +170,16 @@ pub struct Published;
     ));
     let mut project = Project::builder(fixture.workspace_metadata())
         .memory_hooks(hooks.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("initial project generation should build");
     let published_generation = project.generation_id();
     let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+    let published_tree = project
+        .queries
+        .database
+        .run(|db| rg_item_tree::file_declarations(db, PackageSlot(0), file_id))
+        .expect("accepted file declarations should be available");
 
     std::fs::write(&path, "pub struct Candidate;\n")
         .expect("candidate fixture source should be written");
@@ -193,6 +200,24 @@ pub struct Published;
         "a rejected candidate must not advance project generation identity",
     );
 
+    assert!(
+        project.queries.database.statistics().bytes_written > 0,
+        "the candidate file query should have checkpointed before the source race",
+    );
+
+    let reload_error = project
+        .queries
+        .database
+        .run(|db| rg_parse::saved_syntax(db, file_id, rg_text::RustEdition::Edition2024))
+        .expect_err("evicted accepted source must reject newer disk bytes");
+    let canonical = path
+        .canonicalize()
+        .expect("fixture source should canonicalize");
+    assert_eq!(
+        Project::stale_source_path(&reload_error.into()),
+        Some(canonical.as_path())
+    );
+
     // Restoring the old disk bytes proves the published ParseDb still points at the old source
     // entry rather than at either failed candidate revision.
     std::fs::write(&path, "pub struct Published;\n")
@@ -203,6 +228,19 @@ pub struct Published;
         .expect("published source should load after rejected candidate")
         .expect("published source span should exist");
     assert_eq!(text, "pub struct Published;");
+    let tree = project
+        .queries
+        .database
+        .run(|db| rg_item_tree::file_declarations(db, PackageSlot(0), file_id))
+        .expect("the next query should use accepted inputs after failure");
+    assert_eq!(tree, published_tree);
+    let symbols = project
+        .snapshot()
+        .full_analysis(rg_std::CancellationToken::new())
+        .expect("the accepted package artifact should still load after rejection")
+        .workspace_symbols("Published")
+        .expect("the accepted symbol should still be searchable");
+    assert_eq!(symbols.len(), 1);
 }
 
 #[test]

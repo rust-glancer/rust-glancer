@@ -53,7 +53,7 @@ impl<'a> GeneratedSourceLowering<'a> {
         // calls and definitions can borrow the token map without rebuilding their fallback.
         let fallback_span = SpanFactory::new(
             u32::try_from(package.0).expect("package slot should fit macro span storage"),
-            u32::try_from(origin.file_id.0).expect("file id should fit macro span storage"),
+            origin.file_id.as_raw(),
             syntax_edition(edition),
         )
         .span_for(TextRange::new(
@@ -488,7 +488,7 @@ impl<'a> GeneratedSourceLowering<'a> {
 
     fn source_span_for_range(&self, range: TextRange) -> Option<Span> {
         self.span_map
-            .span_for_range_in_file(range, self.package.0, self.origin.file_id.0)
+            .span_for_range_in_file(range, self.package.0, self.origin.file_id.as_raw())
             .map(|span| Span::from_text_range(span.range))
     }
 

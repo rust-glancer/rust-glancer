@@ -15,7 +15,7 @@ use rg_ir_model::PackageSlot;
 
 pub use self::input::{AnalysisChangeSummary, ChangedFile, SavedFileChange};
 use self::workspace_graph::WorkspaceGraphChanges;
-use crate::{Project, StartupCacheLoad};
+use crate::{Project, StartupCacheLoad, state::ProjectState};
 
 impl Project {
     /// Rebuilds the whole project from the current workspace graph and saved source files.
@@ -98,7 +98,9 @@ impl Project {
 
         let application = self
             .try_publish_generation_when(
-                move |candidate| apply_canonical_changes(candidate, canonical_changes),
+                move |candidate, database| {
+                    apply_canonical_changes(candidate, database, canonical_changes)
+                },
                 |application| matches!(application, ProjectChangeApplication::Applied(_)),
             )
             .context("while attempting to apply saved file changes")?;
@@ -115,15 +117,19 @@ enum ProjectChangeApplication {
     Applied(AnalysisChangeSummary),
 }
 
-fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
-    workspace::rebuild_workspace_graph(project, &[], StartupCacheLoad::Disabled)
+fn reindex_workspace(
+    project: &mut ProjectState,
+    database: &mut ajika::Database,
+) -> anyhow::Result<()> {
+    workspace::rebuild_workspace_graph(project, database, &[], StartupCacheLoad::Disabled)
         .context("while attempting to reindex analysis project from workspace root")?;
     Ok(())
 }
 
 /// Applies one nonempty canonicalized change batch to a private project candidate.
 fn apply_canonical_changes(
-    project: &mut Project,
+    project: &mut ProjectState,
+    database: &mut ajika::Database,
     changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<ProjectChangeApplication> {
     debug_assert!(
@@ -133,19 +139,19 @@ fn apply_canonical_changes(
 
     let graph_changed = changes.iter().any(|change| {
         WorkspaceGraphChanges::check(
-            project.state.workspace(),
-            project.state.parse_db(),
-            &project.state.cargo_metadata_config,
+            project.workspace(),
+            project.parse_db(),
+            &project.cargo_metadata_config,
             change,
         ) == WorkspaceGraphChanges::Changed
     });
 
     if graph_changed {
-        workspace::rebuild_workspace_graph(project, &changes, StartupCacheLoad::Enabled)
+        workspace::rebuild_workspace_graph(project, database, &changes, StartupCacheLoad::Enabled)
             .map(ProjectChangeApplication::Applied)
             .context("while attempting to rebuild analysis project after workspace change")
     } else {
-        let summary = source::apply_source_changes(project, changes)
+        let summary = source::apply_source_changes(project, database, changes)
             .context("while attempting to apply saved source changes")?;
         if summary.is_empty() {
             Ok(ProjectChangeApplication::Unchanged)
@@ -156,7 +162,7 @@ fn apply_canonical_changes(
 }
 
 fn affected_packages(
-    project: &Project,
+    project: &ProjectState,
     changed_files: &[ChangedFile],
     fallback_package_roots: &[PackageSlot],
 ) -> Vec<PackageSlot> {
@@ -164,7 +170,6 @@ fn affected_packages(
         .iter()
         .filter_map(|package_slot| {
             project
-                .state
                 .workspace()
                 .packages()
                 .get(package_slot.0)
@@ -173,7 +178,6 @@ fn affected_packages(
         .collect::<Vec<_>>();
 
     project
-        .state
         .workspace()
         .reverse_dependency_closure(&changed_package_ids)
         .into_iter()

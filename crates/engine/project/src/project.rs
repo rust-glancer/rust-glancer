@@ -12,15 +12,17 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{
     PackageResidencyPolicy, ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats,
-    indexing, state::ProjectState,
+    indexing, project_queries::ProjectQueries, state::ProjectState,
 };
 
 /// Mutable owner for the current analysis state.
 ///
 /// `Project` is the host-facing state container: it accepts saved file changes, refreshes the
 /// derived phase databases, and hands out immutable snapshots for queries.
-#[derive(Debug, Clone, MemorySize)]
+#[derive(Debug, MemorySize)]
 pub struct Project {
+    #[memsize(skip)]
+    pub(crate) queries: ProjectQueries,
     pub(crate) state: ProjectState,
 }
 
@@ -65,7 +67,30 @@ impl Project {
     /// without copying anything. Call this before going idle, then run the allocator cleanup hook
     /// after the old state has been dropped.
     pub fn reallocate_if_fully_offloaded(&mut self) -> bool {
-        self.state.reallocate_if_fully_offloaded()
+        Self::reallocate_offloaded_state(&mut self.state, &mut self.queries.database)
+    }
+
+    pub(crate) fn reallocate_offloaded_state(
+        state: &mut ProjectState,
+        database: &mut ajika::Database,
+    ) -> bool {
+        let Some(reallocated) = state.reallocated_if_fully_offloaded() else {
+            return false;
+        };
+
+        // Both the state and Ajika inputs hold source entries. Rebind the inputs to the
+        // relocated entries before dropping the old state so its allocations can be freed.
+        if let Err(error) = database.update_inputs(|update| {
+            reallocated
+                .parse_db()
+                .source_inventory()
+                .write_entry_inputs(update)
+        }) {
+            tracing::warn!(%error, "could not rebind relocated source inputs");
+            return false;
+        }
+        *state = reallocated;
+        true
     }
 
     /// Iterates bounded macro-expansion-limit diagnostics from resident packages.
@@ -106,7 +131,7 @@ impl Project {
     /// the project.
     pub(crate) fn try_publish_generation<T>(
         &mut self,
-        build: impl FnOnce(&mut Project) -> anyhow::Result<T>,
+        build: impl FnOnce(&mut ProjectState, &mut ajika::Database) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.try_publish_generation_when(build, |_| true)
     }
@@ -114,25 +139,35 @@ impl Project {
     /// Builds a candidate but publishes it only when its output describes a real state change.
     pub(crate) fn try_publish_generation_when<T>(
         &mut self,
-        build: impl FnOnce(&mut Project) -> anyhow::Result<T>,
+        build: impl FnOnce(&mut ProjectState, &mut ajika::Database) -> anyhow::Result<T>,
         should_publish: impl FnOnce(&T) -> bool,
     ) -> anyhow::Result<T> {
-        let mut candidate = self.clone();
-        let output = build(&mut candidate)
-            .context("while attempting to build project generation candidate")?;
-        if !should_publish(&output) {
-            return Ok(output);
+        let database = &mut self.queries.database;
+        let accepted_inputs = database.inputs().clone();
+        let mut candidate = self.state.clone();
+        let result = build(&mut candidate, database)
+            .context("while attempting to build project generation candidate");
+        match result {
+            Ok(output) if should_publish(&output) => {
+                candidate.generation_id = ProjectGenerationId::fresh();
+                self.state = candidate;
+                self.state.cleanup_cache();
+                Ok(output)
+            }
+            result => {
+                // A file batch can checkpoint before the whole project is ready. Restoring
+                // accepted inputs advances Ajika's revision if necessary, so those records
+                // must validate again before they can answer in the accepted source world.
+                database.replace_inputs(accepted_inputs);
+                result
+            }
         }
-
-        candidate.state.generation_id = ProjectGenerationId::fresh();
-        self.state = candidate.state;
-        Ok(output)
     }
 
     /// Rebuilds the project from source and rewrites offloadable package cache artifacts.
     pub fn recover_after_cache_load_failure(&mut self) -> anyhow::Result<()> {
-        self.try_publish_generation(|candidate| {
-            indexing::recover_from_cache_load_failure(&mut candidate.state).context(
+        self.try_publish_generation(|candidate, database| {
+            indexing::recover_from_cache_load_failure(candidate, database).context(
                 "while attempting to recover analysis project after package cache load failed",
             )
         })

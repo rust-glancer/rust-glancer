@@ -19,10 +19,11 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use rg_std::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecorder, MemorySize, NativeOsString};
 
 use crate::{
-    CapturedSource, SourceDescriptor, SourceEntry, SourceError, SourcePath, read_source_text,
+    CapturedSource, SourceDescriptor, SourceEntry, SourceError, SourceInput, SourcePath,
+    SourcePresence, read_source_text,
 };
 
 /// Path-indexed source set captured for one project generation.
@@ -292,6 +293,36 @@ impl SourceInventory {
             .write()
             .expect("source existence lock should not be poisoned");
         Ok(*existence.entry(path.to_path_buf()).or_insert(exists))
+    }
+
+    /// Installs the inventory as one input view, including paths that did not exist.
+    pub fn write_inputs(&self, update: &mut ajika::InputUpdate) -> ajika::Result<()> {
+        self.write_entry_inputs(update)?;
+
+        update.forget_all(SourcePresence::EXISTS);
+        let existence = self
+            .existence
+            .read()
+            .expect("source existence lock should not be poisoned");
+        for (path, &exists) in existence.iter() {
+            SourcePresence::at(NativeOsString::from_os_str(path.as_os_str()))
+                .set_exists(update, exists)?;
+        }
+        Ok(())
+    }
+
+    /// Rebinds entry allocations while preserving captured path-presence observations.
+    pub fn write_entry_inputs(&self, update: &mut ajika::InputUpdate) -> ajika::Result<()> {
+        update.forget_all(SourceInput::ENTRY);
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned");
+        for entry in entries.values() {
+            SourceInput::set_captured(update, Arc::clone(entry))?;
+        }
+
+        Ok(())
     }
 
     /// Proves that all filesystem observations still match the candidate being published.
