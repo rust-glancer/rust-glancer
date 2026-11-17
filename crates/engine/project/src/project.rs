@@ -5,20 +5,19 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rg_semantic_ir::TargetDeclarationReader;
-use rg_source::{QueryDatabase, QueryServices, ReadError, SourceError, SourceInput};
+use rg_source::{CapturedSource, SourceError};
 use rg_std::{CancellationToken, MemorySize};
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
     MacroExpansionLimitBuildSummary, ProjectBuilder, ProjectGenerationId, ProjectMemoryHooks,
-    ProjectSnapshot, ProjectStats, state::ProjectState,
+    ProjectSnapshot, ProjectStats, project_queries::ProjectQueries, state::ProjectState,
 };
 
 #[derive(MemorySize)]
 pub struct Project {
     #[memsize(skip)]
-    pub(crate) database: Mutex<QueryDatabase>,
+    pub(crate) queries: Mutex<ProjectQueries>,
     pub(crate) state: ProjectState,
     #[memsize(skip)]
     pub(crate) workspace_lowering_config: WorkspaceLoweringConfig,
@@ -32,32 +31,55 @@ impl Project {
         ProjectBuilder::new(workspace)
     }
 
-    /// Lend the accepted source view and one working set to a request. The callback can return
+    /// Lend the accepted saved source view and one working set to a request. The callback can return
     /// owned answers, while borrows of decoded declarations and bodies stay inside the operation.
     pub fn with_snapshot<R>(
         &self,
         cancellation: CancellationToken,
         work: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<R>,
     ) -> anyhow::Result<R> {
-        let mut database = self.database.lock().expect("project query runtime");
-        database.set_services(QueryServices { cancellation });
-        let result = database.run(|db| {
-            let declarations =
-                TargetDeclarationReader::for_project(db, self.state.targets.iter().copied());
-            let snapshot = ProjectSnapshot::new(&self.state, db, &declarations);
-            work(snapshot).map_err(|error| {
-                ReadError::query_cause(error.as_ref()).unwrap_or_else(|| {
-                    ajika::Error::application(
-                        error.reallocate_into_boxed_dyn_error_without_backtrace(),
-                    )
-                })
-            })
-        });
-        // Member queries can capture include files after startup. Drop their reloadable bytes
-        // when the request ends, keeping the exact revision for subsequent reads.
-        SourceInput::evict_saved_text(database.inputs());
-        database.set_services(QueryServices::default());
-        Ok(result?)
+        self.with_editor_snapshot(&[], cancellation, work)
+    }
+
+    /// Analyze the saved project with a complete captured set of edited documents. Unsaved
+    /// declarations affect other files through the ordinary queries, and their changed results
+    /// remain reusable in the bounded session store instead of replacing saved results on disk.
+    ///
+    /// Supply every active edit on each call. For example, after publishing a save of `a.rs`,
+    /// keep supplying the edit to `b.rs` until it is saved or discarded. Omitting a document
+    /// restores its saved input. Captures equal to saved bytes use persistent inputs.
+    ///
+    /// This does not publish a new saved project generation. Returned source coordinates belong
+    /// to this captured view, including edits in files other than the one being queried.
+    pub fn with_editor_snapshot<R>(
+        &self,
+        documents: &[CapturedSource],
+        cancellation: CancellationToken,
+        work: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<R>,
+    ) -> anyhow::Result<R> {
+        self.queries
+            .lock()
+            .expect("project query runtime")
+            .with_snapshot(&self.state, documents, cancellation, work)
+    }
+
+    /// Bound retained editor query results independently of disk retention. Limits cover their
+    /// estimated encoded size, count and idle age. Editor text stays alive with its input view so
+    /// an evicted result can be recomputed.
+    pub fn set_session_retention(&self, retention: ajika::Retention) {
+        self.queries
+            .lock()
+            .expect("project query runtime")
+            .set_session_retention(retention);
+    }
+
+    /// Release retained query work without discarding editor inputs. The next request can use
+    /// the same captures and recompute its answers; this does not save or discard documents.
+    pub fn clear_session(&self) {
+        self.queries
+            .lock()
+            .expect("project query runtime")
+            .clear_session();
     }
 
     pub fn generation_id(&self) -> ProjectGenerationId {
@@ -83,7 +105,7 @@ impl Project {
     }
 
     pub fn query_recovery_pending(&self) -> bool {
-        self.database
+        self.queries
             .lock()
             .expect("project query runtime")
             .recovery_pending()
@@ -99,8 +121,10 @@ impl Project {
 
     /// After a source race, find other captured files in the same disk write burst.
     pub fn stale_saved_source_paths(&self) -> ajika::Result<Vec<PathBuf>> {
-        let database = self.database.lock().expect("project query runtime");
-        SourceInput::stale_saved_paths(database.inputs(), &database.interner())
+        self.queries
+            .lock()
+            .expect("project query runtime")
+            .stale_saved_paths()
     }
 }
 

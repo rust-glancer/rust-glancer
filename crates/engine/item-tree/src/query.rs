@@ -26,7 +26,7 @@ pub fn file_declarations(
     file: FileId,
 ) -> ajika::Result<FileDeclarations> {
     let edition = PackageInput::at(package).edition(db)?;
-    let syntax = rg_parse::saved_syntax(db, file, edition)?;
+    let syntax = rg_parse::source_syntax(db, file, edition)?;
     let (mut tree, mut sources) = FileLowering::lower(package, file, edition, &syntax);
     sources.shrink_to_fit();
     tree.shrink_to_fit();

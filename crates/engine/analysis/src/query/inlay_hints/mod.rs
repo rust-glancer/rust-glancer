@@ -12,7 +12,7 @@ use rg_ir_view::{
     member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
-use rg_parse::{CurrentSource, SavedSourceReader, syntax_edition};
+use rg_parse::{CurrentSource, SourceReader, syntax_edition};
 use rg_std::UniqueVec;
 use rg_syntax::{
     AstNode as _,
@@ -327,7 +327,7 @@ pub(super) enum InlaySource<'a, 'db> {
         source: &'a CurrentSource,
         file: FileId,
     },
-    Saved(SavedSourceReader<'db>),
+    Saved(SourceReader<'db>),
 }
 
 impl<'a, 'db> InlaySource<'a, 'db> {

@@ -10,7 +10,7 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
     BodyId, ConstRef, FileId, FunctionRef, ModuleRef, SavedBodyOwner, Span, StaticRef,
 };
-use rg_parse::{CurrentSource, SavedSourceReader};
+use rg_parse::{CurrentSource, SourceReader};
 use rg_semantic_ir::BodyOwnerData;
 use rg_source::QueryContext;
 use rg_std::CancellationToken;
@@ -73,7 +73,7 @@ pub(crate) enum BodyTaskSource<'a> {
         edition: RustEdition,
     },
     Current {
-        saved: SavedSourceReader<'a>,
+        saved: SourceReader<'a>,
         edition: RustEdition,
         file: FileId,
         source: &'a CurrentSource,
@@ -175,7 +175,7 @@ impl<'a> BodyTaskLowering<'a> {
 
         let parse = match self.source {
             BodyTaskSource::Tracked { db, edition } => {
-                SavedSourceReader::new(db).syntax(file_id, edition)?
+                SourceReader::new(db).syntax(file_id, edition)?
             }
             BodyTaskSource::Current { saved, edition, .. } => saved.syntax(file_id, edition)?,
         };

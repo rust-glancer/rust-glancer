@@ -3,6 +3,7 @@ mod cargo_build_outputs;
 mod current_source;
 mod declaration_locations;
 mod demand_driven;
+mod editor_snapshots;
 mod file_queries;
 mod format_captures;
 mod generated_modules;

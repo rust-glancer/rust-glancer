@@ -1,14 +1,10 @@
 //! Source loading and scope construction for one configured Cargo target.
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use rg_ir_model::{CrateRef, FileId, ModuleRef, PackageSlot};
 use rg_item_tree::{ItemTrees, TargetSources, file_declarations, target_sources};
-use rg_source::{SourceInput, SourcePresence};
+use rg_source::SourceInput;
 use rg_std::NativeOsString;
 use rg_text::Name;
 use rg_workspace::{CargoTarget, PackageInput, TargetInput, WorkspaceMetadata};
@@ -23,7 +19,9 @@ use super::{
 };
 use crate::{CrateData, CrateResolutionEnv, MacroDefinitionEnv};
 
-#[ajika::input(key = CrateRef)]
+/// Dependency crate roots supplied by workspace configuration. Their durability matches the
+/// Cargo inputs they come from, so ordinary source edits do not require rechecking these roots.
+#[ajika::input(key = CrateRef, durability = High)]
 pub struct CrateDependencies {
     #[input(arc)]
     roots: BTreeMap<Name, ModuleRef>,
@@ -71,7 +69,7 @@ impl CrateData {
             let target = CargoTarget {
                 name: config.name(db)?,
                 kind: config.kind(db)?,
-                src_path: sources.file_path(manifest.root)?,
+                src_path: manifest.root.path(&db.interner())?,
             };
             let roots = CrateDependencies::at(krate).roots(db)?;
             let mut state = collect_crate(
@@ -142,14 +140,6 @@ impl TargetCrateSources<'_> {
         Ok(())
     }
 
-    fn file_path(&self, file: FileId) -> ajika::Result<PathBuf> {
-        file.path(&self.db.interner())
-    }
-
-    fn file_at(&self, path: &Path) -> ajika::Result<Option<FileId>> {
-        SourcePresence::at(NativeOsString::from_os_str(path.as_os_str())).resolved_file(self.db)
-    }
-
     pub(super) fn trees(&self) -> &ItemTrees {
         &self.trees
     }
@@ -176,14 +166,13 @@ impl TargetCrateSources<'_> {
                 let module = parent_context.resolve_module_name(
                     module_name,
                     path_override.as_deref(),
-                    |path| self.file_at(path).map(|file| file.is_some()),
+                    |path| SourceInput::file_at(self.db, path).map(|file| file.is_some()),
                 )?;
                 let Some(module) = module else {
                     return Ok(MacroSourceFileResolution::Missing);
                 };
                 let (path, context) = module.into_parts();
-                let file_id = self
-                    .file_at(&path)?
+                let file_id = SourceInput::file_at(self.db, &path)?
                     .expect("module path was observed as present");
                 let context = Arc::new(context);
                 let answer = MacroSourceFileResolution::Module {
@@ -197,11 +186,11 @@ impl TargetCrateSources<'_> {
                 module_file_context,
                 path,
             } => {
-                let origin = self.file_path(*origin_file)?;
+                let origin = origin_file.path(&self.db.interner())?;
                 let generated = PackageInput::at(self.package).generated_sources(self.db)?;
                 let file = path
                     .resolve(&origin, generated.as_ref())
-                    .map(|path| self.file_at(&path))
+                    .map(|path| SourceInput::file_at(self.db, &path))
                     .transpose()?
                     .flatten();
                 let Some(file_id) = file else {

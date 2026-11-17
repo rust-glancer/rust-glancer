@@ -23,7 +23,7 @@ pub use self::{
     module::{
         ModuleFileContext, ModuleFileResolution, enclosing_inline_module_path, module_path_override,
     },
-    query::saved_syntax,
-    source_reader::SavedSourceReader,
+    query::source_syntax,
+    source_reader::SourceReader,
     text_range_map::{TextRangeMap, TextRangeMapping},
 };

@@ -90,7 +90,7 @@ impl ReferenceSourceSelection {
                 .map(|owner| owner.owner)
                 .collect());
         }
-        let syntax = db.saved_syntax(krate, file)?;
+        let syntax = db.source_syntax(krate, file)?;
         let mut tokens: HashMap<String, Vec<Span>> = HashMap::new();
         let mut macro_arguments: HashMap<String, Vec<Span>> = HashMap::new();
         // Token equality ignores comments and ordinary string text while retaining identifiers

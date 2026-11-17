@@ -1,4 +1,7 @@
-//! Prepares captured editor text and request-local bodies against the saved project.
+//! Prepares one document's current text and request-local bodies against a snapshot's declarations.
+//!
+//! This path replaces selected bodies and headers for one request. Other files keep the
+//! snapshot's semantics; changing declarations across files belongs to a complete editor snapshot.
 
 use std::sync::Arc;
 
@@ -6,15 +9,17 @@ use anyhow::Context as _;
 use rg_analysis::{Analysis, CurrentSourceView, SavedSourceRelationship};
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceSelection};
 use rg_ir_model::{CrateRef, FileId};
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex, SavedSourceReader};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex, SourceReader};
 use rg_source::SourceRevision;
 use rg_workspace::PackageInput;
 
 use super::ProjectSnapshot;
 
-/// Exact saved text can reuse saved Body IR. Changed text needs request-local syntax and bodies.
+/// Text matching the snapshot can reuse its queried bodies. Different text needs request-local
+/// syntax and bodies. The comparison uses captured inputs, not a fresh disk read.
 #[derive(Debug)]
 pub enum DocumentSourceView {
+    /// Matches the input installed in this snapshot, which can itself include editor captures.
     SavedExact(LineIndex),
     Current(CurrentSourceView),
 }
@@ -29,7 +34,7 @@ impl DocumentSourceView {
 }
 
 impl<'a> ProjectSnapshot<'a> {
-    /// Compare the captured bytes with the selected saved file before preparing current syntax.
+    /// Compare the document bytes with the snapshot's captured file before preparing current syntax.
     pub fn prepare_document_source(
         &self,
         target: (CrateRef, FileId),
@@ -39,8 +44,8 @@ impl<'a> ProjectSnapshot<'a> {
         let (_, file) = target;
         rg_std::check_cancel!(cancellation, "document source");
         // An opened include may have been discovered after startup. Its captured source owns
-        // the saved revision even when module collection has not discovered this file.
-        let saved = SavedSourceReader::new(self.query_context());
+        // the revision even when module collection has not discovered this file.
+        let saved = SourceReader::new(self.query_context());
         if saved.revision(file)? != SourceRevision::from_bytes(source.as_bytes()) {
             return self
                 .prepare_current_source(target, source, cancellation)
@@ -50,7 +55,7 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(DocumentSourceView::SavedExact(line_index))
     }
 
-    /// Associate current declarations with the selected saved file. Other files keep saved semantics.
+    /// Associate current declarations with the snapshot's file. Other files keep snapshot semantics.
     pub fn prepare_current_source(
         &self,
         (crate_ref, file): (CrateRef, FileId),
@@ -61,7 +66,7 @@ impl<'a> ProjectSnapshot<'a> {
         let edition = PackageInput::at(crate_ref.package).edition(self.query_context())?;
         let current_source = Arc::new(CurrentSource::new(Arc::<str>::from(source), edition));
         let current_syntax = current_source.parse().tree();
-        let saved = SavedSourceReader::new(self.query_context());
+        let saved = SourceReader::new(self.query_context());
         let saved_syntax = saved
             .syntax(file, edition)
             .context("parse saved syntax for declaration association")?
@@ -84,7 +89,7 @@ impl<'a> ProjectSnapshot<'a> {
         ))
     }
 
-    /// Prepare the selected target's current bodies and declarations without changing saved stores.
+    /// Prepare the selected target's current bodies and declarations without changing snapshot inputs.
     /// The selection keeps cursor recovery and range overlap as separate policies.
     pub fn analysis_for_current_source(
         &self,

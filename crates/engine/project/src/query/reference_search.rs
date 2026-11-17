@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
 use rg_ir_model::{CrateRef, PackageSlot};
-use rg_parse::SavedSourceReader;
+use rg_parse::SourceReader;
 use rg_semantic_ir::complete_source_ownership;
 use rg_source::QueryContext;
 use rg_std::UniqueVec;
@@ -70,7 +70,7 @@ impl<'a> ReferenceSearchPlanner<'a> {
 
         let mut files = UniqueVec::new();
         let mut matches = HashMap::new();
-        let sources = SavedSourceReader::new(db);
+        let sources = SourceReader::new(db);
         for &crate_ref in search_crates {
             let ownership = complete_source_ownership(db, crate_ref)?;
             for file_id in ownership.files() {

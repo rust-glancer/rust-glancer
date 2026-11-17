@@ -1,4 +1,4 @@
-//! Saved project publication and scoped access to Ajika-backed analysis.
+//! Saved project publication and scoped analysis of saved or captured editor inputs.
 
 mod change;
 mod indexing;

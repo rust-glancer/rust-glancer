@@ -1,4 +1,4 @@
-//! Read-only access to one published project generation.
+//! Read-only access to the source view selected for one Project operation.
 
 use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel};
 use rg_ir_model::{CrateRef, PackageSlot};
@@ -9,7 +9,10 @@ use rg_source::QueryContext;
 use super::reference_search::ReferenceSearchPlanner;
 use crate::state::ProjectState;
 
-/// Immutable project view used to answer LSP-shaped queries.
+/// Immutable project view used to answer LSP-shaped queries. The operation fixes its inputs:
+/// either the accepted saved generation or that generation with a complete editor capture.
+/// Cargo configuration and the target set come from the saved project; queries read source text
+/// and declarations from the selected input view.
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectSnapshot<'a> {
     pub(crate) state: &'a ProjectState,

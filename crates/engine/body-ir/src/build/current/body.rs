@@ -29,7 +29,7 @@ use rg_ir_model::{
     TraitDefRef,
 };
 use rg_item_tree::SourceLocations as _;
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, SavedSourceReader};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, SourceReader};
 use rg_semantic_ir::{ItemLookupQuery, ItemReader, ItemStoreQuery, SourceSelection};
 use rg_std::{CancellationToken, ExpectedUnique};
 use rg_text::RustEdition;
@@ -65,7 +65,7 @@ pub(super) struct CurrentBodyBuildOutcome {
 /// stages used by saved builds. The resulting bodies exist only for this analysis request.
 pub(super) struct CurrentBodyBuilder<'source, 'db> {
     edition: RustEdition,
-    saved_source: SavedSourceReader<'db>,
+    saved_source: SourceReader<'db>,
     cfg: CfgEvaluator<'source>,
     def_map: &'source DefinitionReader<'db>,
     semantic_ir: &'source ItemReader<'db>,
@@ -83,7 +83,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         edition: RustEdition,
-        saved_source: SavedSourceReader<'db>,
+        saved_source: SourceReader<'db>,
         cfg: CfgEvaluator<'source>,
         def_map: &'source DefinitionReader<'db>,
         semantic_ir: &'source ItemReader<'db>,

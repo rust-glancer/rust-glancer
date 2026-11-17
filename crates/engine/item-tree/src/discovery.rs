@@ -2,12 +2,12 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_parse::ModuleFileContext;
-use rg_source::{SourceError, SourcePresence};
+use rg_source::{SourceError, SourceInput};
 use rg_std::NativeOsString;
 use rg_syntax::ast::{self, HasModuleItem, HasName};
 use rg_text::RustEdition;
@@ -29,10 +29,10 @@ pub fn target_sources(
     db: &rg_source::QueryContext<'_>,
     target: CrateRef,
 ) -> ajika::Result<TargetSources> {
-    let root_path = TargetInput::at(target).root_path(db)?;
-    let Some(root) = SourcePresence::at(root_path.clone()).resolved_file(db)? else {
+    let root_path = native_path(TargetInput::at(target).root_path(db)?)?;
+    let Some(root) = SourceInput::file_at(db, &root_path)? else {
         return Err(ajika::Error::application(SourceError::Io {
-            path: native_path(root_path)?,
+            path: root_path,
             source: std::io::ErrorKind::NotFound.into(),
         }));
     };
@@ -74,10 +74,6 @@ struct SourceDiscovery<'db> {
 }
 
 impl SourceDiscovery<'_> {
-    fn file_at(&self, path: &Path) -> ajika::Result<Option<FileId>> {
-        SourcePresence::at(NativeOsString::from_os_str(path.as_os_str())).resolved_file(self.db)
-    }
-
     fn visit_file(&mut self, file: FileId, context: &ModuleFileContext) -> ajika::Result<()> {
         // The same source can be included under multiple logical directories. Only a visit on
         // the current recursion path is a cycle regardless of its context.
@@ -86,7 +82,7 @@ impl SourceDiscovery<'_> {
         }
         self.files.insert(file);
         self.db.check_cancelled()?;
-        let syntax = rg_parse::saved_syntax(self.db, file, self.edition)?.tree();
+        let syntax = rg_parse::source_syntax(self.db, file, self.edition)?.tree();
         self.visit_items(context, syntax.items())?;
         self.active.remove(&file);
         Ok(())
@@ -113,11 +109,10 @@ impl SourceDiscovery<'_> {
                 );
                 self.visit_items(&inline_context, items.items())?;
             } else if let Some(resolution) = context.resolve_module_file(&module, |path| {
-                self.file_at(path).map(|resolved| resolved.is_some())
+                SourceInput::file_at(self.db, path).map(|resolved| resolved.is_some())
             })? {
                 let (path, child_context) = resolution.into_parts();
-                let child = self
-                    .file_at(&path)?
+                let child = SourceInput::file_at(self.db, &path)?
                     .expect("module path was observed as present");
                 self.module_paths
                     .insert(NativeOsString::from_os_str(path.as_os_str()), child);

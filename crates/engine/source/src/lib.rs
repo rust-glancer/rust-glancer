@@ -1,4 +1,4 @@
-//! Exact Rust source inputs for one frozen analysis generation.
+//! Exact Rust source inputs for one saved or editor analysis revision.
 //!
 //! A project build may take long enough for files on disk to change underneath it. If each
 //! analysis provider reads those files independently, declarations and bodies can describe
@@ -6,7 +6,9 @@
 //! verifies those observations before publishing a new generation. An evicted source can be
 //! reloaded only if the bytes still match the captured revision.
 //!
-//!
+//! An editor view overrides changed files with retained captures. Their content stamps use the
+//! same byte identity as saved files, while session lifetime keeps changed editor results off disk.
+
 mod captured;
 mod entry;
 mod error;
@@ -20,7 +22,7 @@ pub use self::{
     captured::CapturedSource,
     entry::{SourceEntry, read_source_text},
     error::SourceError,
-    inputs::{SourceInput, SourcePresence},
+    inputs::SourceInput,
     read_error::ReadError,
     revision::SourceRevision,
 };

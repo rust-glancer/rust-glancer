@@ -1,6 +1,6 @@
 use rg_body_ir::testonly::BodyIrFixture;
 use rg_ir_model::{FileId, Span, identity::DeclarationRef};
-use rg_parse::{LineIndex, SavedSourceReader};
+use rg_parse::{LineIndex, SourceReader};
 
 use crate::{
     IndexedViewDb,
@@ -24,7 +24,7 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
             .src_path;
         let file_id = FileId::for_path(&view.semantic().db().interner(), root)
             .expect("fixture file identity");
-        let sources = SavedSourceReader::new(view.semantic().db());
+        let sources = SourceReader::new(view.semantic().db());
         let line_index = sources
             .line_index(file_id)
             .expect("fixture line index should load");

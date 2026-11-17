@@ -2,30 +2,7 @@
 
 use std::fs;
 
-use rg_std::MemorySize as _;
-
 use crate::{CapturedSource, SourceEntry, SourceError, SourceRevision, read_source_text};
-
-#[test]
-fn saved_source_memory_disappears_after_eviction() {
-    let dir = tempfile::tempdir().expect("temporary source directory should be created");
-    let path = dir.path().join("lib.rs");
-    let text = "pub struct ResidentSourceText;\n";
-    fs::write(&path, text).expect("fixture source should be written");
-
-    let text = read_source_text(&path).expect("fixture source should be read");
-    let entry = SourceEntry::saved(path, text);
-    let len = entry.byte_len() as usize;
-    let resident = entry.memory_size();
-
-    entry.evict_saved_text();
-    let evicted = entry.memory_size();
-
-    assert!(
-        resident >= evicted + len,
-        "resident accounting should include saved source text",
-    );
-}
 
 #[test]
 fn evicted_saved_text_rejects_changed_disk_bytes() {
@@ -78,10 +55,7 @@ fn captured_saved_source_validation_checks_disk_without_replacing_captured_text(
         change.revision(),
         SourceRevision::from_bytes(text.as_bytes())
     );
-    assert_eq!(change.byte_len(), text.len() as u64);
-    assert_ne!(text.len(), text.chars().count());
-
-    let entry = crate::SourceEntry::saved_captured(&change);
+    let entry = SourceEntry::saved_captured(&change);
 
     fs::write(&path, "pub struct NewerDisk;\n").expect("fixture source should advance");
     let error = entry

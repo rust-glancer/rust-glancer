@@ -10,8 +10,7 @@ use rg_macro_runtime::{
     CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRequest,
     SharedMacroExpansionRuntime,
 };
-use rg_source::{QueryContext, SourceInput, SourcePresence};
-use rg_std::NativeOsString;
+use rg_source::{QueryContext, SourceInput};
 use rg_text::RustEdition;
 use rg_tt::{Span as TtSpan, TopSubtree};
 use rg_workspace::{CrateConfig, PackageInput};
@@ -281,9 +280,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
         let Some(path) = path.resolve(&origin, generated_paths.as_ref()) else {
             return Ok(None);
         };
-        let Some(file) = SourcePresence::at(NativeOsString::from_os_str(path.as_os_str()))
-            .resolved_file(self.db)?
-        else {
+        let Some(file) = SourceInput::file_at(self.db, &path)? else {
             return Ok(None);
         };
         Ok(SourceInput::is_readable(self.db, file)?.then_some(file))

@@ -1,8 +1,8 @@
 //! Stable identity for the exact bytes behind one source file.
 //!
-//! `SourceRevision` is the content identity used while a project generation is alive.
+//! `SourceRevision` is the content identity used by one input revision.
 //! `SourceDescriptor` adds the path and byte length needed to carry that identity through a
-//! captured save. Neither type owns source text.
+//! source capture. Neither type owns source text.
 
 use std::{
     fmt,
@@ -15,7 +15,7 @@ use rg_std::MemorySize;
 /// Strong identity of the exact UTF-8 bytes captured for one source file.
 ///
 /// A revision does not mean "the latest contents at this path". It names the bytes that one
-/// project generation used, even if the path changes on disk after the generation is published.
+/// input revision used, even if the path changes on disk after the bytes were captured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
 pub struct SourceRevision([u8; 32]);
@@ -39,8 +39,8 @@ impl fmt::Display for SourceRevision {
     }
 }
 
-/// Metadata shared by an editor save and the corresponding source input.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+/// Metadata shared by a source capture and the corresponding source input.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceDescriptor {
     path: Arc<Path>,
     revision: SourceRevision,
@@ -56,7 +56,7 @@ impl SourceDescriptor {
         }
     }
 
-    pub(crate) fn path(&self) -> &Arc<Path> {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
