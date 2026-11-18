@@ -8,7 +8,9 @@ use std::path::Path;
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_parse::SourceReader;
 use rg_semantic_ir::{complete_source_ownership, target_declarations};
+use rg_source::QueryContext;
 use rg_std::MemorySize;
+use rg_workspace::WorkspaceInput;
 
 use super::ProjectSnapshot;
 
@@ -46,28 +48,20 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         source_path: &Path,
     ) -> anyhow::Result<Option<FileContext>> {
-        let file = FileId::for_path(&self.query_context().interner(), source_path)?;
-        if let Some(sources) = self.saved_sources {
-            if let Some(crate_ref) = sources.first_module_crate(file) {
-                return Ok(Some(FileContext { crate_ref, file }));
-            }
-        } else {
-            // An unsaved `mod shared;` in lib.rs can take precedence over main.rs's saved owner.
-            // Select from active declarations, rather than just validating the old selection.
-            for (crate_ref, _) in self.state.workspace().targets() {
-                let metadata = target_declarations(self.query_context(), crate_ref)?
-                    .metadata
-                    .value_ref(self.query_context())?;
-                if metadata.sources.modules.binary_search(&file).is_ok() {
-                    return Ok(Some(FileContext { crate_ref, file }));
-                }
-            }
+        let db = self.query_context();
+        let file = FileId::for_path(&db.interner(), source_path)?;
+        let module_crate = match self.saved_sources {
+            Some(sources) => sources.first_module_crate(file),
+            None => *first_module_crate(db, file)?,
+        };
+        if let Some(crate_ref) = module_crate {
+            return Ok(Some(FileContext { crate_ref, file }));
         }
         for (crate_ref, _) in self.state.workspace().targets() {
-            let target = target_declarations(self.query_context(), crate_ref)?;
+            let target = target_declarations(db, crate_ref)?;
             if !target
                 .source_ownership
-                .value_ref(self.query_context())?
+                .value_ref(db)?
                 .known_owners(file)
                 .is_empty()
             {
@@ -75,7 +69,7 @@ impl<'a> ProjectSnapshot<'a> {
             }
         }
         for (crate_ref, _) in self.state.workspace().targets() {
-            if !complete_source_ownership(self.query_context(), crate_ref)?
+            if !complete_source_ownership(db, crate_ref)?
                 .owners(file)
                 .is_empty()
             {
@@ -102,4 +96,18 @@ impl<'a> ProjectSnapshot<'a> {
         }
         Ok(crates)
     }
+}
+
+/// Select the first target whose active module declarations contain `file`. An editor can add
+/// `mod shared;` to a library while the binary still owns `shared.rs`. Reading declarations in
+/// order makes that edit invalidate the binary's selection. Later targets cannot affect it.
+#[ajika::query(returns(ref))]
+fn first_module_crate(db: &QueryContext<'_>, file: FileId) -> ajika::Result<Option<CrateRef>> {
+    for &krate in WorkspaceInput::at(()).targets(db)?.iter() {
+        let metadata = target_declarations(db, krate)?.metadata.value_ref(db)?;
+        if metadata.sources.modules.binary_search(&file).is_ok() {
+            return Ok(Some(krate));
+        }
+    }
+    Ok(None)
 }

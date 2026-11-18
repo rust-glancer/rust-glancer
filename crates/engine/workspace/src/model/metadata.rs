@@ -87,7 +87,9 @@ impl WorkspaceMetadata {
             input.set_origin(update, package.origin.clone())?;
             input.set_generated_sources(update, package.cargo_generated_sources.clone())?;
         }
+        let mut targets = Vec::new();
         for (krate, target) in self.targets() {
+            targets.push(krate);
             let input = TargetInput::at(krate);
             input.set_root_path(
                 update,
@@ -96,7 +98,9 @@ impl WorkspaceMetadata {
             input.set_name(update, target.name.clone())?;
             input.set_kind(update, target.kind.clone())?;
         }
-        WorkspaceInput::at(()).set_target_cfg(update, self.target_cfg_options.clone())
+        let workspace = WorkspaceInput::at(());
+        workspace.set_targets(update, targets)?;
+        workspace.set_target_cfg(update, self.target_cfg_options.clone())
     }
 
     /// Returns this workspace with sysroot crates modeled as ordinary packages.

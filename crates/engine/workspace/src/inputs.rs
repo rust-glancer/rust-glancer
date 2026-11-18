@@ -26,6 +26,9 @@ pub struct PackageInput {
 pub struct WorkspaceInput {
     #[input(arc)]
     target_cfg: CfgOptions,
+    /// Analyzed targets in package/target order. For a shared module, the first owner wins.
+    #[input(arc)]
+    targets: Vec<CrateRef>,
 }
 
 #[ajika::input(key = CrateRef, durability = High)]

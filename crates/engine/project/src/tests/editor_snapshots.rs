@@ -68,12 +68,15 @@ pub fn read() { let result: crate::Value = 1; let _ = result; }
     let mut project = fixture.build_project();
     let library = fixture.path("src/lib.rs");
     let shared = fixture.path("src/shared.rs");
+    // Open the library before editing it so the editor has already selected the binary.
+    let text = fs::read_to_string(&library).expect("read library");
+    let opened = CapturedSource::new(&library, text).expect("open library");
     assert_eq!(
         project
-            .with_snapshot(CancellationToken::new(), |snapshot| {
+            .with_editor_snapshot(&[opened], CancellationToken::new(), |snapshot| {
                 result_type(snapshot, &shared)
             })
-            .expect("saved binary interpretation"),
+            .expect("initial binary interpretation"),
         PrimitiveTy::UnsignedInt(UnsignedIntTy::U16)
     );
 
