@@ -5,7 +5,7 @@ use rg_def_map::{CrateDefMapReader, DefinitionReader};
 use rg_ir_model::{BodyId, BodyKey};
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{
-    ItemLookupQuery, ItemReader, ItemSourceView, TargetDeclarationReader, body_owner,
+    BodyOwnerData, ItemLookupQuery, ItemReader, ItemSourceView, TargetDeclarationReader, body_owner,
 };
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
@@ -24,20 +24,26 @@ pub struct PreparedBody {
     sources: Arena<BodyId, BodySourceStore>,
 }
 
+impl PreparedBody {
+    pub(crate) fn can_prepare(owner: &BodyOwnerData) -> bool {
+        // TODO: Lower bodies emitted by item-position macros from their expansion syntax.
+        // Their invocation has no function or initializer AST for the file lowerer to open.
+        owner.source.as_item_tree().is_some()
+    }
+}
+
 /// Query a single outer owner. The target's body-owner list establishes whether the owner still
 /// exists; an older record cannot supply its previous body after that declaration disappears.
 #[ajika::query]
 pub fn prepare_body(db: &QueryContext<'_>, key: BodyKey) -> ajika::Result<Option<PreparedBody>> {
     metric::OWNERS.inc();
-    let Some(owner) = body_owner(db, key)?.copied() else {
+    let Some(owner) = body_owner(db, key)?
+        .copied()
+        .filter(PreparedBody::can_prepare)
+    else {
         return Ok(None);
     };
 
-    // TODO: Lower bodies produced by item-position macros from their expansion syntax.
-    // Their navigation fallback is an invocation, which is not a written body declaration.
-    if owner.source.as_item_tree().is_none() {
-        return Ok(None);
-    }
     let span = ItemSourceView::new(db, key.krate, owner.source)?
         .location(owner.location)
         .ok_or_else(|| ajika::Error::application("body owner occurrence is absent"))?

@@ -15,8 +15,8 @@ use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
 use crate::{
-    BodyLocalItems, BodyOwner, BodySourceStore, BodyStore, BodyView, PreparedBodyStore, body_store,
-    infer_body, prepare_body,
+    BodyLocalItems, BodyOwner, BodySourceStore, BodyStore, BodyView, PreparedBody,
+    PreparedBodyStore, body_store, infer_body, prepare_body,
 };
 
 /// Owner metadata identifies bodies without lowering or inferring them. Enumerating methods can
@@ -119,9 +119,9 @@ impl<'db> BodyReader<'db> {
         if !self.targets.contains(&krate) {
             return Ok(Vec::new().into_iter());
         }
-        Ok(body_owners(self.db, krate, selection)
-            .map_err(ReadError::Query)?
-            .into_iter())
+        let mut owners = body_owners(self.db, krate, selection)?;
+        owners.retain(PreparedBody::can_prepare);
+        Ok(owners.into_iter())
     }
 
     pub fn bodies(
