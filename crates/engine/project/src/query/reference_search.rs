@@ -57,6 +57,8 @@ impl<'a> ReferenceSearchPlanner<'a> {
     ///
     /// This is a request-local text prefilter. It narrows expensive semantic scans without storing
     /// a persistent text index or changing the declaration matcher that proves each result.
+    /// It searches written bytes, so a format capture that escapes part of the name cannot select
+    /// a file on its own.
     pub(super) fn files_matching_labels(
         &self,
         db: &QueryContext<'_>,

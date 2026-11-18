@@ -7,6 +7,14 @@
 
 use rg_ir_model::{CrateRef, FileId};
 
+/// Find References includes spellings such as `Self`. Renaming a type only needs occurrences
+/// of its declared name, because `Self` keeps its meaning after the rename.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceSearchKind {
+    FindReferences,
+    Rename,
+}
+
 /// Options for a source reference lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceQuery<'a> {

@@ -10,7 +10,7 @@
 //!
 //! Named items are searched by their declaration spelling. For example, searching `User` after
 //! `use User as Account` finds the import's `User`, but does not follow uses spelled `Account`.
-//! Nominal types also search `Self`, which can refer to that type without repeating its name.
+//! Find References also searches `Self` for nominal types. A type rename only edits its name.
 //! Modules also search `self` and `super`. Crate roots add `crate` and the crate name.
 
 use std::collections::HashSet;
@@ -25,7 +25,7 @@ use rg_ir_view::{
 };
 use rg_std::UniqueVec;
 
-use super::ReferenceSearchLabel;
+use super::{ReferenceSearchKind, ReferenceSearchLabel};
 use crate::{model::SymbolAt, source_symbol::SourceSymbol};
 
 /// Request-local declaration identity for one reference lookup.
@@ -39,6 +39,7 @@ impl ReferenceSubject {
     pub(super) fn resolve(
         db: &IndexedViewDb<'_>,
         declarations: &[DeclarationRef],
+        kind: ReferenceSearchKind,
     ) -> anyhow::Result<(Self, ReferenceSearchHints)> {
         let declaration_view = DeclarationView::new(db);
         let mut declaration_locations = Vec::new();
@@ -67,13 +68,15 @@ impl ReferenceSubject {
                 if let Some(label) = ReferenceSearchHints::exact_label_for_declaration(declaration)
                 {
                     exact_labels.push(label);
-                    if matches!(
-                        declaration.kind(),
-                        SymbolKind::Struct
-                            | SymbolKind::Enum
-                            | SymbolKind::Union
-                            | SymbolKind::TypeAlias
-                    ) {
+                    if kind == ReferenceSearchKind::FindReferences
+                        && matches!(
+                            declaration.kind(),
+                            SymbolKind::Struct
+                                | SymbolKind::Enum
+                                | SymbolKind::Union
+                                | SymbolKind::TypeAlias
+                        )
+                    {
                         exact_labels.push(
                             ReferenceSearchLabel::identifier("Self")
                                 .expect("Self is an identifier"),

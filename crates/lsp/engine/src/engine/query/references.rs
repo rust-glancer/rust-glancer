@@ -12,7 +12,9 @@ use std::{path::Path, time::Instant};
 
 use anyhow::Context as _;
 use gen_lsp_types::{DocumentHighlight, Location, Position, PrepareRenameResult, WorkspaceEdit};
-use rg_analysis::{ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget};
+use rg_analysis::{
+    ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind, RenameEdit, RenameTarget,
+};
 use rg_ir_model::CrateRef;
 use rg_lsp_proto::DocumentPositionSnapshot;
 use rg_project::{FileContext, ProjectSnapshot};
@@ -29,9 +31,8 @@ use crate::proto::{
 /// safely narrowed that scope to concrete crate/file pairs. `None` means no safe label was
 /// available, so the query must scan every target crate.
 ///
-/// For `struct User` and a cursor on `User`, a plan can keep only files containing that identifier
-/// token. Semantic reference matching still proves which of those textual occurrences mean this
-/// particular `User`.
+/// For `struct User`, Find References also searches files containing `Self`. Rename only needs
+/// candidate spellings of `User`. Analysis resolves the occurrences in the selected files.
 #[derive(Debug, Clone)]
 struct ReferenceSearchPlan {
     targets: Vec<CrateRef>,
@@ -53,6 +54,7 @@ impl QueryRunner<'_> {
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
         position: Position,
+        kind: ReferenceSearchKind,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Option<(FileContext, u32, ReferenceSearchPlan)>> {
         let Some((context, offset)) = Self::file_offset(snapshot, path, position)? else {
@@ -73,7 +75,7 @@ impl QueryRunner<'_> {
             )
             .context("plan reference search crates")?;
         let labels = analysis
-            .reference_search_labels(context.crate_ref, context.file, offset)
+            .reference_search_labels(context.crate_ref, context.file, offset, kind)
             .context("collect reference-search labels")?;
         let files = snapshot
             .reference_search_files_matching_labels(&targets, &labels, &cancellation.token())
@@ -97,9 +99,14 @@ impl QueryRunner<'_> {
             let path = document.source_path().to_path_buf();
             let position = input.position();
             let started = Instant::now();
-            let Some((context, offset, search_plan)) =
-                Self::reference_search_plan_for_position(snapshot, &path, position, cancellation)
-                    .context("plan references query")?
+            let Some((context, offset, search_plan)) = Self::reference_search_plan_for_position(
+                snapshot,
+                &path,
+                position,
+                ReferenceSearchKind::FindReferences,
+                cancellation,
+            )
+            .context("plan references query")?
             else {
                 return Ok(Vec::new());
             };
@@ -227,9 +234,14 @@ impl QueryRunner<'_> {
             let path = document.source_path().to_path_buf();
             let position = input.position();
             let started = Instant::now();
-            let Some((context, offset, search_plan)) =
-                Self::reference_search_plan_for_position(snapshot, &path, position, cancellation)
-                    .context("plan rename references")?
+            let Some((context, offset, search_plan)) = Self::reference_search_plan_for_position(
+                snapshot,
+                &path,
+                position,
+                ReferenceSearchKind::Rename,
+                cancellation,
+            )
+            .context("plan rename references")?
             else {
                 return Ok(None);
             };

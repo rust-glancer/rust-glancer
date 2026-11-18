@@ -18,7 +18,7 @@ use std::{
 };
 
 use expect_test::expect;
-use rg_analysis::ReferenceQuery;
+use rg_analysis::{ReferenceQuery, ReferenceSearchKind};
 use rg_ir_model::Span;
 use rg_source::CapturedSource;
 
@@ -522,7 +522,12 @@ pub fn demo(user: User) -> usize {
                 )
                 .expect("plan reference crates");
             let labels = analysis
-                .reference_search_labels(target, lib_context.file, subject.offset)
+                .reference_search_labels(
+                    target,
+                    lib_context.file,
+                    subject.offset,
+                    ReferenceSearchKind::FindReferences,
+                )
                 .expect("reference labels should resolve");
             let files = snapshot
                 .reference_search_files_matching_labels(
@@ -708,7 +713,12 @@ pub fn visit(_: se$relative$lf::Marker) {}
         let analysis = snapshot.analysis();
         let subject = fixture.markers().position("subject").offset;
         let labels = analysis
-            .reference_search_labels(bin.crate_ref, bin.file, subject)
+            .reference_search_labels(
+                bin.crate_ref,
+                bin.file,
+                subject,
+                ReferenceSearchKind::FindReferences,
+            )
             .expect("resolve module from its dependent");
         let files = snapshot
             .reference_search_files_matching_labels(

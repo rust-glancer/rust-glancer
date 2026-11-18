@@ -20,7 +20,7 @@ mod subject;
 
 pub use rg_ir_view::source::ReferenceSearchLabel;
 
-pub use self::search::{ReferenceQuery, ReferenceSearchFile};
+pub use self::search::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind};
 use self::{
     search::{ReferenceScanTarget, ReferenceSearchScope},
     subject::{ReferenceSearchHints, ReferenceSubject},
@@ -42,6 +42,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
+        kind: ReferenceSearchKind,
     ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
         let mut declarations = UniqueVec::new();
         for symbol in analysis.source_symbols_at_for_query(crate_ref, file_id, offset)? {
@@ -52,7 +53,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             }
         }
         let declarations = declarations.into_vec();
-        let (_, hints) = ReferenceSubject::resolve(analysis.view_db(), &declarations)?;
+        let (_, hints) = ReferenceSubject::resolve(analysis.view_db(), &declarations, kind)?;
         if hints.local_owners().is_some() {
             return Ok(Vec::new());
         }
@@ -110,7 +111,10 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         if declarations.is_empty() {
             return Ok(Vec::new());
         }
-        let mut symbols = self.source_symbols_matching_declarations(&declarations.into_vec())?;
+        let mut symbols = self.source_symbols_matching_declarations(
+            &declarations.into_vec(),
+            ReferenceSearchKind::FindReferences,
+        )?;
         for symbol in cursor_symbols {
             let included = match symbol.role() {
                 SourceSymbolRole::Reference => {
@@ -139,12 +143,14 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     pub(crate) fn source_symbols_matching_declarations(
         &self,
         declarations: &[DeclarationRef],
+        kind: ReferenceSearchKind,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         if declarations.is_empty() {
             return Ok(Vec::new());
         }
 
-        let (subject, hints) = ReferenceSubject::resolve(self.analysis.view_db(), declarations)?;
+        let (subject, hints) =
+            ReferenceSubject::resolve(self.analysis.view_db(), declarations, kind)?;
         self.source_symbols_matching_subject(&subject, &hints)
     }
 

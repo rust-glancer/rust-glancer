@@ -666,7 +666,7 @@ pub fn use_it(_: Account) {}
 }
 
 #[test]
-fn finds_self_references_for_nominal_types() {
+fn finds_self_references_but_renames_only_the_type_name() {
     check_analysis(
         r#"
 //- /src/lib.rs crate:analysis_self_references
@@ -674,7 +674,7 @@ pub struct Us$0er; // references("type references including Self", ReferenceQuer
 
 impl User {
     pub fn make() -> Self {
-        User
+        Us$0er // rename("rename User", "Person")
     }
 }
 "#,
@@ -684,6 +684,12 @@ impl User {
             `User` @ src/lib.rs:3:6-3:10
             `Self` @ src/lib.rs:4:22-4:26
             `User` @ src/lib.rs:5:9-5:13
+
+            // rename User
+            target `User` @ src/lib.rs:5:9-5:13
+            `User` -> `Person` @ src/lib.rs:1:12-1:16
+            `User` -> `Person` @ src/lib.rs:3:6-3:10
+            `User` -> `Person` @ src/lib.rs:5:9-5:13
         "#]],
     );
 }
