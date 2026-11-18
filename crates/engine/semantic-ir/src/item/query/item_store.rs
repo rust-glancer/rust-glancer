@@ -57,16 +57,18 @@ where
         }))
     }
 
+    /// Open one trait or impl's member store and return its functions, including any generated
+    /// by macros. Each reference comes with the declaration so callers can check its name or
+    /// `self` parameter in the same read. A scope store yields an empty iterator.
     pub fn associated_functions(
         &self,
         store: ItemStoreRef,
-    ) -> Result<impl Iterator<Item = FunctionRef> + use<'a, S>, ReadError> {
+    ) -> Result<impl Iterator<Item = (FunctionRef, &'a FunctionData)> + use<'a, S>, ReadError> {
         Ok(self
-            .associated_items(store, AssociatedItemFilter::All)?
-            .filter_map(move |item| match item {
-                AssocItemId::Function(id) => Some(FunctionRef::new(store, *id)),
-                _ => None,
-            }))
+            .source
+            .associated_items(store)?
+            .into_iter()
+            .flat_map(move |members| members.functions_with_refs(store)))
     }
 
     /// Enumerate all declarations, including every trait and impl's members in this origin.
@@ -459,8 +461,7 @@ where
 
     /// Find an associated type declared directly by this impl.
     ///
-    /// Trait association is name-based in Rust, so both program materialization and direct
-    /// projection use this query instead of independently walking an impl's item IDs.
+    /// Inside an impl, `Self::Item` can refer to its own alias even in the impl's bounds.
     pub fn impl_associated_type_by_name(
         &self,
         impl_ref: ImplRef,
@@ -475,21 +476,34 @@ where
         store: ItemStoreRef,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, ReadError> {
+        Ok(self.source.associated_items(store)?.and_then(|members| {
+            members
+                .type_alias_by_name(name)
+                .map(|id| TypeAliasRef::new(store, id))
+        }))
+    }
+
+    /// Find the declaration that defines a trait's associated type for an already selected impl.
+    /// For `<MyIter as Iterator>::Item`, use the impl's `type Item` if present. If its member
+    /// store contains no such alias, use the trait declaration when it supplies a default.
+    /// Return `None` if neither supplies a definition, or if the trait alias or impl store is
+    /// missing. The solver applies the caller's generic arguments to the chosen declaration.
+    pub fn associated_type_definition_for_impl(
+        &self,
+        impl_ref: ImplRef,
+        trait_alias: TypeAliasRef,
+    ) -> Result<Option<TypeAliasRef>, ReadError> {
+        let store = impl_ref.member_store();
+        let Some(declaration) = self.type_alias_data(trait_alias)? else {
+            return Ok(None);
+        };
         let Some(members) = self.source.associated_items(store)? else {
             return Ok(None);
         };
-        for item in members.items() {
-            let AssocItemId::TypeAlias(id) = item else {
-                continue;
-            };
-            if members
-                .type_alias_data(*id)
-                .is_some_and(|data| data.name.as_str() == name)
-            {
-                return Ok(Some(TypeAliasRef::new(store, *id)));
-            }
-        }
-        Ok(None)
+        Ok(members
+            .type_alias_by_name(declaration.name.as_str())
+            .map(|id| TypeAliasRef::new(store, id))
+            .or_else(|| declaration.signature.aliased_ty().map(|_| trait_alias)))
     }
 
     /// Provides lowered function facts for both free functions and associated functions.

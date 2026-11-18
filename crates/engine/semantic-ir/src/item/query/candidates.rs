@@ -1,8 +1,6 @@
 //! Select declaration candidates from acquired lookup shards. These answers do not prove types.
 
-use rg_ir_model::{
-    AssocItemId, FunctionRef, ImplRef, ItemStoreRef, TraitDefRef, TraitImplRef, TypeDefRef,
-};
+use rg_ir_model::{FunctionRef, ImplRef, ItemStoreRef, TraitDefRef, TraitImplRef, TypeDefRef};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_text::Name;
@@ -10,12 +8,15 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{AssociatedItemStore, ItemLookupIndex, ItemLookupShard, LookupKeys, TraitImplSelfHead};
 
-/// A candidate question contains identities and names, never an inference table or a source span.
+/// Selects which declarations to look up in the crates visible from a use site. For example,
+/// method lookup can ask which impls might define a function before it knows their member IDs.
+/// Ajika uses the encoded question as part of the cache key. Within a cache epoch, append new
+/// variants so existing questions keep their tags.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub enum LookupQuestion {
     InherentFunctions(TypeDefRef, Name),
-    StructuralFunctions(Name),
     StructuralImpls,
+    StructuralImplsWithFunctionName(Name),
     StructuralImplsWithItemName(Name),
     InherentImpls(TypeDefRef),
     InherentImplsWithItemName(TypeDefRef, Name),
@@ -51,7 +52,7 @@ impl LookupQuestion {
                 keys.traits.contains(trait_ref),
                 ItemLookupIndex::shard_for(trait_ref),
             ),
-            Self::StructuralFunctions(name)
+            Self::StructuralImplsWithFunctionName(name)
             | Self::StructuralImplsWithItemName(name)
             | Self::TraitsWithItemName(name)
             | Self::TraitsWithFunctionName(name)
@@ -69,7 +70,7 @@ impl LookupQuestion {
         // A missing written name does not rule out a macro-generated member. Include the broad
         // macro-owner shard too, so `methods!()` can supply a name absent from the written index.
         match self {
-            Self::StructuralFunctions(_) | Self::StructuralImplsWithItemName(_)
+            Self::StructuralImplsWithFunctionName(_) | Self::StructuralImplsWithItemName(_)
                 if keys.structural_macros =>
             {
                 shards.push(0);
@@ -93,10 +94,9 @@ impl LookupQuestion {
         shards
     }
 
-    /// Union selected shards in visibility order, then read members only for function answers.
-    /// Impl and trait candidate lists come from headers and hints alone; they may still need
-    /// semantic proof. The provider observes routing keys even when no shard matches, so adding
-    /// the first matching declaration invalidates an earlier empty answer.
+    /// Collect the answer from the selected index shards. An impl or trait lookup can return
+    /// the owner IDs recorded in the index. A function lookup also calls `members` to get the
+    /// actual function IDs, including those allocated when member macros expand.
     pub fn answer<'a, 'item>(
         &self,
         shards: impl Iterator<Item = &'a ItemLookupShard>,
@@ -129,29 +129,20 @@ impl LookupQuestion {
                             .map(|owner| owner.member_store()),
                     );
                 }
-                Self::StructuralFunctions(name) => {
-                    function_owners.extend(
-                        shard
-                            .structural_item_owners_by_name
-                            .get(name)
-                            .into_iter()
-                            .flat_map(|owners| owners.functions.iter())
-                            .chain(shard.structural_macro_impls.iter())
-                            .map(|owner| owner.member_store()),
-                    );
-                }
                 Self::StructuralImpls => {
                     impls.extend(shard.structural_inherent_impls.iter().copied())
                 }
-                Self::StructuralImplsWithItemName(name) => impls.extend(
-                    shard
-                        .structural_item_owners_by_name
-                        .get(name)
-                        .into_iter()
-                        .flat_map(|owners| owners.all())
-                        .chain(shard.structural_macro_impls.iter())
-                        .copied(),
-                ),
+                Self::StructuralImplsWithFunctionName(name)
+                | Self::StructuralImplsWithItemName(name) => {
+                    if let Some(owners) = shard.structural_item_owners_by_name.get(name) {
+                        if matches!(self, Self::StructuralImplsWithFunctionName(_)) {
+                            impls.extend(owners.functions.iter().copied());
+                        } else {
+                            impls.extend(owners.all().copied());
+                        }
+                    }
+                    impls.extend(shard.structural_macro_impls.iter().copied());
+                }
                 Self::InherentImplsWithItemName(ty, name) => impls.extend(
                     shard
                         .inherent_item_owners_by_type_and_name
@@ -288,9 +279,7 @@ impl LookupQuestion {
             }
         }
         let name = match self {
-            Self::InherentFunctions(_, name)
-            | Self::StructuralFunctions(name)
-            | Self::TraitFunctionsByName(_, name) => Some(name),
+            Self::InherentFunctions(_, name) | Self::TraitFunctionsByName(_, name) => Some(name),
             _ => None,
         };
         // Hints selected owners, not function IDs. Open each selected store and check the real
@@ -299,25 +288,20 @@ impl LookupQuestion {
             let Some(store) = members(owner)? else {
                 continue;
             };
-            for item in store.items() {
-                if let AssocItemId::Function(id) = item
-                    && store
-                        .function_data(*id)
-                        .is_some_and(|data| name.is_none_or(|name| *name == data.name))
-                {
-                    functions.push(FunctionRef::new(owner, *id));
+            for (function, data) in store.functions_with_refs(owner) {
+                if name.is_none_or(|name| *name == data.name) {
+                    functions.push(function);
                 }
             }
         }
         trait_impls.extend(fallback_impls);
         Ok(match self {
-            Self::InherentFunctions(..) | Self::StructuralFunctions(..) => {
-                LookupAnswer::Functions(Some(functions))
-            }
+            Self::InherentFunctions(..) => LookupAnswer::Functions(Some(functions)),
             Self::TraitFunctions(..) | Self::TraitFunctionsByName(..) => {
                 LookupAnswer::Functions(known.then_some(functions))
             }
             Self::StructuralImpls
+            | Self::StructuralImplsWithFunctionName(..)
             | Self::StructuralImplsWithItemName(..)
             | Self::InherentImpls(..)
             | Self::InherentImplsWithItemName(..)

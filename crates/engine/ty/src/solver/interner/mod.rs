@@ -915,7 +915,6 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         match self.metadata(id).kind {
             DeclarationKind::Impl {
                 polarity: ImplPolarity::Negative,
-                ..
             } => ir::ImplPolarity::Negative,
             _ => ir::ImplPolarity::Positive,
         }
