@@ -94,7 +94,7 @@ impl SourceEntry {
         // Evicting saved text doesn't change what a reader can observe. SourceEntry verifies the
         // revision if it has to reload those bytes from disk.
         Ok(match capture {
-            Ok(entry) => ajika::Stamp::from_bytes(*entry.revision().as_bytes()),
+            Ok(entry) => entry.revision().stamp(),
             Err(_) => ajika::Stamp::of(b"unreadable Rust source"),
         })
     }

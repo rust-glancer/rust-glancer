@@ -2195,10 +2195,10 @@ name = "rg_source"
 version = "0.0.0"
 dependencies = [
  "ajika",
- "blake3",
  "rg_ir_model",
  "rg_std",
  "tempfile",
+ "twox-hash",
 ]
 
 [[package]]

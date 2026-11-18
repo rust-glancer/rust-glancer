@@ -10,9 +10,9 @@ description.workspace = true
 
 [dependencies]
 ajika.workspace = true
-blake3.workspace = true
 rg_ir_model.workspace = true
 rg_std.workspace = true
+twox-hash = { workspace = true, features = ["xxhash3_128"] }
 
 [dev-dependencies]
 tempfile.workspace = true

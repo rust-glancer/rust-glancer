@@ -11,31 +11,32 @@ use std::{
 };
 
 use rg_std::MemorySize;
+use twox_hash::XxHash3_128;
 
-/// Strong identity of the exact UTF-8 bytes captured for one source file.
+/// Fingerprint of the UTF-8 bytes captured for one source file.
 ///
 /// A revision does not mean "the latest contents at this path". It names the bytes that one
 /// input revision used, even if the path changes on disk after the bytes were captured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
-pub struct SourceRevision([u8; 32]);
+pub struct SourceRevision(u128);
 
 impl SourceRevision {
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self(*blake3::hash(bytes).as_bytes())
+        Self(XxHash3_128::oneshot(bytes))
     }
 
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
+    pub(crate) fn stamp(self) -> ajika::Stamp {
+        // Ajika stores 32-byte stamps. Only the first 16 bytes carry the fingerprint.
+        let mut bytes = [0; 32];
+        bytes[..16].copy_from_slice(&self.0.to_be_bytes());
+        ajika::Stamp::from_bytes(bytes)
     }
 }
 
 impl fmt::Display for SourceRevision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(f, "{byte:02x}")?;
-        }
-        Ok(())
+        write!(f, "{:032x}", self.0)
     }
 }
 

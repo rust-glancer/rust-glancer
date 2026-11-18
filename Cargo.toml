@@ -71,7 +71,6 @@ libraries = [
 [workspace.dependencies]
 ajika = "0.1.7"
 anyhow = "1.0.103"
-blake3 = "1.8.5"
 bumpalo = "3.17.0"
 clap = "4.6.1"
 cargo_metadata = "0.23.1"
@@ -124,6 +123,7 @@ tower = "0.5.2"
 tower-lsp-server = "0.24.0-rc.1"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
+twox-hash = { version = "2.1.5", default-features = false }
 tikv-jemallocator = "0.6.1"
 tikv-jemalloc-sys = "0.6.1"
 ungrammar = "1.16.1"
