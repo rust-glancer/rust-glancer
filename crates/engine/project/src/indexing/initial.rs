@@ -53,7 +53,8 @@ pub(crate) fn build_state(
     })?;
     operation.finish();
 
-    // Take the operation's counters after checkpointing so writes appear in the same report.
+    // These counters cover the indexing run. It can write a checkpoint under pressure or
+    // leave the batch for collection once the project is published.
     let stats = database.statistics();
     metric::EXECUTED.add(stats.executed);
     metric::VALIDATED.add(stats.validated);

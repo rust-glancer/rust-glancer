@@ -69,7 +69,7 @@ libraries = [
 ]
 
 [workspace.dependencies]
-ajika = "0.1.7"
+ajika = "0.2.0"
 anyhow = "1.0.103"
 bumpalo = "3.17.0"
 clap = "4.6.1"
@@ -98,7 +98,7 @@ proc-macro2 = "1.0.106"
 pulldown-cmark = { version = "0.13.6", default-features = false }
 quote = "1.0.45"
 ra-ap-rustc_lexer = "=0.166.0"
-wincode = { version = "0.5.3", features = ["derive"] }
+wincode = { version = "0.6.3", features = ["derive"] }
 rayon = "1.12.0"
 rustc-hash = "2.1.2"
 rustc_abi = { package = "ra-ap-rustc_abi", version = "=0.166.0", default-features = false }

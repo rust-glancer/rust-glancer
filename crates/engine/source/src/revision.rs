@@ -27,10 +27,7 @@ impl SourceRevision {
     }
 
     pub(crate) fn stamp(self) -> ajika::Stamp {
-        // Ajika stores 32-byte stamps. Only the first 16 bytes carry the fingerprint.
-        let mut bytes = [0; 32];
-        bytes[..16].copy_from_slice(&self.0.to_be_bytes());
-        ajika::Stamp::from_bytes(bytes)
+        ajika::Stamp::from_bytes(self.0.to_be_bytes())
     }
 }
 

@@ -25,11 +25,11 @@ pub fn fixture_database(workspace: &WorkspaceMetadata) -> rg_source::QueryDataba
     rg_source::QueryDatabase::memory(
         inputs,
         rg_source::QueryServices::default(),
-        ajika::Retention {
+        ajika::DatabaseOptions::new(ajika::Retention {
             max_entries: usize::MAX,
             max_bytes: u64::MAX,
             max_idle: Duration::MAX,
-        },
+        }),
     )
 }
 

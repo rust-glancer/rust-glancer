@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, ffi::OsStr, path::PathBuf, time::Duration};
 
-use ajika::Compression;
+use ajika::{Compression, DatabaseOptions};
 use rg_ir_model::FileId;
 use rg_semantic_ir::TargetDeclarationReader;
 use rg_source::{
@@ -26,12 +26,15 @@ const RETENTION: ajika::Retention = ajika::Retention {
     max_bytes: 4 * 1024 * 1024 * 1024,
     max_idle: Duration::from_secs(30 * 24 * 60 * 60),
 };
+// Between collections, requests can reuse results that are waiting to be written. Ajika
+// measures this budget in estimated encoded bytes. The live Rust values can occupy more memory.
+const MAX_PENDING_BYTES: u64 = 256 * 1024 * 1024;
 
 // Internal benchmark switch: change this constant and rebuild to compare memory storage or
 // another codec. CLI and LSP use this same choice; it is not a user configuration setting.
 const STORAGE: QueryStorage = QueryStorage::Disk(Compression::Lz4);
 
-/// Memory keeps reusable typed results resident; disk releases decoded results between operations.
+/// Disk storage can release query results after writing them. Memory storage keeps them resident.
 #[derive(Debug)]
 #[allow(
     dead_code,
@@ -197,12 +200,13 @@ impl ProjectQueries {
             QueryStorage::Memory => QueryDatabase::memory(
                 ajika::Inputs::default(),
                 QueryServices::default(),
-                RETENTION,
+                DatabaseOptions::new(RETENTION),
             ),
             QueryStorage::Disk(compression) => {
-                let mut database = Self::open_disk(workspace)?;
-                // Existing frames carry their own codec; this only changes future writes.
-                database.set_compression(compression);
+                let options = DatabaseOptions::new(RETENTION)
+                    .compression(compression)
+                    .defer_checkpoints(MAX_PENDING_BYTES);
+                let mut database = Self::open_disk(workspace, options)?;
                 if !reuse_cache {
                     database.invalidate()?;
                 }
@@ -216,7 +220,10 @@ impl ProjectQueries {
         })
     }
 
-    fn open_disk(workspace: &WorkspaceMetadata) -> anyhow::Result<QueryDatabase> {
+    fn open_disk(
+        workspace: &WorkspaceMetadata,
+        options: DatabaseOptions,
+    ) -> anyhow::Result<QueryDatabase> {
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| workspace.cargo_target_dir().to_path_buf());
@@ -232,7 +239,7 @@ impl ProjectQueries {
                 EPOCH,
                 ajika::Inputs::default(),
                 QueryServices::default(),
-                RETENTION,
+                options.clone(),
             ) {
                 Ok(database) => return Ok(database),
                 Err(error) => match error.kind() {
@@ -243,6 +250,20 @@ impl ProjectQueries {
             }
         }
         anyhow::bail!("no free query cache slots under {}", root.display())
+    }
+}
+
+impl Drop for ProjectQueries {
+    fn drop(&mut self) {
+        // A project can close before the next idle collection. Preserve the last batch for
+        // restart while we still own the storage lock. On panic the next process can
+        // recompute that work.
+        if !std::thread::panicking()
+            && self.database.statistics().pending_queries != 0
+            && let Err(error) = self.database.collect()
+        {
+            tracing::warn!(%error, "could not persist pending query results before closing");
+        }
     }
 }
 

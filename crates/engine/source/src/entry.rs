@@ -95,7 +95,8 @@ impl SourceEntry {
         // revision if it has to reload those bytes from disk.
         Ok(match capture {
             Ok(entry) => entry.revision().stamp(),
-            Err(_) => ajika::Stamp::of(b"unreadable Rust source"),
+            // A readable source is UTF-8, so its bytes can never equal this error marker.
+            Err(_) => ajika::Stamp::of(&[0xff]),
         })
     }
 

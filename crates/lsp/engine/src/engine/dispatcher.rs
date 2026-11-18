@@ -61,8 +61,8 @@ impl EngineDispatcher {
     pub(super) fn run(mut self, receiver: Receiver<QueuedEngineCommand>) {
         tracing::debug!("LSP engine dispatcher started");
 
-        // Collect once after a burst has gone quiet. Automatic Ajika maintenance still bounds
-        // storage during sustained activity; this pass also repacks host-owned source metadata.
+        // Requests in a burst can reuse results waiting for disk. Once the queue goes quiet,
+        // write that batch and repack the project's source metadata.
         let mut needs_collection = false;
         loop {
             let queued = if needs_collection {

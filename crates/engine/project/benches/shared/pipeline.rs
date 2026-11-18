@@ -58,11 +58,11 @@ impl BenchWorkspace {
         QueryDatabase::memory(
             inputs,
             QueryServices::default(),
-            ajika::Retention {
+            ajika::DatabaseOptions::new(ajika::Retention {
                 max_entries: usize::MAX,
                 max_bytes: u64::MAX,
                 max_idle: Duration::MAX,
-            },
+            }),
         )
     }
 

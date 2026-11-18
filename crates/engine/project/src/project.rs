@@ -38,9 +38,8 @@ impl Project {
             .record_memory_children(recorder);
     }
 
-    /// Release operation leftovers and apply retention at a host idle boundary. This does not
-    /// change the published generation or discard editor inputs. Maintenance failure is reported
-    /// separately: an already accepted save must not look like a rejected source update.
+    /// Write pending query results and release unused memory at a host idle boundary.
+    /// An already accepted save stays published if cache maintenance fails.
     pub fn collect(&self) {
         self.collect_at(ProjectMemoryPurgePoint::Idle);
     }
