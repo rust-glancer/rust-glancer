@@ -397,10 +397,16 @@ pub fn use_it() {
 }
 
 #[test]
-fn refines_unsuffixed_numeric_literals_from_let_annotations() {
+fn refines_unsuffixed_numeric_literals_from_annotations_and_trait_bounds() {
     check_analysis(
         r#"
 //- /src/lib.rs crate:analysis_numeric_literal_inference
+trait Sample {}
+type Count = u64;
+impl Sample for Count {}
+impl Sample for f32 {}
+fn sample<T: Sample>(value: T) -> T { value }
+
 pub fn use_it() {
     let default_int = 1$0; // ty("default integer literal")
     let annotated_int: u64 = 1$0; // ty("annotated integer literal")
@@ -411,6 +417,8 @@ pub fn use_it() {
     let suffixed_half = 1.0f16$0; // ty("suffixed half float literal")
     let suffixed_quad = 1.0f128$0; // ty("suffixed quad float literal")
     let mismatch: bool = 1$0; // ty("mismatched numeric literal")
+    let count = sample(1)$0; // ty("integer selected through an alias impl")
+    let ratio = sample(1.0)$0; // ty("float selected by trait bound")
 }
 "#,
         expect![[r#"
@@ -423,6 +431,8 @@ pub fn use_it() {
             f16 // suffixed half float literal
             f128 // suffixed quad float literal
             i32 // mismatched numeric literal
+            u64 // integer selected through an alias impl
+            f32 // float selected by trait bound
         "#]],
     );
 }
