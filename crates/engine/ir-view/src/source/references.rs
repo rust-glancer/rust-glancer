@@ -1,12 +1,11 @@
-//! Select bodies worth scanning for references before paying for their inference.
+//! Select source files and bodies that could contain references to a declaration.
 //!
-//! Declaration metadata tells us where functions and initializers are written. Their source tokens
-//! can rule out many unrelated bodies without opening Body IR. This selection only limits body
-//! scanning; declaration and signature occurrences are collected separately.
+//! A spelling can rule out an entire file before any semantic scan. Within a selected file,
+//! declaration metadata and source tokens can rule out individual bodies before inference.
 
 use std::collections::{HashMap, HashSet};
 
-use rg_def_map::DefMapSource as _;
+use rg_def_map::{DefMapSource as _, ModuleOrigin};
 use rg_ir_model::{
     CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, ModuleRef, OuterBodyOwner, Span, TypeDefRef,
 };
@@ -17,6 +16,78 @@ use rg_syntax::{
 };
 
 use crate::IndexedViewDb;
+
+/// A spelling that can lead to a written reference. Ordinary names can be imported by another
+/// crate. Relative module paths start in the crate interpreting the source, even when two targets
+/// include the same file.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReferenceSearchLabel {
+    spelling: String,
+    only_in: Option<CrateRef>,
+}
+
+impl ReferenceSearchLabel {
+    /// The text prefilter recognizes ASCII identifier boundaries. Other spellings require an
+    /// unrestricted scan.
+    pub fn identifier(spelling: &str) -> Option<Self> {
+        let mut bytes = spelling.bytes();
+        let first = bytes.next()?;
+        if (first == b'_' || first.is_ascii_alphabetic())
+            && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+        {
+            Some(Self {
+                spelling: spelling.to_owned(),
+                only_in: None,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// `mod outer` can be referenced as `outer` in a dependent, as `self` inside `outer`, or as
+    /// `super` in a child. Use the module's semantic crate for the keywords so an include or
+    /// macro expansion needs no special routing. An unknown name disables spelling-based filtering.
+    pub fn for_module(db: &IndexedViewDb<'_>, module_ref: ModuleRef) -> anyhow::Result<Vec<Self>> {
+        let Some(module) = db.module_data(module_ref)? else {
+            return Ok(Vec::new());
+        };
+        let krate = module_ref.origin.origin_crate();
+        let name = match module.origin {
+            ModuleOrigin::Root { .. } => db.def_map.crate_metadata(krate)?.map(|data| data.name()),
+            ModuleOrigin::Inline { .. } | ModuleOrigin::OutOfLine { .. } => {
+                module.name.as_ref().map(|name| name.as_str())
+            }
+            ModuleOrigin::Synthetic { .. } => None,
+        };
+        let Some(name) = name.and_then(Self::identifier) else {
+            return Ok(Vec::new());
+        };
+        let mut labels = vec![name];
+        if matches!(module.origin, ModuleOrigin::Root { .. }) {
+            // The byte search also finds `crate` in `$crate`, which can refer back to the
+            // defining crate of an exported macro expanded in a dependent.
+            labels.push(Self {
+                spelling: "crate".to_owned(),
+                only_in: None,
+            });
+        }
+        labels.extend(["self", "super"].map(|spelling| Self {
+            spelling: spelling.to_owned(),
+            only_in: Some(krate),
+        }));
+        Ok(labels)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.spelling
+    }
+
+    pub fn spelling_in(&self, krate: CrateRef) -> Option<&str> {
+        self.only_in
+            .is_none_or(|owner| owner == krate)
+            .then_some(self.as_str())
+    }
+}
 
 /// Hints from the declarations selected by a reference or rename search.
 ///
@@ -30,7 +101,7 @@ use crate::IndexedViewDb;
 /// still contain no references to the searched declaration.
 pub struct ReferenceSourceSelection {
     /// Possible source spellings, such as `["Widget", "Self"]`. Empty means no spelling filter.
-    pub labels: Vec<String>,
+    pub labels: Vec<ReferenceSearchLabel>,
     /// Searched modules, used to narrow `self`, `super`, and `crate` paths.
     pub modules: Vec<ModuleRef>,
     /// Searched nominal types, used to narrow `Self` in methods with a known impl receiver.
@@ -55,31 +126,20 @@ impl ReferenceSourceSelection {
         if self.labels.is_empty() {
             return Ok(owners.clone().map(|owner| owner.owner).collect());
         }
-        // Relative module keywords refer within this crate. If every searched module belongs to
-        // another crate, only ordinary names can refer to those modules from here.
         let labels: Vec<_> = self
             .labels
             .iter()
-            .filter(|label| {
-                !matches!(label.as_str(), "self" | "super" | "crate")
-                    || self.modules.is_empty()
-                    || self
-                        .modules
-                        .iter()
-                        .any(|module| module.origin.origin_crate() == krate)
-            })
+            .filter_map(|label| label.spelling_in(krate))
             .collect();
         if labels.is_empty() {
             return Ok(selected);
         }
-        // Relative keywords cannot name a foreign module. After removing those labels, most
-        // dependency files can be rejected from their text without building any syntax tree.
         // Keep generated owners even when the text lacks a label. `include!` also prevents this
         // shortcut: the included file may contain references absent from the invocation's text.
         let text = db.sources().text(file)?;
         // A capture such as `caf\u{e9}` need not contain its decoded name in the file text.
         // Escapes require the syntax pass below before we can rule out its references.
-        if !labels.iter().any(|label| text.contains(label.as_str()))
+        if !labels.iter().any(|label| text.contains(*label))
             && !text.contains("include")
             && !text.contains('\\')
         {
@@ -110,7 +170,7 @@ impl ReferenceSourceSelection {
                     let FormatStringPartKind::Name(name) = part.kind else {
                         return;
                     };
-                    if labels.iter().any(|label| label.as_str() == name) {
+                    if labels.contains(&name) {
                         let span = Span::from_text_range(part.range + token.text_range().start());
                         tokens.entry(name.to_owned()).or_default().push(span);
                         macro_arguments
@@ -123,9 +183,7 @@ impl ReferenceSourceSelection {
             let text = token.text();
             // Raw identifiers such as `r#type` must match the label `type` too.
             let text = text.strip_prefix("r#").unwrap_or(text);
-            if labels.iter().any(|label| label.as_str() == text)
-                || matches!(text, "impl" | "mod" | "include")
-            {
+            if labels.contains(&text) || matches!(text, "impl" | "mod" | "include") {
                 let span = Span {
                     start: token.text_range().start().into(),
                     end: token.text_range().end().into(),
@@ -151,7 +209,7 @@ impl ReferenceSourceSelection {
                 selected.insert(owner.owner);
                 continue;
             }
-            for label in &labels {
+            for &label in &labels {
                 if !Self::contains(&tokens, label, span) {
                     continue;
                 }
@@ -163,7 +221,7 @@ impl ReferenceSourceSelection {
                 }
                 // `Self` and relative module paths depend on where the token is written. A nested
                 // impl or module may change that scope, so only use the outer scope without one.
-                let plausible = match label.as_str() {
+                let plausible = match label {
                     "Self" if !Self::contains(&tokens, "impl", span) => {
                         self.accepts_self(db, &owner)?
                     }

@@ -18,7 +18,9 @@ use crate::{
 mod search;
 mod subject;
 
-pub use self::search::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel};
+pub use rg_ir_view::source::ReferenceSearchLabel;
+
+pub use self::search::{ReferenceQuery, ReferenceSearchFile};
 use self::{
     search::{ReferenceScanTarget, ReferenceSearchScope},
     subject::{ReferenceSearchHints, ReferenceSubject},
@@ -54,7 +56,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         if hints.local_owners().is_some() {
             return Ok(Vec::new());
         }
-        Ok(hints.exact_labels())
+        Ok(hints.selection.labels)
     }
 
     /// Finds references for the symbol under `offset` by scanning the requested use-site surface.
@@ -300,9 +302,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         symbols: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
         let source_symbols = SourceSymbolIndex::new(self.analysis.view_db());
-        let selection = hints.source_selection(matcher.subject);
         let candidates =
-            source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id, &selection)?;
+            source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id, &hints.selection)?;
 
         for candidate in candidates {
             rg_std::check_cancel!(self.analysis, "reference candidate matching");
@@ -331,16 +332,14 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
 /// Request-local declaration matcher used while scanning source occurrences.
 struct ReferenceDeclarationMatcher<'a, 'db> {
     resolver: SourceSymbolResolver<'a, 'db>,
-    declarations: HashSet<DeclarationRef>,
-    subject: &'a ReferenceSubject,
+    declarations: &'a HashSet<DeclarationRef>,
 }
 
 impl<'a, 'db> ReferenceDeclarationMatcher<'a, 'db> {
     fn new(db: &'a IndexedViewDb<'db>, subject: &'a ReferenceSubject) -> Self {
         Self {
             resolver: SourceSymbolResolver::new(db),
-            declarations: subject.declarations().clone(),
-            subject,
+            declarations: subject.declarations(),
         }
     }
 

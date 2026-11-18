@@ -665,6 +665,89 @@ recurse!();
 }
 
 #[test]
+fn module_reference_prefilter_scopes_a_shared_include_by_target() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "shared_scope"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[rustc_builtin_macro]
+macro_rules! include { ($($args:tt)*) => {}; }
+pub mod api {
+    pub struct Marker;
+    include!("shared.rs");
+}
+
+//- /src/main.rs
+#[rustc_builtin_macro]
+macro_rules! include { ($($args:tt)*) => {}; }
+use shared_scope::a$subject$pi::Marker as LibMarker;
+pub struct Marker;
+include!("shared.rs");
+fn main() {}
+
+//- /src/shared.rs
+pub fn visit(_: se$relative$lf::Marker) {}
+"#,
+    );
+    let project = fixture.build_project();
+    project.inspect(|snapshot| {
+        let context = |path| {
+            snapshot
+                .file_context_for_path(fixture.path(path))
+                .expect("route file")
+                .expect("fixture target")
+        };
+        let lib = context("src/lib.rs");
+        let bin = context("src/main.rs");
+        let shared = ProjectFixture::file_id_for_path_in(snapshot, &fixture.path("src/shared.rs"));
+        let analysis = snapshot.analysis();
+        let subject = fixture.markers().position("subject").offset;
+        let labels = analysis
+            .reference_search_labels(bin.crate_ref, bin.file, subject)
+            .expect("resolve module from its dependent");
+        let files = snapshot
+            .reference_search_files_matching_labels(
+                &[bin.crate_ref, lib.crate_ref],
+                &labels,
+                &rg_std::CancellationToken::new(),
+            )
+            .expect("select files")
+            .expect("named module has searchable spellings");
+
+        // In the library the included `self` means `api`. The binary includes identical text at
+        // its crate root, but still needs to be searched for the explicit name in its import.
+        let shared_targets: Vec<_> = files
+            .iter()
+            .filter(|f| f.file_id == shared)
+            .map(|f| f.crate_ref)
+            .collect();
+        assert_eq!(shared_targets, [lib.crate_ref]);
+        let refs = analysis
+            .references(
+                bin.crate_ref,
+                bin.file,
+                subject,
+                ReferenceQuery::find_references_in_files(&files, false),
+            )
+            .expect("find module uses");
+        assert!(refs.iter().any(|r| {
+            r.file_id == shared
+                && r.span
+                    .touches(fixture.markers().position("relative").offset)
+        }));
+        assert!(
+            refs.iter()
+                .any(|r| r.file_id == bin.file && r.span.touches(subject))
+        );
+    });
+}
+
+#[test]
 fn reference_search_crates_follow_workspace_reverse_dependencies() {
     let fixture = ProjectSourceFixture::build(
         r#"

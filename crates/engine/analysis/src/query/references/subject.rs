@@ -25,7 +25,7 @@ use rg_ir_view::{
 };
 use rg_std::UniqueVec;
 
-use super::search::ReferenceSearchLabel;
+use super::ReferenceSearchLabel;
 use crate::{model::SymbolAt, source_symbol::SourceSymbol};
 
 /// Request-local declaration identity for one reference lookup.
@@ -45,6 +45,8 @@ impl ReferenceSubject {
         let mut exact_labels = UniqueVec::new();
         let mut exact_labels_supported = true;
         let mut local_owners = Some(UniqueVec::new());
+        let mut modules = Vec::new();
+        let mut types = Vec::new();
 
         for declaration_ref in declarations {
             let declaration = declaration_view.declaration(*declaration_ref)?;
@@ -52,18 +54,16 @@ impl ReferenceSubject {
             // A crate root has no `mod` declaration or name span, but its crate name and relative
             // keywords still narrow the scan. Collect those spellings even without a declaration.
             if let DeclarationRef::Module(module) = *declaration_ref {
-                let names = declaration_view.module_search_names(module)?;
-                if names.is_empty() {
+                modules.push(module);
+                let labels = ReferenceSearchLabel::for_module(db, module)?;
+                if labels.is_empty() {
                     exact_labels_supported = false;
                 }
-                for name in names {
-                    if let Some(label) = ReferenceSearchLabel::new(&name) {
-                        exact_labels.push(label);
-                    } else {
-                        exact_labels_supported = false;
-                    }
-                }
+                exact_labels.extend(labels);
             } else if let Some(declaration) = &declaration {
+                if let DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) = *declaration_ref {
+                    types.push(ty);
+                }
                 if let Some(label) = ReferenceSearchHints::exact_label_for_declaration(declaration)
                 {
                     exact_labels.push(label);
@@ -75,7 +75,8 @@ impl ReferenceSubject {
                             | SymbolKind::TypeAlias
                     ) {
                         exact_labels.push(
-                            ReferenceSearchLabel::new("Self").expect("Self is an identifier"),
+                            ReferenceSearchLabel::identifier("Self")
+                                .expect("Self is an identifier"),
                         );
                     }
                 } else {
@@ -121,7 +122,11 @@ impl ReferenceSubject {
             declaration_locations,
         };
         let hints = ReferenceSearchHints {
-            exact_labels,
+            selection: ReferenceSourceSelection {
+                labels: exact_labels.into_vec(),
+                modules,
+                types,
+            },
             local_owners: local_owners.map(UniqueVec::into_vec),
         };
         Ok((subject, hints))
@@ -138,41 +143,11 @@ impl ReferenceSubject {
 
 /// Request-local shortcuts that can narrow a reference scan without changing semantic matching.
 pub(super) struct ReferenceSearchHints {
-    exact_labels: UniqueVec<ReferenceSearchLabel>,
+    pub(super) selection: ReferenceSourceSelection,
     local_owners: Option<Vec<BodyKey>>,
 }
 
 impl ReferenceSearchHints {
-    pub(super) fn exact_labels(&self) -> Vec<ReferenceSearchLabel> {
-        self.exact_labels.iter().cloned().collect()
-    }
-
-    pub(super) fn source_selection(&self, subject: &ReferenceSubject) -> ReferenceSourceSelection {
-        ReferenceSourceSelection {
-            labels: self
-                .exact_labels
-                .iter()
-                .map(|label| label.as_str().to_owned())
-                .collect(),
-            modules: subject
-                .declarations
-                .iter()
-                .filter_map(|declaration| match declaration {
-                    DeclarationRef::Module(module) => Some(*module),
-                    _ => None,
-                })
-                .collect(),
-            types: subject
-                .declarations
-                .iter()
-                .filter_map(|declaration| match declaration {
-                    DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => Some(*ty),
-                    _ => None,
-                })
-                .collect(),
-        }
-    }
-
     pub(super) fn local_owners(&self) -> Option<&[BodyKey]> {
         self.local_owners.as_deref()
     }
@@ -184,16 +159,20 @@ impl ReferenceSearchHints {
         db: &IndexedViewDb<'_>,
         candidate: &SourceSymbol,
     ) -> anyhow::Result<bool> {
-        if self.exact_labels.is_empty() {
+        if self.selection.labels.is_empty() {
             return Ok(false);
         }
         let Some(label) = Self::candidate_source_label(db, candidate)? else {
             return Ok(false);
         };
-        let Some(label) = ReferenceSearchLabel::new(&label) else {
+        let Some(label) = ReferenceSearchLabel::identifier(&label) else {
             return Ok(false);
         };
-        Ok(!self.exact_labels.iter().any(|expected| expected == &label))
+        Ok(!self
+            .selection
+            .labels
+            .iter()
+            .any(|expected| expected.as_str() == label.as_str()))
     }
 
     fn exact_label_for_declaration(declaration: &Declaration) -> Option<ReferenceSearchLabel> {
@@ -202,7 +181,7 @@ impl ReferenceSearchHints {
             SymbolKind::Impl => None,
             _ => declaration
                 .semantic_name()
-                .and_then(|name| ReferenceSearchLabel::new(name)),
+                .and_then(|name| ReferenceSearchLabel::identifier(name)),
         }
     }
 

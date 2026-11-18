@@ -2,17 +2,17 @@
 //!
 //! Reference queries do not need to scan every source file. If a declaration comes from crate
 //! `model`, only `model` and crates that depend on it can contain normal references to it, so
-//! unrelated workspace crates can be skipped. When analysis also provides a safe label, such as
-//! `name` for a local binding or field, this module does a request-local text prefilter and scans
-//! only files that contain that word.
+//! unrelated workspace crates can be skipped. Within each target we only select files that
+//! contain a possible spelling, when analysis can supply those spellings.
 //!
 //! These choices only reduce the amount of source sent to semantic matching. The analysis layer
 //! still resolves every surviving candidate before it is returned as a reference.
 
 use std::collections::HashMap;
 
+use memchr::memmem::Finder;
 use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
-use rg_ir_model::{CrateRef, PackageSlot};
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_parse::SourceReader;
 use rg_semantic_ir::complete_source_ownership;
 use rg_source::QueryContext;
@@ -64,27 +64,27 @@ impl<'a> ReferenceSearchPlanner<'a> {
         labels: &[ReferenceSearchLabel],
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
-        let Some(prefilter) = ReferenceTextPrefilter::new(labels) else {
+        if labels.is_empty() {
             return Ok(None);
-        };
+        }
 
         let mut files = UniqueVec::new();
-        let mut matches = HashMap::new();
+        let mut filters = HashMap::new();
         let sources = SourceReader::new(db);
         for &crate_ref in search_crates {
+            // A shared file can pass on `super` in the defining target but need the written name
+            // in a dependent. Reuse a file's answer across targets that search the same spellings.
+            let spellings: Vec<_> = labels
+                .iter()
+                .filter_map(|label| label.spelling_in(crate_ref))
+                .collect();
+            let filter = filters
+                .entry(spellings)
+                .or_insert_with_key(|words| ReferenceTextPrefilter::new(words));
             let ownership = complete_source_ownership(db, crate_ref)?;
             for file_id in ownership.files() {
                 rg_std::check_cancel!(cancellation, "reference source prefilter");
-                let matched = match matches.get(&file_id) {
-                    Some(&matched) => matched,
-                    None => {
-                        let source = sources.text(file_id)?;
-                        let matched = prefilter.matches(source.as_bytes());
-                        matches.insert(file_id, matched);
-                        matched
-                    }
-                };
-                if matched {
+                if filter.matches_file(&sources, file_id)? {
                     files.push(ReferenceSearchFile { crate_ref, file_id });
                 }
             }
@@ -153,32 +153,35 @@ impl<'a> ReferenceSearchPlanner<'a> {
 }
 
 struct ReferenceTextPrefilter<'label> {
-    finders: Vec<(memchr::memmem::Finder<'label>, usize)>,
+    finders: Vec<Finder<'label>>,
+    files: HashMap<FileId, bool>,
 }
 
 impl<'label> ReferenceTextPrefilter<'label> {
-    fn new(labels: &'label [ReferenceSearchLabel]) -> Option<Self> {
-        if labels.is_empty() {
-            return None;
-        }
-
-        Some(Self {
-            finders: labels
+    fn new(spellings: &[&'label str]) -> Self {
+        Self {
+            finders: spellings
                 .iter()
-                .map(|label| {
-                    (
-                        memchr::memmem::Finder::new(label.as_str().as_bytes()),
-                        label.as_str().len(),
-                    )
-                })
+                .map(|word| Finder::new(word.as_bytes()))
                 .collect(),
-        })
+            files: HashMap::new(),
+        }
+    }
+
+    fn matches_file(&mut self, sources: &SourceReader<'_>, file: FileId) -> anyhow::Result<bool> {
+        if let Some(&matched) = self.files.get(&file) {
+            return Ok(matched);
+        }
+        let source = sources.text(file)?;
+        let matched = self.matches(source.as_bytes());
+        self.files.insert(file, matched);
+        Ok(matched)
     }
 
     fn matches(&self, source: &[u8]) -> bool {
-        self.finders.iter().any(|(finder, label_len)| {
+        self.finders.iter().any(|finder| {
             finder.find_iter(source).any(|start| {
-                let end = start + *label_len;
+                let end = start + finder.needle().len();
                 Self::is_label_start_boundary(source, start)
                     && Self::is_label_end_boundary(source, end)
             })

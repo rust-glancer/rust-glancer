@@ -34,5 +34,5 @@ pub use self::{
         IndexedSourceProvenance, IndexedSourceRole, IndexedSourceSurface, IndexedTypePath,
         IndexedTypePathScope, SourceOccurrenceView,
     },
-    references::ReferenceSourceSelection,
+    references::{ReferenceSearchLabel, ReferenceSourceSelection},
 };

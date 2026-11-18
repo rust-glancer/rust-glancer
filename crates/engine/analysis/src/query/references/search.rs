@@ -4,9 +4,6 @@
 //! file. For example, LSP "find references" usually scans a project-chosen crate list, while a
 //! text prefilter can narrow that to a few files. The query also says whether declaration locations
 //! should be included in the result.
-//!
-//! `ReferenceSearchLabel` is a plain Rust identifier that analysis has validated before the project
-//! layer uses it for fast text prefiltering.
 
 use rg_ir_model::{CrateRef, FileId};
 
@@ -108,28 +105,6 @@ impl<'a> ReferenceQuery<'a> {
 pub struct ReferenceSearchFile {
     pub crate_ref: CrateRef,
     pub file_id: FileId,
-}
-
-/// Plain Rust identifier label that is safe for request-local text prefiltering.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ReferenceSearchLabel(String);
-
-impl ReferenceSearchLabel {
-    pub(crate) fn new(label: &str) -> Option<Self> {
-        let mut bytes = label.bytes();
-        let first = bytes.next()?;
-        if (first == b'_' || first.is_ascii_alphabetic())
-            && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
-        {
-            Some(Self(label.to_string()))
-        } else {
-            None
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 /// Source surface scanned for reference use-sites.
