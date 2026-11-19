@@ -11,11 +11,11 @@ use rg_ir_model::{BuiltinMacroExprKind, ExprId, FieldKey, StmtId, identity::Decl
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
 use rg_ty::{
-    PrimitiveTy,
+    AsyncCoroutineTyId, PrimitiveTy,
     solver::{AdtTy, List, TraitApplication, Ty, TyShape},
 };
 
-use super::{BodyInference, deferred::DeferredKind};
+use super::{BodyInference, ReturnTarget, deferred::DeferredKind};
 use crate::body::{
     ExprAssignOp, ExprBlockKind, ExprKind, ExprRangeKind, ExprWrapperKind, LabelData, StmtKind,
     facts::BodyResolution,
@@ -64,7 +64,24 @@ where
                 }
         )
         .then(|| std::mem::take(&mut self.break_targets));
-        let result = self.infer_expr_inner(expr, expected);
+        let result = if matches!(
+            self.body.expr_unchecked(expr).kind,
+            ExprKind::Block {
+                kind: ExprBlockKind::Async { .. },
+                ..
+            }
+        ) {
+            let output = self.inference.table_mut().new_type_var();
+            self.with_return_target(
+                ReturnTarget {
+                    expected: output,
+                    values: Some(Vec::new()),
+                },
+                |inference| inference.infer_expr_inner(expr, expected),
+            )
+        } else {
+            self.infer_expr_inner(expr, expected)
+        };
         if let Some(outer_targets) = outer_targets {
             self.break_targets = outer_targets;
         }
@@ -77,16 +94,23 @@ where
         let body = self.body;
         match body.expr_unchecked(expr).kind {
             ExprKind::Block {
+                ref kind,
                 ref label,
                 ref statements,
                 tail,
                 ..
             } => {
+                let is_async = matches!(kind, ExprBlockKind::Async { .. });
+                let block_expected = if is_async {
+                    self.return_target.expected
+                } else {
+                    *expected
+                };
                 if label.is_some() {
                     self.break_targets.push(BreakTarget {
                         label: label.as_ref(),
                         is_loop: false,
-                        expected: *expected,
+                        expected: block_expected,
                         values: Vec::new(),
                     });
                 }
@@ -94,7 +118,7 @@ where
                     self.infer_statement(*statement)
                         .context("infer block statement")?;
                 }
-                self.infer_optional(tail, expected)
+                self.infer_optional(tail, &block_expected)
                     .context("infer block tail")?;
                 // Statements and the tail can refine locals used by earlier pending operations.
                 // Let those operations use the new evidence before reading the block's result.
@@ -121,8 +145,29 @@ where
                         .expect("labeled block retains its target")
                         .values
                 });
-                self.infer_block_result(expr, statements, tail, breaks)
-                    .context("infer block result")?;
+                let fallthrough = self.block_tail_slot(statements, tail);
+                if is_async {
+                    self.inference.set_expr_ty(
+                        expr,
+                        self.cx.async_coroutine(
+                            AsyncCoroutineTyId::new(self.context.body_ref(), expr),
+                            block_expected,
+                        ),
+                    );
+                    self.infer_async_output(fallthrough)
+                        .context("infer async block output")?;
+                } else if let Some(mut branches) = breaks {
+                    let result = self.inference.expr_slot(expr);
+                    branches.push(fallthrough);
+                    self.run_or_defer(DeferredKind::BranchResult {
+                        result,
+                        branches,
+                        never_fallback: false,
+                    })
+                    .context("merge block exit types")?;
+                } else {
+                    self.inference.set_expr_ty(expr, fallthrough);
+                }
             }
             ExprKind::Call { callee, ref args } => {
                 self.infer_optional(callee, &self.cx.unknown())
@@ -450,12 +495,13 @@ where
             }
             ExprKind::Closure {
                 scope,
+                kind,
                 ref params,
                 ref ret_ty,
                 body,
                 ..
             } => {
-                self.infer_closure(expr, scope, params, ret_ty.as_ref(), body)
+                self.infer_closure(expr, scope, kind, params, ret_ty.as_ref(), body)
                     .context("infer closure")?;
             }
             ExprKind::Loop { ref label, body } => {
@@ -475,8 +521,13 @@ where
                 // Only breaks aimed at this loop contribute to its result. Keep their live
                 // slots separate until pending payloads have revealed whether they return `!`.
                 if !branches.is_empty() {
-                    self.run_or_defer(DeferredKind::BranchResult { expr, branches })
-                        .context("infer loop result")?;
+                    let result = self.inference.expr_slot(expr);
+                    self.run_or_defer(DeferredKind::BranchResult {
+                        result,
+                        branches,
+                        never_fallback: false,
+                    })
+                    .context("infer loop result")?;
                 } else if body.is_some() && !self.inference_exhausted {
                     // A break to an outer label still diverges here. Missing or truncated
                     // syntax cannot establish that the loop has no exit of its own.
@@ -602,7 +653,7 @@ where
                 // In `let object: &dyn Trait = &make()`, make still produces a concrete type.
                 // Apply the object's requirements at the borrow, without passing dyn into make.
                 let inner_expected = match (&kind, resolved_expected.shape()) {
-                    (ExprWrapperKind::Paren | ExprWrapperKind::Await, _) => *expected,
+                    (ExprWrapperKind::Paren, _) => *expected,
                     (
                         ExprWrapperKind::Ref { mutability },
                         TyShape::Reference {
@@ -618,27 +669,35 @@ where
                     {
                         inner
                     }
-                    (ExprWrapperKind::Return, _) => self.return_ty,
+                    (ExprWrapperKind::Return, _) => self.return_target.expected,
                     _ => self.cx.unknown(),
                 };
                 self.infer_optional(inner, &inner_expected)
                     .context("infer wrapped expression")?;
                 if let Some(inner) = inner {
                     let inner_ty = self.inference.expr_slot(inner);
-                    // Await is shallow: async functions expose their declared result here.
-                    // TODO: Model arbitrary Future::Output when inference coverage expands.
                     let ty = match kind {
-                        ExprWrapperKind::Paren | ExprWrapperKind::Await => inner_ty,
+                        ExprWrapperKind::Paren => inner_ty,
                         ExprWrapperKind::Ref { mutability } => {
                             self.cx.reference(mutability, inner_ty)
                         }
-                        ExprWrapperKind::Return => self.cx.never(),
-                        ExprWrapperKind::Try => {
-                            // `value?` yields <Value as Try>::Output. Keep Value's live slot in
-                            // that projection so a later use can refine an unknown operand too.
-                            // TODO: Relate Try::Residual to the enclosing return type through
-                            // FromResidual; output inference alone does not check that conversion.
-                            match self.context.item_lookup_query().lang_trait(LangItem::Try) {
+                        ExprWrapperKind::Return => {
+                            if let Some(values) = &mut self.return_target.values {
+                                values.push(inner_ty);
+                            }
+                            self.cx.never()
+                        }
+                        ExprWrapperKind::Await | ExprWrapperKind::Try => {
+                            // Each operator yields its trait's Output. Keep the operand's
+                            // live slot in the projection so later evidence can refine it.
+                            let lang_item = if kind == ExprWrapperKind::Await {
+                                LangItem::IntoFuture
+                            } else {
+                                // TODO: Relate Try::Residual to the enclosing return type
+                                // through FromResidual.
+                                LangItem::Try
+                            };
+                            match self.context.item_lookup_query().lang_trait(lang_item) {
                                 Some(def) => self
                                     .context
                                     .live()
@@ -650,7 +709,7 @@ where
                                         "Output",
                                         self.inference.table(),
                                     )
-                                    .context("project try output")?
+                                    .context("project wrapped expression output")?
                                     .unwrap_or(self.cx.unknown()),
                                 None => self.cx.unknown(),
                             }
@@ -664,10 +723,14 @@ where
                         );
                     }
                 } else if matches!(kind, ExprWrapperKind::Return) {
-                    // A bare return supplies unit to this function or closure; the return
-                    // expression itself still diverges.
-                    self.inference
-                        .constrain_infer_tys(&self.return_ty, &self.cx.unit());
+                    // A bare return supplies unit to the enclosing return target. The
+                    // return expression itself still diverges.
+                    if let Some(values) = &mut self.return_target.values {
+                        values.push(self.cx.unit());
+                    } else {
+                        self.inference
+                            .constrain_infer_tys(&self.return_target.expected, &self.cx.unit());
+                    }
                     self.inference.set_expr_ty(expr, self.cx.never());
                 }
             }
@@ -765,8 +828,13 @@ where
         let branches = result_exprs
             .map(|branch| self.inference.expr_slot(branch))
             .collect();
-        self.run_or_defer(DeferredKind::BranchResult { expr, branches })
-            .context("coerce branch results")
+        let result = self.inference.expr_slot(expr);
+        self.run_or_defer(DeferredKind::BranchResult {
+            result,
+            branches,
+            never_fallback: false,
+        })
+        .context("coerce branch results")
     }
 
     fn infer_statement(&mut self, statement: StmtId) -> anyhow::Result<()> {

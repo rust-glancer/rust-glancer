@@ -138,6 +138,13 @@ impl<'db> IndexedViewDb<'db> {
 }
 
 impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
+    fn item_lookup_for_crate(
+        &self,
+        krate: CrateRef,
+    ) -> Result<Option<ItemLookupQuery<'a>>, ReadError> {
+        (&self.semantic_ir).item_lookup_for_crate(krate)
+    }
+
     fn associated_items(
         &self,
         store: ItemStoreRef,

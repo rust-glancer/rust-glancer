@@ -1163,7 +1163,7 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
         .function(function)
         .expect("signature loads")
         .expect("factory");
-    let Ty::Alias(AliasTy::Opaque(opaque)) = signature.ret else {
+    let Ty::Alias(AliasTy::Opaque(opaque)) = signature.call_return else {
         panic!("factory returns an opaque type");
     };
     let bounds = signatures

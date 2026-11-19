@@ -10,8 +10,8 @@ use wincode::{SchemaRead, SchemaWrite};
 /// identities rust-glancer consumes. Adding another consumer should extend the list rather than
 /// introducing a second spelling- or path-based lookup.
 ///
-/// Most come from `#[lang = "..."]`. `Arc` and `Rc` use `#[rustc_diagnostic_item = "..."]`
-/// instead; they share this index because analysis needs the same declaration lookup for both.
+/// Most come from `#[lang = "..."]`. `Arc`, `Rc`, and `IntoFuture` use diagnostic-item
+/// attributes and share this index because analysis needs the same declaration lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
 #[shrink(leaf)]
@@ -62,6 +62,9 @@ pub enum LangItem {
     Rc,
     /// The iterator trait whose `Item` type is shown for standard adapter hints.
     Iterator,
+    Future,
+    FutureOutput,
+    IntoFuture,
 }
 
 impl LangItem {
@@ -69,7 +72,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 29] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -96,6 +99,9 @@ impl LangItem {
         Self::Arc,
         Self::Rc,
         Self::Iterator,
+        Self::Future,
+        Self::FutureOutput,
+        Self::IntoFuture,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -123,6 +129,9 @@ impl LangItem {
             ("lang", "format_arguments") => Self::FormatArguments,
             ("lang", "Option") => Self::Option,
             ("lang", "Try") => Self::Try,
+            ("lang", "future_trait") => Self::Future,
+            ("lang", "future_output") => Self::FutureOutput,
+            ("rustc_diagnostic_item", "IntoFuture") => Self::IntoFuture,
             ("lang", "Range") => Self::Range,
             ("lang", "RangeFrom") => Self::RangeFrom,
             ("lang", "RangeTo") => Self::RangeTo,

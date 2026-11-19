@@ -2,15 +2,18 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, OpaqueTyId, OpaqueTyRef, TypeParamRef};
-use rg_item_tree::{ConstExpr, TypeBound, TypeRef};
-use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
+use rg_item_tree::{ConstExpr, LangItem, TypeBound, TypeRef};
+use rg_semantic_ir::{FunctionSignature, GenericParamSource, SemanticItemSource};
 use rg_source::ReadError;
 use rustc_type_ir as ir;
 
 use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
 use crate::{
     PrimitiveTy, UnsignedIntTy,
-    solver::{DynAssocTypeBinding, InferenceTable, List, OpaqueTy, Region, Ty},
+    solver::{
+        AssocTypeBinding, DynAssocTypeBinding, InferenceTable, List, OpaqueTy, ProjectionTy,
+        Region, TraitApplication, TraitRefLowering, Ty,
+    },
 };
 
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
@@ -22,6 +25,49 @@ where
     /// Lower a source type, treating `impl Trait` as an opaque type occurrence.
     pub fn lower_type_ref(&mut self, ty: &TypeRef) -> Result<Ty<'s>, ReadError> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, None)
+    }
+
+    pub(crate) fn lower_function_output(
+        &mut self,
+        signature: &FunctionSignature,
+    ) -> Result<Ty<'s>, ReadError> {
+        Ok(signature
+            .ret_ty()
+            .map(|ty| self.lower_type_ref(ty))
+            .transpose()?
+            .unwrap_or_else(|| self.cx.unit()))
+    }
+
+    pub(crate) fn async_future(&self) -> Result<OpaqueTy<'s>, ReadError> {
+        // `async fn f() -> impl Debug` has distinct opaques for the future and its output.
+        self.opaque(OpaqueTyId::ASYNC_RETURN)
+    }
+
+    /// Read compiler identities only when a query needs the generated future's bounds.
+    pub(crate) fn record_async_future_bounds(&mut self, output: Ty<'s>) -> Result<(), ReadError> {
+        let opaque = self.async_future()?;
+        let mut bounds = Vec::new();
+        if let Some(lookup) = self
+            .item_paths
+            .items()
+            .item_lookup_for_crate(self.owner.origin().origin_crate())?
+            && let Some(def) = lookup.lang_trait(LangItem::Future)
+            && let Some(associated_ty) = lookup.lang_type_alias(LangItem::FutureOutput)
+        {
+            let args = List::new(self.cx, &[self.cx.opaque(opaque).into()]);
+            bounds.push(TraitRefLowering {
+                application: TraitApplication { def, args },
+                associated_types: vec![AssocTypeBinding {
+                    projection: ProjectionTy {
+                        associated_ty,
+                        args,
+                    },
+                    ty: output,
+                }],
+            });
+        }
+        self.opaque_bounds.push((opaque, bounds));
+        Ok(())
     }
 
     /// A written `_` creates a real variable in the caller's table. Missing or unsupported
@@ -182,17 +228,8 @@ where
                 .map(|param| self.param_ty(param))
                 .map_or(Ok(self.cx.unknown()), Ok),
             TypeRef::ImplTrait(bounds) => {
-                let opaque = OpaqueTyRef {
-                    owner: self.owner,
-                    id: OpaqueTyId(self.next_opaque_index()),
-                };
-                let generics = self.item_paths.generics().generics(self.owner)?;
-                let opaque = OpaqueTy {
-                    opaque,
-                    args: self
-                        .subst
-                        .args_for(self.cx, generics.iter().map(|p| p.param())),
-                };
+                let id = OpaqueTyId(self.next_opaque_index());
+                let opaque = self.opaque(id)?;
                 let self_ty = self.cx.opaque(opaque);
                 let mut lowered_bounds = Vec::new();
                 for bound in bounds {
@@ -208,6 +245,20 @@ where
             }
             TypeRef::Path(path) => self.lower_type_path(path, impl_trait_mode, inference),
         }
+    }
+
+    fn opaque(&self, id: OpaqueTyId) -> Result<OpaqueTy<'s>, ReadError> {
+        let opaque = OpaqueTyRef {
+            owner: self.owner,
+            id,
+        };
+        let generics = self.item_paths.generics().generics(self.owner)?;
+        Ok(OpaqueTy {
+            opaque,
+            args: self
+                .subst
+                .args_for(self.cx, generics.iter().map(|p| p.param())),
+        })
     }
 
     /// Allocate the next opaque occurrence ordinal for the active owner.

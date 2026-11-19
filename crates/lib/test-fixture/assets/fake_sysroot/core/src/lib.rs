@@ -3,6 +3,7 @@ extern crate self as core;
 pub mod array;
 pub mod cell;
 pub mod fmt;
+pub mod future;
 pub mod iter;
 pub mod marker;
 mod macros;

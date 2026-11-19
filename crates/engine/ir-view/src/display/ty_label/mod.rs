@@ -246,6 +246,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 self.write_ty_or_unknown(ret, application, output)?;
                 Ok(true)
             }
+            Ty::AsyncCoroutine(coroutine) => {
+                output.push_str("impl Future<");
+                output.collapsible(|output| {
+                    output.push_str("Output = ");
+                    self.write_ty_or_unknown(&coroutine.output, application, output)
+                })?;
+                output.push('>');
+                Ok(true)
+            }
             Ty::FnDef(function) => {
                 if let Some(path) =
                     PathView::new(self.db, self.syntax.edition()).function_path(function.def)?

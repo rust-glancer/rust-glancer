@@ -13,7 +13,7 @@ use rg_ty::{
 use rg_workspace::TargetKind;
 
 use super::state::InferenceState;
-use crate::{body_store, testonly::BodyIrFixture};
+use crate::{body::ClosureKind, body_store, testonly::BodyIrFixture};
 
 fn type_def(index: usize) -> TypeDefRef {
     TypeDefRef {
@@ -94,7 +94,7 @@ pub fn owner() {}
 #[test]
 fn stores_closure_types_as_body_local_facts() {
     with_state(1, 0, |mut context| {
-        context.set_expr_closure_ty(body_ref(), ExprId(0), 0);
+        context.set_expr_closure_ty(body_ref(), ExprId(0), 0, ClosureKind::Normal);
 
         let TyShape::Closure(closure) = context.expr_ty(ExprId(0)).shape() else {
             panic!("closure expression should retain its callable signature");
@@ -109,7 +109,7 @@ fn stores_closure_types_as_body_local_facts() {
 #[test]
 fn copies_closure_types_through_binding_reads() {
     with_state(2, 1, |mut context| {
-        context.set_expr_closure_ty(body_ref(), ExprId(0), 0);
+        context.set_expr_closure_ty(body_ref(), ExprId(0), 0, ClosureKind::Normal);
         context.set_binding_ty(BindingId(0), context.expr_ty(ExprId(0)));
 
         context.set_expr_from_binding(ExprId(1), BindingId(0));

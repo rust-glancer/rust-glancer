@@ -1103,6 +1103,12 @@ impl CrateBodyIrSnapshot<'_> {
                 self.render_generic_args(&alias.args)
             ),
             Ty::Closure(closure) => format!("closure #{}", closure.id),
+            Ty::AsyncCoroutine(coroutine) => {
+                format!(
+                    "impl Future<Output = {}>",
+                    self.render_ty(&coroutine.output)
+                )
+            }
             Ty::FnDef(function) => {
                 format!(
                     "function item {}{}",

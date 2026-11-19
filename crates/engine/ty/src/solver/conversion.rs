@@ -16,6 +16,7 @@ use super::{
     ProjectionTy, Region, SolverInterner, Ty,
     types::{ErrorGuaranteed, Safety, ValueConst},
 };
+use crate::AsyncCoroutineTy;
 
 impl<'s> SolverInterner<'s> {
     pub(crate) fn param(
@@ -120,6 +121,10 @@ impl<'s> SolverInterner<'s> {
                     DefId::Closure(c.id),
                     List::new(self, &[kind.into(), sig.into(), captures.into()]),
                 )
+            }
+            Stored::AsyncCoroutine(coroutine) => {
+                return self
+                    .async_coroutine(coroutine.id, self.lower_ty(&coroutine.output, params));
             }
             Stored::Unknown => ir::Error(ErrorGuaranteed),
         };
@@ -385,6 +390,15 @@ impl<'s> SolverInterner<'s> {
                     inputs,
                     self.raise_ty(sig.output()).unwrap_or(Stored::Unknown),
                 )
+            }
+            ir::Coroutine(DefId::AsyncCoroutine(id), args) => {
+                Stored::AsyncCoroutine(AsyncCoroutineTy {
+                    id,
+                    output: Box::new(
+                        self.raise_ty(args.as_coroutine().return_ty())
+                            .unwrap_or(Stored::Unknown),
+                    ),
+                })
             }
             _ => return None,
         })

@@ -3,6 +3,73 @@ use expect_test::expect;
 use super::utils::{InlayHintsQuery, check_inlay_hints, check_inlay_hints_with_fake_sysroot};
 
 #[test]
+fn shows_async_futures_and_awaited_outputs() {
+    check_inlay_hints_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:async_hints
+use std::future::{Future, IntoFuture, Ready, ready};
+
+pub struct Item;
+pub struct Builder;
+
+impl IntoFuture for Builder {
+    type Output = Item;
+    type IntoFuture = Ready<Item>;
+    fn into_future(self) -> Ready<Item> { ready(Item) }
+}
+
+impl Item {
+    async fn load(&self) -> Item { Item }
+}
+
+async fn fetch<T>() -> T { loop {} }
+async fn get_item() -> Item { Item }
+fn invoke<F: FnOnce() -> R, R>(call: F) -> R { call() }
+fn output_of<F: Future>(future: F) -> F::Output { loop {} }
+
+pub async fn demo() {
+    let pending = fetch();
+    let _: Item = pending.await;
+    let method = Item.load();
+    let loaded = method.await;
+    let indirect = invoke(get_item);
+    let invoked = indirect.await;
+    let prepared = ready(Item);
+    let immediate = ready(Item).await;
+    let built = Builder.await;
+    let nested = async {
+        let inner = async move { return true; };
+        let flag = inner.await;
+        if flag { return Item; }
+        Item
+    };
+    let completed = nested.await;
+    let bounded = output_of(async { Item });
+}
+"#,
+        InlayHintsQuery::new("async inference", "/src/lib.rs").in_lib("async_hints"),
+        expect![[r#"
+            // async inference
+            `: impl Future<Output = Item>` @ 22:9-22:16
+            `: impl Future<Output = Item>` @ 24:9-24:15
+            `: Item` @ 25:9-25:15
+            `: impl Future<Output = Item>` @ 26:9-26:17
+            `call:` @ 26:27-26:35
+            `: Item` @ 27:9-27:16
+            `: Ready<Item>` @ 28:9-28:17
+            `: Item` @ 29:9-29:18
+            `: Item` @ 30:9-30:14
+            `: impl Future<Output = Item>` @ 31:9-31:15
+            `: impl Future<Output = bool>` @ 32:13-32:18
+            `: bool` @ 33:13-33:17
+            `: Item` @ 37:9-37:18
+            `: Item` @ 38:9-38:16
+            `future:` @ 38:29-38:43
+        "#]],
+    );
+}
+
+#[test]
 fn shows_auto_trait_bounds_on_object_hints() {
     check_inlay_hints(
         r#"

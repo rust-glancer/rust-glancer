@@ -2,14 +2,15 @@
 
 use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef,
-    FunctionRef, GenericDefRef, ImplRef, ItemOwner, ItemStoreRef, LocalDefRef, LocalEnumVariantRef,
-    ModuleRef, SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantFieldRef, EnumVariantRef, FieldKey,
+    FieldRef, FunctionRef, GenericDefRef, ImplRef, ItemOwner, ItemStoreRef, LocalDefRef,
+    LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef,
+    TypeDefId, TypeDefRef,
 };
 use rg_item_tree::FieldList;
 use rg_source::ReadError;
 
-use super::SemanticItemSource;
+use super::{ItemLookupQuery, SemanticItemSource};
 use crate::{
     AssociatedItemFilter, ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData,
     SelfTypeOwner, SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
@@ -32,6 +33,13 @@ where
             source,
             _marker: std::marker::PhantomData,
         }
+    }
+
+    pub fn item_lookup_for_crate(
+        &self,
+        krate: CrateRef,
+    ) -> Result<Option<ItemLookupQuery<'a>>, ReadError> {
+        self.source.item_lookup_for_crate(krate)
     }
 
     /// Read the members selected by `impl_ref.member_store()` or `trait_ref.member_store()`.

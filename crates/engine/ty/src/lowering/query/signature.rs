@@ -97,16 +97,18 @@ where
             };
             params.push(ty);
         }
-        let ret = data
-            .signature
-            .ret_ty()
-            .map(|ty| session.lower_type_ref(ty))
-            .transpose()?
-            .unwrap_or(cx.unit());
+        let qualifiers = data.signature.qualifiers();
+        let output = session.lower_function_output(&data.signature)?;
+        let (call_return, async_output) = if qualifiers.is_async {
+            (cx.opaque(session.async_future()?), Some(output))
+        } else {
+            (output, None)
+        };
         Ok(Some(CallableSignature {
             params: List::new(cx, &params),
-            ret,
-            qualifiers: data.signature.qualifiers(),
+            call_return,
+            async_output,
+            qualifiers,
         }))
     }
 
@@ -400,8 +402,9 @@ where
                         session.lower_parameter_type(ty)?;
                     }
                 }
-                if let Some(ret) = data.signature.ret_ty() {
-                    session.lower_type_ref(ret)?;
+                let output = session.lower_function_output(&data.signature)?;
+                if data.signature.qualifiers().is_async {
+                    session.record_async_future_bounds(output)?;
                 }
             }
             GenericDefRef::TypeAlias(alias) => {

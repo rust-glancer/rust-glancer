@@ -51,6 +51,28 @@ pub struct ClosureTy {
     pub ret: Box<Ty>,
 }
 
+/// Identity of the future created by an async block or an async closure call.
+/// Expression IDs are local to the enclosing body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct AsyncCoroutineTyId {
+    body: BodyRef,
+    expr: ExprId,
+}
+
+impl AsyncCoroutineTyId {
+    pub fn new(body: BodyRef, expr: ExprId) -> Self {
+        Self { body, expr }
+    }
+}
+
+/// An async coroutine with its finalized future output.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct AsyncCoroutineTy {
+    pub id: AsyncCoroutineTyId,
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
+    pub output: Box<Ty>,
+}
+
 /// Owned types for saved facts, independent query results, and shared declaration templates.
 ///
 /// Inference variables live only in `solver::Ty`. A body exports its learned assignments into
@@ -99,6 +121,7 @@ pub enum Ty {
     // of identity even when it consists entirely of unknown or inferred positions.
     FnDef(FnDefTy),
     Unknown,
+    AsyncCoroutine(AsyncCoroutineTy),
 }
 
 impl Ty {
@@ -232,6 +255,7 @@ impl Ty {
             Self::Closure(closure) => {
                 closure.params.iter().any(Self::has_unknown) || closure.ret.has_unknown()
             }
+            Self::AsyncCoroutine(coroutine) => coroutine.output.has_unknown(),
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) => false,
@@ -258,6 +282,7 @@ impl Ty {
             Self::Closure(closure) => {
                 closure.params.iter().any(Self::has_projection) || closure.ret.has_projection()
             }
+            Self::AsyncCoroutine(coroutine) => coroutine.output.has_projection(),
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_projection),
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
@@ -267,6 +292,7 @@ impl Ty {
     pub fn has_closure(&self) -> bool {
         match self {
             Self::Closure(_) => true,
+            Self::AsyncCoroutine(coroutine) => coroutine.output.has_closure(),
             Self::Tuple(fields) => fields.iter().any(Self::has_closure),
             Self::Array { inner, .. }
             | Self::Slice(inner)
@@ -300,6 +326,7 @@ impl Shrink for Ty {
             Self::Dyn(ty) => Shrink::shrink_to_fit(ty),
             Self::Alias(alias) => Shrink::shrink_to_fit(alias),
             Self::Closure(closure) => Shrink::shrink_to_fit(closure),
+            Self::AsyncCoroutine(coroutine) => Shrink::shrink_to_fit(coroutine),
             Self::FnDef(function) => Shrink::shrink_to_fit(function),
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => {}
         }

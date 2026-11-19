@@ -121,6 +121,12 @@ impl TypeRenderer<'_, '_> {
                 format!("fn({params}) -> {}", self.render_ty(ret))
             }
             Ty::Closure(closure) => format!("closure #{}", closure.id),
+            Ty::AsyncCoroutine(coroutine) => {
+                format!(
+                    "impl Future<Output = {}>",
+                    self.render_ty(&coroutine.output)
+                )
+            }
             Ty::FnDef(function) => format!(
                 "function item {:?}{}",
                 function.def,

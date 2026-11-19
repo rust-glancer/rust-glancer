@@ -17,7 +17,7 @@ use super::{
     Clause, Const, DefId, GenericArg, GenericArgs, List, Param, Region, SolverInterner, Ty,
     types::{ErrorGuaranteed, Safety, ValueConst},
 };
-use crate::{ClosureTyId, Mutability, PrimitiveTy};
+use crate::{AsyncCoroutineTyId, ClosureTyId, Mutability, PrimitiveTy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferVarKind {
@@ -170,6 +170,10 @@ pub enum TyShape<'s> {
     Param(TypeParamRef),
     Alias(AliasTy<'s>),
     Closure(ClosureTy<'s>),
+    AsyncCoroutine {
+        id: AsyncCoroutineTyId,
+        output: Ty<'s>,
+    },
     FnDef(FnDefTy<'s>),
     Unknown,
     InferVar {
@@ -226,6 +230,10 @@ impl<'s> Ty<'s> {
                     ret: sig.output(),
                 })
             }
+            ir::Coroutine(DefId::AsyncCoroutine(id), args) => S::AsyncCoroutine {
+                id,
+                output: args.as_coroutine().return_ty(),
+            },
             ir::Param(Param {
                 source: GenericParamRef::Type(p),
                 ..
@@ -468,6 +476,18 @@ impl<'s> SolverInterner<'s> {
                     self.unit().into(),
                 ],
             ),
+        )
+    }
+
+    pub fn async_coroutine(self, id: AsyncCoroutineTyId, output: Ty<'s>) -> Ty<'s> {
+        let unit = self.unit().into();
+        // The solver takes Future::Output from the return argument. The other arguments
+        // describe the state machine, which this engine does not use for output inference.
+        // TODO: Model captures and suspended locals for capture-dependent traits.
+        Ty::new_coroutine(
+            self,
+            DefId::AsyncCoroutine(id),
+            List::new(self, &[unit, unit, unit, output.into(), unit]),
         )
     }
 }

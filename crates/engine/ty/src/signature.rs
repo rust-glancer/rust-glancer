@@ -28,10 +28,19 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallableSignature {
     pub params: Vec<Ty>,
-    pub ret: Ty,
+    /// The type of the call expression. For an async function this is the future.
+    pub call_return: Ty,
+    pub(crate) async_output: Option<Box<Ty>>,
     /// Keep qualifiers beside the lowered types so semantic consumers do not have to reopen the
     /// source-shaped declaration to distinguish safe, unsafe, and async function items.
     pub qualifiers: FunctionQualifiers,
+}
+
+impl CallableSignature {
+    /// The type written after `->`, or unit when the declaration omits it.
+    pub fn body_output(&self) -> &Ty {
+        self.async_output.as_deref().unwrap_or(&self.call_return)
+    }
 }
 
 /// The receiver and positional trait arguments of an impl, before checking its requirements.
@@ -230,7 +239,7 @@ where
         })
     }
 
-    /// Returns the predicates declared by one opaque occurrence.
+    /// Returns the bounds promised by one opaque occurrence, including generated async bounds.
     ///
     /// Bounds are queried declaration data, not part of opaque type equality. Replaying the
     /// owner's canonical lowering session keeps occurrence IDs and nested alias traversal aligned

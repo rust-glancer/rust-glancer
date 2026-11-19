@@ -58,8 +58,9 @@ pub(super) enum DeferredKind<'s> {
         expected: Ty<'s>,
     },
     BranchResult {
-        expr: ExprId,
+        result: Ty<'s>,
         branches: Vec<Ty<'s>>,
+        never_fallback: bool,
     },
     BlockTail {
         result: Ty<'s>,
@@ -87,16 +88,10 @@ where
         }
     }
 
-    /// A block can finish through its tail or a break aimed at its label. Keep those routes
-    /// separate: a statement that later resolves to `!` removes only the ordinary tail route.
-    pub(super) fn infer_block_result(
-        &mut self,
-        expr: ExprId,
-        statements: Vec<Ty<'s>>,
-        tail: Ty<'s>,
-        breaks: Option<Vec<Ty<'s>>>,
-    ) -> anyhow::Result<()> {
-        let fallthrough = match self.block_fallthrough(&statements, tail) {
+    /// Keep the tail separate from breaks and returns. A statement that later resolves to
+    /// `!` removes the fallthrough route, while those other exits keep their values.
+    pub(super) fn block_tail_slot(&mut self, statements: Vec<Ty<'s>>, tail: Ty<'s>) -> Ty<'s> {
+        match self.block_fallthrough(&statements, tail) {
             Some(ty) => ty,
             None => {
                 let result = self.inference.table_mut().new_type_var();
@@ -110,15 +105,21 @@ where
                 );
                 result
             }
-        };
-        if let Some(mut branches) = breaks {
-            branches.push(fallthrough);
-            self.run_or_defer(DeferredKind::BranchResult { expr, branches })
-                .context("merge labeled block results")?;
-        } else {
-            self.inference.set_expr_ty(expr, fallthrough);
         }
-        Ok(())
+    }
+
+    pub(super) fn infer_async_output(&mut self, fallthrough: Ty<'s>) -> anyhow::Result<()> {
+        let mut branches = self
+            .return_target
+            .values
+            .take()
+            .expect("async expression collects explicit returns");
+        branches.push(fallthrough);
+        self.run_or_defer(DeferredKind::BranchResult {
+            result: self.return_target.expected,
+            branches,
+            never_fallback: true,
+        })
     }
 
     fn block_fallthrough(&self, statements: &[Ty<'s>], tail: Ty<'s>) -> Option<Ty<'s>> {
@@ -162,8 +163,9 @@ where
                 DeferredKind::Coerce { expr, expected } => {
                     self.inference.constrain_expr_ty(expr, &expected);
                 }
-                DeferredKind::BranchResult { expr, branches } => {
-                    let result = self.inference.expr_slot(expr);
+                DeferredKind::BranchResult {
+                    result, branches, ..
+                } => {
                     for branch in branches {
                         let branch = self.inference.root_resolved_ty(&branch);
                         if !matches!((branch).shape(), TyShape::Never) {
@@ -281,12 +283,11 @@ where
             DeferredKind::Call { call } => self.inference.call_result_is_pending(*call, &ty),
             DeferredKind::Field { expr }
             | DeferredKind::Index { expr }
-            | DeferredKind::Operator { expr }
-            | DeferredKind::BranchResult { expr, .. } => {
-                self.inference.root_resolved_expr_ty(*expr) == ty
+            | DeferredKind::Operator { expr } => self.inference.root_resolved_expr_ty(*expr) == ty,
+            DeferredKind::BranchResult { result, .. } | DeferredKind::BlockTail { result, .. } => {
+                self.inference.root_resolved_ty(result) == ty
             }
             DeferredKind::IteratorItem { item, .. } => self.inference.root_resolved_ty(item) == ty,
-            DeferredKind::BlockTail { result, .. } => self.inference.root_resolved_ty(result) == ty,
             DeferredKind::Pattern { pat, .. } => {
                 // A binding can be read before its tuple/record pattern has a shape to project.
                 // Its eventual field type must remain free to become `!` as well.
@@ -454,11 +455,13 @@ where
             DeferredKind::Coerce { expr, expected } => {
                 self.cx.tuple(vec![expr_ty(*expr), *expected])
             }
-            DeferredKind::BranchResult { expr, branches } => self.cx.tuple(
+            DeferredKind::BranchResult {
+                result, branches, ..
+            } => self.cx.tuple(
                 branches
                     .iter()
                     .cloned()
-                    .chain([expr_ty(*expr)])
+                    .chain([*result])
                     .collect::<Vec<_>>(),
             ),
             DeferredKind::BlockTail {
@@ -493,18 +496,20 @@ where
                 self.inference.constrain_infer_tys(result, &tail);
                 Ok(true)
             }
-            DeferredKind::BranchResult { expr, branches } => {
+            DeferredKind::BranchResult {
+                result,
+                branches,
+                never_fallback,
+            } => {
                 if branches.is_empty() {
                     // This is missing syntax, such as a match with no arms. An actual empty block
                     // is a branch expression with type `()`, handled by the expression walker.
-                    self.inference.set_expr_ty(*expr, self.cx.unknown());
                     return Ok(true);
                 }
 
                 // In `if flag { user.abort() } else { 1 }`, the integer branch can supply the
                 // result immediately. Leave the pending method result separate: discovering `!`
                 // later must not turn that integer into a conflict.
-                let result_ty = self.inference.expr_slot(*expr);
                 let mut has_value_result = false;
                 let mut complete = true;
                 for branch in branches {
@@ -520,10 +525,14 @@ where
 
                     // Root resolution keeps already-detected cycles as unknown, as in
                     // `value = match state { Keep => value, Change => next }`.
-                    self.inference.constrain_infer_tys(&result_ty, &branch);
+                    self.inference.constrain_infer_tys(result, &branch);
                 }
                 if !has_value_result {
-                    self.inference.set_expr_ty(*expr, self.cx.never());
+                    if *never_fallback {
+                        self.diverging_outputs.push(*result);
+                    } else {
+                        self.inference.constrain_infer_tys(result, &self.cx.never());
+                    }
                 }
                 Ok(complete)
             }
