@@ -40,17 +40,22 @@ impl<'item> ItemLookupQuery<'item> {
         use_site: CrateRef,
         cancellation: &CancellationToken,
     ) -> Result<Self, ReadError> {
+        Ok(Self::try_build_from(items, use_site, cancellation)?
+            .expect("use-site crate has lookup environment"))
+    }
+
+    pub(crate) fn try_build_from(
+        items: ItemReader<'item>,
+        use_site: CrateRef,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<Self>, ReadError> {
         rg_std::check_cancel!(cancellation, "prepare candidate lookup");
-        let lookup_env = items
-            .0
-            .lookup_env(use_site)?
-            .expect("use-site crate has lookup environment");
-        Ok(Self {
+        Ok(items.0.lookup_env(use_site)?.map(|lookup_env| Self {
             lookup_env,
             items,
             use_site,
             cancellation: cancellation.clone(),
-        })
+        }))
     }
 
     fn ask(&self, question: LookupQuestion) -> Result<LookupAnswer, ReadError> {
@@ -77,10 +82,10 @@ impl<'item> ItemLookupQuery<'item> {
 
     /// Returns the exact visible trait carrying one compiler language identity.
     pub fn lang_trait(&self, lang_item: LangItem) -> Option<TraitDefRef> {
-        let SemanticItemRef::Trait(trait_ref) = self.lookup_env.lang_item(lang_item)? else {
-            return None;
-        };
-        Some(trait_ref)
+        match self.lookup_env.lang_item(lang_item)? {
+            SemanticItemRef::Trait(trait_ref) => Some(trait_ref),
+            _ => None,
+        }
     }
 
     /// Find a function by its compiler language identity, including associated functions.

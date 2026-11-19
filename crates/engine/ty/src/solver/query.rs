@@ -17,7 +17,7 @@ use super::{
     AliasTy, Clause, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, Outcome,
     ProjectionTy, SolverInterner, Ty, TyShape,
 };
-use crate::signature;
+use crate::{Ty as StoredTy, signature};
 
 /// A trait together with its live arguments. `args[0]` is `Self`: for `Vec<?T>: IntoIterator`,
 /// it holds `Vec<?T>`. Associated-type equalities such as `Item = u8` are separate clauses.
@@ -50,19 +50,29 @@ impl<'s> TraitApplication<'s> {
 #[derive(Debug, Clone, Copy)]
 pub struct CallableSignature<'s> {
     pub params: List<'s, Ty<'s>>,
-    pub ret: Ty<'s>,
+    /// The type of the call expression. For an async function this is the future.
+    pub call_return: Ty<'s>,
+    pub(crate) async_output: Option<Ty<'s>>,
     pub qualifiers: FunctionQualifiers,
 }
 
 impl<'s> CallableSignature<'s> {
+    /// The type written after `->`, or unit when the declaration omits it.
+    pub fn body_output(self) -> Ty<'s> {
+        self.async_output.unwrap_or(self.call_return)
+    }
+
     pub fn raise(self, cx: SolverInterner<'s>) -> signature::CallableSignature {
         signature::CallableSignature {
             params: self
                 .params
                 .iter()
-                .map(|ty| cx.raise_ty(ty).unwrap_or(crate::Ty::Unknown))
+                .map(|ty| cx.raise_ty(ty).unwrap_or(StoredTy::Unknown))
                 .collect(),
-            ret: cx.raise_ty(self.ret).unwrap_or(crate::Ty::Unknown),
+            call_return: cx.raise_ty(self.call_return).unwrap_or(StoredTy::Unknown),
+            async_output: self
+                .async_output
+                .map(|ty| Box::new(cx.raise_ty(ty).unwrap_or(StoredTy::Unknown))),
             qualifiers: self.qualifiers,
         }
     }
@@ -246,7 +256,8 @@ impl<'s> InferenceTable<'s> {
         }
         Some(CallableSignature {
             params: subst.apply(cx, signature.params),
-            ret: subst.apply(cx, signature.ret),
+            call_return: subst.apply(cx, signature.call_return),
+            async_output: signature.async_output.map(|ty| subst.apply(cx, ty)),
             qualifiers: signature.qualifiers,
         })
     }

@@ -190,7 +190,7 @@ impl SignatureRenderer {
         signature.push(')');
 
         if data.signature.ret_ty().is_some() {
-            let ret = substitution.apply(&semantic.ret);
+            let ret = substitution.apply(semantic.body_output());
             let ret = types
                 .render_trait_impl_ty(&ret, application)
                 .context("render trait method return type")?

@@ -1137,11 +1137,11 @@ pub fn use_it(value: u8) {
                   stmt s2 expr; @ 3:13-3:19
                     expr e2 path value -> local v0 => u8 @ 3:13-3:18
               stmt s4 expr; @ 4:5-4:21
-                expr e5 block async s4 => u8 @ 4:5-4:20
+                expr e5 block async s4 => impl Future<Output = u8> @ 4:5-4:20
                   tail
                     expr e4 path value -> local v0 => u8 @ 4:13-4:18
               stmt s5 expr; @ 5:5-5:26
-                expr e7 block async move s5 => u8 @ 5:5-5:25
+                expr e7 block async move s5 => impl Future<Output = u8> @ 5:5-5:25
                   tail
                     expr e6 path value -> local v0 => u8 @ 5:18-5:23
               stmt s6 expr; @ 6:5-6:19

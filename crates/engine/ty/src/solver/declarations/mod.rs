@@ -14,9 +14,9 @@ use std::{
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, DefMapRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner,
-    TraitDefRef, TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    OpaqueTyId, TraitDefRef, TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
-use rg_item_tree::ImplPolarity;
+use rg_item_tree::{ImplPolarity, LangItem as ItemLangItem};
 use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource, TypePathContext};
 use rg_source::ReadError;
 use rg_std::Cancelable;
@@ -320,6 +320,7 @@ where
                     SolverTraitLangItem::MetaSized,
                     SolverTraitLangItem::Tuple,
                     SolverTraitLangItem::Destruct,
+                    SolverTraitLangItem::Future,
                 ] {
                     let lang = LangItem::Trait(item);
                     if self.lang_item(lang) == Some(DefId::Trait(id)) {
@@ -335,13 +336,17 @@ where
                     polarity: data.polarity,
                 };
             }
-            DefId::TypeAlias(_) => {
+            DefId::TypeAlias(id) => {
                 let Some(data) = item.type_alias_data() else {
                     return Ok(None);
                 };
                 result.kind = DeclarationKind::Alias {
                     has_value: data.signature.aliased_ty().is_some(),
                 };
+                let lang = LangItem::Projection(SolverProjectionLangItem::FutureOutput);
+                if self.lang_item(lang) == Some(DefId::TypeAlias(id)) {
+                    result.lang_item = Some(lang);
+                }
             }
             DefId::Adt(id) => result.kind = DeclarationKind::Adt(AdtDef::new(id)),
             // An opaque occurrence inherits its owner's generics, but querying its bounds is
@@ -350,7 +355,7 @@ where
                 result.parent = Some(owner.into());
             }
             DefId::Function(_) | DefId::Const(_) | DefId::Static(_) => {}
-            DefId::Closure(_) | DefId::Unavailable => unreachable!(),
+            DefId::Closure(_) | DefId::AsyncCoroutine(_) | DefId::Unavailable => unreachable!(),
         }
         Ok(Some(result))
     }
@@ -503,7 +508,11 @@ where
                         .map(|ty| cx.lower_ty(ty, params))
                         .collect::<Vec<_>>(),
                 ),
-                ret: cx.lower_ty(&data.ret, params),
+                call_return: cx.lower_ty(&data.call_return, params),
+                async_output: data
+                    .async_output
+                    .as_deref()
+                    .map(|ty| cx.lower_ty(ty, params)),
                 qualifiers: data.qualifiers,
             });
         }
@@ -594,13 +603,27 @@ where
                 }
                 DefId::Opaque(opaque) => {
                     let bounds = lowering.opaque_bounds_for_owner(cx, opaque.owner)?;
-                    let Some((_, bounds)) = bounds
+                    let Some((ty, bounds)) = bounds
                         .iter()
                         .find(|(candidate, _)| candidate.opaque == opaque)
                     else {
                         return Ok(None);
                     };
                     clauses.extend(bounds.iter().flat_map(|bound| bound.clauses(cx)));
+                    // The generated future is sized. The callable traits require this fact
+                    // when a function item is passed as a value.
+                    if opaque.id == OpaqueTyId::ASYNC_RETURN
+                        && let Some(DefId::Trait(def)) =
+                            self.lang_item(LangItem::Trait(SolverTraitLangItem::Sized))
+                    {
+                        clauses.push(
+                            TraitApplication {
+                                def,
+                                args: List::new(cx, &[cx.opaque(*ty).into()]),
+                            }
+                            .clause(cx),
+                        );
+                    }
                 }
                 _ => {
                     // No bounds is a valid answer for other declarations, but a missing
@@ -746,27 +769,31 @@ where
 
     fn lang_item(&self, item: LangItem) -> Option<DefId> {
         let (context, _) = self.solving?;
-        if item == LangItem::DerefTarget {
-            return context
-                .item_lookup()
-                .lang_type_alias(rg_item_tree::LangItem::DerefTarget)
-                .map(DefId::TypeAlias);
-        }
+        let lookup = context.item_lookup();
         let source = match item {
-            LangItem::Deref => rg_item_tree::LangItem::Deref,
-            LangItem::Trait(SolverTraitLangItem::Sized) => rg_item_tree::LangItem::Sized,
-            LangItem::Trait(SolverTraitLangItem::MetaSized) => rg_item_tree::LangItem::MetaSized,
-            LangItem::Trait(SolverTraitLangItem::Tuple) => rg_item_tree::LangItem::Tuple,
-            LangItem::Trait(SolverTraitLangItem::Destruct) => rg_item_tree::LangItem::Destruct,
-            LangItem::Trait(SolverTraitLangItem::Fn) => rg_item_tree::LangItem::Fn,
-            LangItem::Trait(SolverTraitLangItem::FnMut) => rg_item_tree::LangItem::FnMut,
-            LangItem::Trait(SolverTraitLangItem::FnOnce) => rg_item_tree::LangItem::FnOnce,
-            LangItem::Trait(SolverTraitLangItem::PointeeSized) => {
-                rg_item_tree::LangItem::PointeeSized
+            LangItem::DerefTarget => {
+                return lookup
+                    .lang_type_alias(ItemLangItem::DerefTarget)
+                    .map(DefId::TypeAlias);
             }
+            LangItem::Projection(SolverProjectionLangItem::FutureOutput) => {
+                return lookup
+                    .lang_type_alias(ItemLangItem::FutureOutput)
+                    .map(DefId::TypeAlias);
+            }
+            LangItem::Deref => ItemLangItem::Deref,
+            LangItem::Trait(SolverTraitLangItem::Sized) => ItemLangItem::Sized,
+            LangItem::Trait(SolverTraitLangItem::MetaSized) => ItemLangItem::MetaSized,
+            LangItem::Trait(SolverTraitLangItem::Tuple) => ItemLangItem::Tuple,
+            LangItem::Trait(SolverTraitLangItem::Destruct) => ItemLangItem::Destruct,
+            LangItem::Trait(SolverTraitLangItem::Fn) => ItemLangItem::Fn,
+            LangItem::Trait(SolverTraitLangItem::FnMut) => ItemLangItem::FnMut,
+            LangItem::Trait(SolverTraitLangItem::FnOnce) => ItemLangItem::FnOnce,
+            LangItem::Trait(SolverTraitLangItem::Future) => ItemLangItem::Future,
+            LangItem::Trait(SolverTraitLangItem::PointeeSized) => ItemLangItem::PointeeSized,
             _ => return None,
         };
-        context.item_lookup().lang_trait(source).map(DefId::Trait)
+        lookup.lang_trait(source).map(DefId::Trait)
     }
 
     fn check_cancelled(&self) {

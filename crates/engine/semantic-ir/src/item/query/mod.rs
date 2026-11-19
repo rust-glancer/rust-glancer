@@ -6,7 +6,7 @@ mod item_store;
 mod lookup;
 mod resolution;
 
-use rg_ir_model::{DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_source::ReadError;
 
 pub use self::{
@@ -23,6 +23,15 @@ use crate::{AssociatedItemStore, SemanticItemView, SourceSelection};
 /// Providers acquire the data containing an item before selecting it. Missing items and local
 /// definitions must observe that data too, so a later update can invalidate an absent result.
 pub trait SemanticItemSource<'a>: Clone {
+    /// Open lookup from the declaration's crate, even when there is no caller's solver.
+    /// Sources that only hold local declarations may have no crate lookup.
+    fn item_lookup_for_crate(
+        &self,
+        _krate: CrateRef,
+    ) -> Result<Option<ItemLookupQuery<'a>>, ReadError> {
+        Ok(None)
+    }
+
     fn associated_items(
         &self,
         store: ItemStoreRef,

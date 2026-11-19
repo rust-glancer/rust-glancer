@@ -33,6 +33,8 @@ impl LangItemIndex {
                 LangItem::Deref
                     | LangItem::Iterator
                     | LangItem::Try
+                    | LangItem::Future
+                    | LangItem::IntoFuture
                     | LangItem::Index
                     | LangItem::Fn
                     | LangItem::FnMut
@@ -45,7 +47,7 @@ impl LangItemIndex {
                 SemanticItemRef::Trait(_)
             ) | (LangItem::IntoIter, SemanticItemRef::Function(_))
                 | (
-                    LangItem::DerefTarget | LangItem::FnOnceOutput,
+                    LangItem::DerefTarget | LangItem::FnOnceOutput | LangItem::FutureOutput,
                     SemanticItemRef::TypeAlias(_)
                 )
                 | (

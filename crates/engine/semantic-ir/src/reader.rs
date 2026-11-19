@@ -7,8 +7,8 @@ use rg_source::ReadError;
 use rg_std::CancellationToken;
 
 use crate::{
-    AssociatedItemStore, ItemLookupEnv, LookupAnswer, LookupQuestion, SemanticItemSource,
-    SemanticItemView, SourceSelection, SymbolNameData, SymbolNameIndex,
+    AssociatedItemStore, ItemLookupEnv, ItemLookupQuery, LookupAnswer, LookupQuestion,
+    SemanticItemSource, SemanticItemView, SourceSelection, SymbolNameData, SymbolNameIndex,
 };
 
 /// Acquire item, language-item and lookup payloads independently, or enumerate their targets.
@@ -139,6 +139,13 @@ impl<'a> ItemReader<'a> {
 }
 
 impl<'a> SemanticItemSource<'a> for &ItemReader<'a> {
+    fn item_lookup_for_crate(
+        &self,
+        krate: CrateRef,
+    ) -> Result<Option<ItemLookupQuery<'a>>, ReadError> {
+        ItemLookupQuery::try_build_from(**self, krate, &CancellationToken::new())
+    }
+
     fn associated_items(
         &self,
         store: ItemStoreRef,

@@ -6,12 +6,15 @@
 use rg_arena::Arena;
 use rg_ir_model::{BindingId, BodyRef, EvaluatedConstValue, ExprBinaryOp, ExprId, ExprUnaryOp};
 use rg_ty::{
-    ClosureTyId, PrimitiveTy,
+    AsyncCoroutineTyId, ClosureTyId, PrimitiveTy,
     solver::{InferVarKind, InferenceTable, Ty, TyShape},
 };
 
 use super::call::SelectedCall;
-use crate::{BodyFacts, ExprFacts, body::facts::BodyResolution};
+use crate::{
+    BodyFacts, ExprFacts,
+    body::{ClosureKind, facts::BodyResolution},
+};
 
 #[derive(Clone)]
 struct LiveExprFacts<'s> {
@@ -238,15 +241,25 @@ impl<'s> InferenceState<'s> {
         self.table.finalize(self.binding_tys[binding])
     }
 
-    pub(crate) fn set_expr_closure_ty(&mut self, body: BodyRef, expr: ExprId, count: usize) {
+    pub(crate) fn set_expr_closure_ty(
+        &mut self,
+        body: BodyRef,
+        expr: ExprId,
+        count: usize,
+        kind: ClosureKind,
+    ) {
         let params = (0..count)
             .map(|_| self.table.new_type_var())
             .collect::<Vec<_>>();
-        let ret = self.table.new_type_var();
-        let ty = self
-            .table
-            .interner()
-            .closure(ClosureTyId::new(body, expr), &params, ret);
+        let cx = self.table.interner();
+        let output = self.table.new_type_var();
+        // For `async || 1u8`, FnOnce::Output is the coroutine, whose Future::Output is u8.
+        // TODO: Model AsyncFn* and lending captures with the coroutine closure type.
+        let ret = match kind {
+            ClosureKind::Async => cx.async_coroutine(AsyncCoroutineTyId::new(body, expr), output),
+            ClosureKind::Normal => output,
+        };
+        let ty = cx.closure(ClosureTyId::new(body, expr), &params, ret);
         self.set_expr_ty(expr, ty);
     }
 

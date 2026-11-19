@@ -8,9 +8,9 @@ use rg_ir_model::{GenericParamRef, TypeParamRef};
 use rg_semantic_ir::Generics;
 
 use crate::{
-    AdtTy, AliasTy, AssocTypeBinding, ClosureTy, ConstValue, DynAssocTypeBinding, DynTy, FnDefTy,
-    GenericArg, GenericArgs, Lifetime, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering,
-    Ty,
+    AdtTy, AliasTy, AssocTypeBinding, AsyncCoroutineTy, ClosureTy, ConstValue, DynAssocTypeBinding,
+    DynTy, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy, ProjectionTy, TraitApplication,
+    TraitRefLowering, Ty,
 };
 
 /// Semantic substitution keyed by owner-scoped parameter identity.
@@ -155,6 +155,10 @@ impl Substitution {
                     .map(|param| self.apply(param))
                     .collect(),
                 ret: Box::new(self.apply(&closure.ret)),
+            }),
+            Ty::AsyncCoroutine(coroutine) => Ty::AsyncCoroutine(AsyncCoroutineTy {
+                id: coroutine.id,
+                output: Box::new(self.apply(&coroutine.output)),
             }),
             Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Unknown => ty.clone(),
         }

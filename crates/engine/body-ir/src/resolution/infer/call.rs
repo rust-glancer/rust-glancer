@@ -216,7 +216,7 @@ where
             };
             // Normalize once and retain the resulting slots. Later argument evidence can finish
             // these goals without rebuilding the call substitution.
-            signature.ret = table.normalize(signature.ret);
+            signature.call_return = table.normalize(signature.call_return);
             Ok(Some(PreparedCall {
                 call,
                 selected: SelectedCall {
@@ -234,7 +234,8 @@ where
         if let Some(table) = target.table {
             self.inference.table.adopt(table);
         }
-        self.inference.set_expr_ty(call, prepared.signature.ret);
+        self.inference
+            .set_expr_ty(call, prepared.signature.call_return);
         Ok(Some(prepared))
     }
 
