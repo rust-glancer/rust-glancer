@@ -31,13 +31,13 @@ impl BuildScriptRun {
                 // The dep-info input gives us the run hash. The compiler unit that consumed it
                 // has a different hash and its own out directory.
                 let run = unit.join("run");
-                if !is_build_directory(parent.parent()?, scan_roots) || !run.is_dir() {
+                if !Self::is_build_directory(parent.parent()?, scan_roots) || !run.is_dir() {
                     return None;
                 }
                 run.join("stdout")
             } else {
                 let unit_name = unit.file_name()?.to_str()?;
-                if !unit_name.contains('-') || !is_build_directory(parent, scan_roots) {
+                if !unit_name.contains('-') || !Self::is_build_directory(parent, scan_roots) {
                     return None;
                 }
                 unit.join("output")
@@ -48,6 +48,17 @@ impl BuildScriptRun {
                 stdout_path,
             })
         })
+    }
+
+    fn is_build_directory(directory: &Path, roots: &[PathBuf]) -> bool {
+        directory.file_name().is_some_and(|name| name == "build")
+            && directory.parent().is_some_and(|profile| {
+                roots.iter().any(|root| {
+                    profile
+                        .strip_prefix(root)
+                        .is_ok_and(|path| matches!(path.components().count(), 1 | 2))
+                })
+            })
     }
 }
 
@@ -102,15 +113,4 @@ fn has_unit_hash(unit: &Path) -> bool {
     unit.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit()))
-}
-
-fn is_build_directory(directory: &Path, roots: &[PathBuf]) -> bool {
-    directory.file_name().is_some_and(|name| name == "build")
-        && directory.parent().is_some_and(|profile| {
-            roots.iter().any(|root| {
-                profile
-                    .strip_prefix(root)
-                    .is_ok_and(|path| matches!(path.components().count(), 1 | 2))
-            })
-        })
 }
