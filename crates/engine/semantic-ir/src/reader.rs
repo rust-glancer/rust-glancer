@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
-use rg_ir_model::{CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef, TraitDefRef};
 use rg_source::ReadError;
 use rg_std::CancellationToken;
+use rg_text::Name;
 
 use crate::{
     AssociatedItemStore, ItemLookupEnv, LookupAnswer, LookupQuestion, SemanticItemSource,
@@ -47,6 +48,16 @@ pub trait CrateItemSource: Sync {
     /// names. Requesting these tables can expand member macros, but does not open macro-free
     /// member stores. The search consumer opens those only when their written names match.
     fn symbol_names(&self, crates: &[CrateRef]) -> Result<Vec<Arc<SymbolNameIndex>>, ReadError>;
+    fn visible_crates(&self, _krate: CrateRef) -> Result<&[CrateRef], ReadError> {
+        Ok(&[])
+    }
+
+    /// Written function names in traits, sorted by spelling so a prefix search can select
+    /// trait owners before opening their member stores. The table can include functions with
+    /// no receiver, so method lookup checks the signature after opening the store.
+    fn trait_function_names(&self, _krate: CrateRef) -> Result<&[(Name, TraitDefRef)], ReadError> {
+        Ok(&[])
+    }
     fn crates(&self) -> Vec<CrateRef>;
 }
 
@@ -127,6 +138,17 @@ impl<'a> ItemReader<'a> {
             }
         }
         Ok(selected)
+    }
+
+    pub fn visible_crates(&self, krate: CrateRef) -> Result<&[CrateRef], ReadError> {
+        self.0.visible_crates(krate)
+    }
+
+    pub fn trait_function_names(
+        &self,
+        krate: CrateRef,
+    ) -> Result<&[(Name, TraitDefRef)], ReadError> {
+        self.0.trait_function_names(krate)
     }
 
     pub fn included_crates(

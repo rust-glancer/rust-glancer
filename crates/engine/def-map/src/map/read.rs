@@ -3,7 +3,7 @@
 //! A view is only a route to data. Opening it does not acquire module scopes, documentation,
 //! or macro tokens; each accessor observes the output it actually reads.
 
-use std::{collections::HashMap, fmt};
+use std::{borrow::Cow, collections::HashMap, fmt};
 
 use rg_arena::{Arena, ArenaId as _, StoredArena};
 use rg_ir_model::{
@@ -14,8 +14,8 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::DefMap;
 use crate::{
-    ImportData, ItemScope, ItemSource, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
-    LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation,
+    ImportData, ImportableScope, ItemScope, ItemSource, LocalDefData, LocalEnumVariantData,
+    LocalEnumVariantEntry, LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Default)]
@@ -35,6 +35,7 @@ pub struct StoredDefMap {
     origin: DefMapRef,
     modules: ajika::Output<Arena<ModuleId, ModuleData>>,
     scopes: Arena<ModuleId, ajika::Output<ItemScope>>,
+    importable_scopes: ajika::Output<Arena<ModuleId, ImportableScope>>,
     docs: Arena<ModuleId, Option<ajika::Output<ModuleDocumentation>>>,
     definitions: StoredArena<LocalDefId, LocalDefData>,
     variants: StoredArena<LocalEnumVariantId, LocalEnumVariantData>,
@@ -75,6 +76,10 @@ impl StoredDefMap {
         for (id, variant) in data.local_enum_variants.iter_with_ids() {
             enum_variants.entry(variant.enum_def).or_default().push(id);
         }
+        // Import lookup can cross hundreds of scopes. Publish module edges with cheap prefix
+        // buckets so that traversal can leave the full namespace tables offloaded on a miss.
+        let importable_scopes =
+            Arena::from_vec(data.scopes.iter().map(ImportableScope::new).collect());
         let scopes = data
             .scopes
             .into_vec()
@@ -101,6 +106,7 @@ impl StoredDefMap {
             origin,
             modules: db.output("module_metadata", data.modules.into())?,
             scopes: Arena::from_vec(scopes),
+            importable_scopes: db.output("importable_scopes", importable_scopes.into())?,
             docs: Arena::from_vec(docs),
             definitions: StoredArena::publish(db, "definitions", data.local_defs)?,
             variants: StoredArena::publish(db, "enum_variants", data.local_enum_variants)?,
@@ -178,6 +184,24 @@ impl<'db> DefMapView<'db> {
                 .get(id)
                 .map(|output| output.value_ref(db))
                 .transpose(),
+        }
+    }
+
+    /// Read the summary separately so a prefix miss in a stored module can leave its item
+    /// scope offloaded. For an in-memory DefMap, derive the summary from the available scope.
+    pub fn importable_scope(
+        self,
+        id: ModuleId,
+    ) -> ajika::Result<Option<Cow<'db, ImportableScope>>> {
+        match self.storage {
+            DefinitionStorage::Local(map) => Ok(map
+                .module_scope(id)
+                .map(|scope| Cow::Owned(ImportableScope::new(scope)))),
+            DefinitionStorage::Stored { db, map } => Ok(map
+                .importable_scopes
+                .value_ref(db)?
+                .get(id)
+                .map(Cow::Borrowed)),
         }
     }
 
