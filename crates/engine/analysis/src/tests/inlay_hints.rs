@@ -45,7 +45,11 @@ pub async fn demo() {
     };
     let completed = nested.await;
     let bounded = output_of(async { Item });
+    let other = fetch::<u8>();
+    let iterator = load_iterator();
 }
+
+async fn load_iterator() -> impl Iterator<Item = u8> { loop {} }
 "#,
         InlayHintsQuery::new("async inference", "/src/lib.rs").in_lib("async_hints"),
         expect![[r#"
@@ -65,6 +69,9 @@ pub async fn demo() {
             `: Item` @ 37:9-37:18
             `: Item` @ 38:9-38:16
             `future:` @ 38:29-38:43
+            `: impl Future<Output = u8>` @ 39:9-39:14
+            `: impl Future<Output = impl Iterator<Item = u8>>` @ 40:9-40:17
+            `// fn demo` @ 41:1-41:2
         "#]],
     );
 }

@@ -23,6 +23,8 @@ mod compact;
 mod output;
 mod query;
 
+use std::cell::Cell;
+
 use rg_ir_model::{CrateRef, GenericParamRef, Mutability, TraitDefRef, TypeAliasRef, TypeParamRef};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
@@ -46,7 +48,7 @@ pub struct TypeRenderer<'a, 'db> {
     syntax: SyntaxRenderer,
     query: TypeLabelQuery<'a, 'db>,
     // Count projected Iterator::Item expansions, not ordinary nesting such as Option<Vec<T>>.
-    iterator_depth: usize,
+    iterator_depth: Cell<usize>,
 }
 
 impl<'a, 'db> TypeRenderer<'a, 'db> {
@@ -57,7 +59,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             db,
             syntax: SyntaxRenderer::new(edition),
             query: TypeLabelQuery::new(db, edition),
-            iterator_depth: 0,
+            iterator_depth: Cell::new(0),
         }
     }
 
@@ -384,7 +386,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 Ok(true)
             },
             |output| {
-                if application.is_some() || self.iterator_depth >= Self::MAX_ITERATOR_DEPTH {
+                let depth = self.iterator_depth.get();
+                if application.is_some() || depth >= Self::MAX_ITERATOR_DEPTH {
                     return Ok(false);
                 }
                 let Some(item) = self.query.iterator_item(ty)? else {
@@ -395,31 +398,27 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 // `Recursive::Item = Skip<Recursive>` makes `Skip<Recursive>::Item` itself.
                 // Bound these expansions, then use the concrete adapter at the limit.
                 // TODO: Share recursion protection with the other type-rendering paths.
-                let nested = Self {
-                    db: self.db,
-                    syntax: self.syntax,
-                    query: self.query.clone(),
-                    iterator_depth: self.iterator_depth + 1,
-                };
                 output.push_str("impl Iterator<Item = ");
-                let known =
-                    output.collapsible(|output| nested.write_ty(&item, application, output))?;
+                // Reuse the renderer so types inside `Item` share the same queries. Save
+                // the depth for sibling types even if rendering this item returns an error.
+                self.iterator_depth.set(depth + 1);
+                let result = output.collapsible(|output| self.write_ty(&item, application, output));
+                self.iterator_depth.set(depth);
+                let known = result?;
                 output.push('>');
                 Ok(known)
             },
         )
     }
 
-    /// An opaque `impl Trait` has an identity for inference, but its label uses its declared bounds.
+    /// Show the opaque type's bounds with the arguments from this use of the type.
     fn write_opaque(
         &self,
         opaque: &OpaqueTy,
         application: Option<&TraitApplication>,
         output: &mut TypeOutput<'_>,
     ) -> anyhow::Result<bool> {
-        let bounds = SemanticSignatureQuery::new(self.db, self.db)
-            .opaque_bounds(opaque)?
-            .unwrap_or_default();
+        let bounds = self.query.opaque_bounds(opaque)?;
         output.push_str("impl ");
         if bounds.is_empty() {
             output.push('_');
