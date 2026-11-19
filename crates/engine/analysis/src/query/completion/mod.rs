@@ -10,6 +10,10 @@
 //! overlays valid at that site. The `resolvers` module owns those result-producing flows;
 //! sibling modules provide site detection, syntax classification, candidate lookup, rendering,
 //! and source-edit policy. Examples use `$0` to mark the cursor.
+//!
+//! Auto-import is an overlay for ordinary names and methods. At `let _: HashM$0`, the row
+//! carries the path to `HashMap` so the editor can ask for the `use` edit after selecting it.
+//! This keeps source-edit planning out of the search that runs while the user types.
 
 mod candidates;
 mod pattern;
@@ -18,9 +22,13 @@ mod resolvers;
 mod site;
 mod syntax;
 
-use std::fmt;
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use rg_ir_model::{CrateRef, FileId};
+use rg_ir_view::lookup::importable::ImportableNameSearch;
 
 pub(crate) use self::{
     resolvers::CompletionResolver,
@@ -71,7 +79,12 @@ impl<'source> CompletionSource<'source> {
 pub struct CompletionClientCapabilities {
     /// Whether insertion text may contain LSP snippet placeholders.
     pub snippet_support: bool,
+    /// Whether the caller can ask for the import edit of a selected completion.
+    pub auto_import: bool,
 }
+
+// Leave time for candidate rendering and protocol conversion after the optional search.
+const AUTO_IMPORT_BUDGET: Duration = Duration::from_millis(4);
 
 /// One source-position completion query plus the editor state needed for request-local syntax.
 ///
@@ -88,7 +101,7 @@ pub struct CompletionQuery<'a> {
     /// Exact buffer for this snapshot. When omitted, completion reads the file from the snapshot.
     pub source_text: Option<&'a str>,
     completion_source: Option<&'a CompletionSource<'a>>,
-    /// Client features that affect insertion text but not semantic eligibility.
+    /// Client features used when building and applying completion items.
     pub client_capabilities: CompletionClientCapabilities,
 }
 
@@ -140,4 +153,12 @@ pub(crate) struct CompletionContext<'a> {
     pub(crate) offset: u32,
     pub(crate) source_text: &'a str,
     pub(crate) client_capabilities: CompletionClientCapabilities,
+}
+
+impl CompletionContext<'_> {
+    /// Start the search budget when a resolver reaches an eligible prefix.
+    pub(crate) fn auto_import_deadline(&self, prefix: &str) -> Option<Instant> {
+        (self.client_capabilities.auto_import && ImportableNameSearch::supports_prefix(prefix))
+            .then(|| Instant::now() + AUTO_IMPORT_BUDGET)
+    }
 }

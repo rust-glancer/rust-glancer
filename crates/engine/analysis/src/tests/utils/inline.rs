@@ -123,8 +123,9 @@ impl InlineAnalysisFixture {
                 ("in_bin", [String(package)]) => query.in_bin(package),
                 ("matching", [String(prefix)]) => query.matching(prefix),
                 ("members", []) => query.members(),
+                ("auto_import", []) => query.auto_import(),
                 _ => panic!(
-                    "expected .in_lib(\"package\"), .in_bin(\"package\"), .matching(\"prefix\") or .members()"
+                    "expected .in_lib(\"package\"), .in_bin(\"package\"), .matching(\"prefix\"), .members() or .auto_import()"
                 ),
             };
         }

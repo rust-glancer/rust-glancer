@@ -98,6 +98,7 @@ pub(super) struct AnalysisQuery {
     kind: AnalysisQueryKind,
     completion_label_prefix: Option<String>,
     completion_members_only: bool,
+    auto_import: bool,
 }
 
 impl AnalysisQuery {
@@ -204,6 +205,11 @@ impl AnalysisQuery {
         self
     }
 
+    pub(super) fn auto_import(mut self) -> Self {
+        self.auto_import = true;
+        self
+    }
+
     fn new(title: &str, marker: &str, kind: AnalysisQueryKind) -> Self {
         Self {
             title: title.to_string(),
@@ -212,6 +218,7 @@ impl AnalysisQuery {
             kind,
             completion_label_prefix: None,
             completion_members_only: false,
+            auto_import: false,
         }
     }
 }
@@ -711,12 +718,14 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_client_capabilities(CompletionClientCapabilities {
                         snippet_support: true,
+                        auto_import: query.auto_import,
                     });
                 let mut completions = self
                     .db
                     .analysis()
                     .completions_at(completion_query)
-                    .expect("fixture completion query should resolve");
+                    .expect("fixture completion query should resolve")
+                    .items;
                 Self::filter_completions(query, &mut completions);
                 if matches!(
                     query.kind,

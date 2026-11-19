@@ -25,11 +25,11 @@ use rg_workspace::WorkspaceMetadata;
 pub use self::{
     model::{
         CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit,
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget, DocumentSymbol, DocumentationLink, Fold, FoldKind,
-        Highlight, HighlightKind, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
-        InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
-        ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
+        CompletionApplicability, CompletionEdit, CompletionImport, CompletionInsertText,
+        CompletionItem, CompletionKind, CompletionResult, CompletionTarget, DocumentSymbol,
+        DocumentationLink, Fold, FoldKind, Highlight, HighlightKind, HoverBlock, HoverInfo,
+        InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget,
+        NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
         SyntheticCompletionTarget, WorkspaceSymbol,
     },
     query::{
@@ -364,10 +364,7 @@ impl<'a> Analysis<'a> {
     ///
     /// Missing source text comes from this analysis snapshot. The caller can also supply its
     /// captured text or reuse speculative syntax already prepared for the request.
-    pub fn completions_at(
-        &self,
-        query: CompletionQuery<'_>,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
+    pub fn completions_at(&self, query: CompletionQuery<'_>) -> anyhow::Result<CompletionResult> {
         self.run_query("completions_at", || {
             let snapshot_text;
             let source_text = match query.source_text {

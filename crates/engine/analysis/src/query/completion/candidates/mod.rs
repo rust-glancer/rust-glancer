@@ -11,7 +11,7 @@ mod module;
 mod scope;
 
 use rg_ir_model::{
-    BodyRef, EnumVariantFieldRef, FieldRef, FunctionRef, ModuleRef, Path, ScopeId,
+    BodyRef, EnumVariantFieldRef, FieldRef, FunctionRef, ModuleRef, ScopeId,
     identity::DeclarationRef,
 };
 use rg_ir_view::{
@@ -25,8 +25,8 @@ use crate::model::{CompletionApplicability, CompletionKind, CompletionTarget};
 /// Definition-shaped candidate after module, associated-item, or auto-import lookup.
 ///
 /// Storage-specific views have already supplied semantic identity and documentation. Optional
-/// macro/function/import facts remain attached so one renderer can choose invocation syntax,
-/// details, and additional edits without repeating lookup.
+/// macro and function facts let the renderer choose invocation syntax and details without
+/// repeating lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DefinitionCompletionCandidate {
     label: String,
@@ -38,8 +38,6 @@ pub(crate) struct DefinitionCompletionCandidate {
     documentation: Option<String>,
     function: Option<FunctionRef>,
     macro_kind: Option<MacroKind>,
-    import_path: Option<Path>,
-    import_path_len: Option<usize>,
 }
 
 impl DefinitionCompletionCandidate {
@@ -81,14 +79,6 @@ impl DefinitionCompletionCandidate {
 
     pub(crate) fn macro_kind(&self) -> Option<MacroKind> {
         self.macro_kind
-    }
-
-    pub(crate) fn import_path(&self) -> Option<&Path> {
-        self.import_path.as_ref()
-    }
-
-    pub(crate) fn import_path_len(&self) -> Option<usize> {
-        self.import_path_len
     }
 }
 

@@ -48,7 +48,6 @@ fn use_it() {
 }
 
 #[test]
-#[ignore = "TODO(#160)"]
 fn completes_unqualified_names_with_bounded_auto_imports() {
     check_analysis(
         r#"
@@ -97,18 +96,18 @@ pub fn make_widget() {}
 use catalog::collections::BTreeMap;
 
 fn types() {
-    let _: HashM$0; // complete_verbose("coalesced HashMap import").in_lib("app").matching("HashMap")
-    let _: Wid$0; // complete_verbose("ambiguous imports").in_lib("app").matching("Widget")
-    let _: RankedW$0; // complete_verbose("short re-export path").in_lib("app").matching("RankedWidget")
-    let _: PublicW$0; // complete_verbose("public re-export").in_lib("app").matching("PublicWidget")
-    let _: SecretW$0; // complete("hidden re-export").in_lib("app").matching("SecretWidget")
-    let _: HiddenW$0; // complete("hidden declaration").in_lib("app").matching("HiddenWidget")
-    let _: UnstableW$0; // complete("unstable declaration").in_lib("app").matching("UnstableWidget")
-    let _: DisabledW$0; // complete("cfg-disabled declaration").in_lib("app").matching("DisabledWidget")
+    let _: HashM$0; // complete_verbose("coalesced HashMap import").in_lib("app").auto_import().matching("HashMap")
+    let _: Wid$0; // complete_verbose("ambiguous imports").in_lib("app").auto_import().matching("Widget")
+    let _: RankedW$0; // complete_verbose("short re-export path").in_lib("app").auto_import().matching("RankedWidget")
+    let _: PublicW$0; // complete_verbose("public re-export").in_lib("app").auto_import().matching("PublicWidget")
+    let _: SecretW$0; // complete("hidden re-export").in_lib("app").auto_import().matching("SecretWidget")
+    let _: HiddenW$0; // complete("hidden declaration").in_lib("app").auto_import().matching("HiddenWidget")
+    let _: UnstableW$0; // complete("unstable declaration").in_lib("app").auto_import().matching("UnstableWidget")
+    let _: DisabledW$0; // complete("cfg-disabled declaration").in_lib("app").auto_import().matching("DisabledWidget")
 }
 
 fn values() {
-    make_w$0; // complete_verbose("value auto-import").in_lib("app").matching("make_widget")
+    make_w$0; // complete_verbose("value auto-import").in_lib("app").auto_import().matching("make_widget")
 }
 "#,
         expect![[r#"
@@ -153,7 +152,7 @@ fn values() {
             // value auto-import
             fn make_widget
               detail: pub fn make_widget() (use catalog::make_widget)
-              sort: 05-auto-import:0002|make_widget|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: 05-auto-import:0002|make_widget|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 229..235
               additional: 35..35 => "\nuse catalog::make_widget;"
               snippet: make_widget()$0

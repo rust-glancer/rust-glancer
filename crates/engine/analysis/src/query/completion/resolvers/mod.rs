@@ -44,7 +44,7 @@ use super::{
 };
 use crate::{
     Analysis,
-    model::{CompletionEdit, CompletionItem},
+    model::{CompletionEdit, CompletionResult},
 };
 
 /// Coordinates completion-site detection with semantic candidate rendering.
@@ -81,7 +81,11 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
 
     /// Collects completions for one source offset, e.g. `user.$0`,
     /// `let value = crate::$0`, `let value = inp$0`, `User { na$0 }`, or `use st$0`.
-    pub(crate) fn completions_at(&self) -> anyhow::Result<Vec<CompletionItem>> {
+    pub(crate) fn completions_at(&self) -> anyhow::Result<CompletionResult> {
+        let complete = |items| CompletionResult {
+            items,
+            is_incomplete: false,
+        };
         let local_syntax = self
             .shared_syntax
             .is_none()
@@ -100,13 +104,14 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         );
         if is_plain_item_list {
             return KeywordCompletionResolver::new(self.query.client_capabilities)
-                .completions(syntax_context);
+                .completions(syntax_context)
+                .map(complete);
         }
         if let Some(SyntaxCompletionContext::Specialized(context)) = syntax_domain {
             let Some(syntax) = syntax_context else {
-                return Ok(Vec::new());
+                return Ok(CompletionResult::default());
             };
-            return match context {
+            let items = match context {
                 SpecializedCompletionContext::Attribute(context) => {
                     AttributeCompletionResolver::new(self.analysis, self.query)
                         .completions(context, syntax)
@@ -139,7 +144,8 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     SpecializedCompletionResolver::new(self.analysis, self.query)
                         .string_completions(context, syntax)
                 }
-            };
+            }?;
+            return Ok(complete(items));
         }
 
         // Keyword fragments can be useful even when the cursor does not lower
@@ -156,10 +162,18 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
             .context("detect completion site")?
         else {
             return KeywordCompletionResolver::new(self.query.client_capabilities)
-                .completions(syntax_context);
+                .completions(syntax_context)
+                .map(complete);
         };
 
-        match site {
+        // Auto-import depends on the prefix. Even a list with only in-scope names
+        // at `H` needs a new search once the user reaches `Ha`.
+        let is_incomplete = self.query.client_capabilities.auto_import
+            && match &site {
+                CompletionSite::Unqualified(site) => site.context().supports_auto_import(),
+                _ => false,
+            };
+        let items = match site {
             CompletionSite::AssociatedTypeBinding(site) => {
                 AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)
                     .completions(site)
@@ -214,7 +228,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     replace: site.replace_span(),
                 };
                 let mut completions = UnqualifiedCompletionResolver::new(self.analysis, self.query)
-                    .completions(site, syntax_context)
+                    .completions(site)
                     .context("collect unqualified completions")?;
                 if context == NameCompletionContext::Type
                     && let Some(binding) = SourceCompletionView::new(self.analysis.view_db())
@@ -268,6 +282,10 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 RecordFieldCompletionResolver::new(self.analysis.view_db(), self.query.crate_ref)
                     .completions(site)
             }
-        }
+        }?;
+        Ok(CompletionResult {
+            items,
+            is_incomplete,
+        })
     }
 }
