@@ -316,6 +316,31 @@ impl EngineDispatcher {
                         },
                     );
                 }
+                EngineCommand::ResolveCompletionImport {
+                    input,
+                    import,
+                    candidate,
+                    respond_to,
+                } => {
+                    let context = QueryContext::document(
+                        "resolve_completion_import",
+                        queue_elapsed,
+                        input.snapshot(),
+                    );
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, cancellation| {
+                            runner.resolve_completion_import(
+                                input,
+                                &import,
+                                candidate.as_ref(),
+                                cancellation,
+                            )
+                        },
+                    );
+                }
                 EngineCommand::Formatting {
                     snapshot,
                     respond_to,

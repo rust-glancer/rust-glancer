@@ -3,14 +3,14 @@
 use std::path::PathBuf;
 
 use gen_lsp_types::{
-    CodeAction, CompletionItem, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint,
-    Location, PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
+    CodeAction, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint, Location,
+    PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
 };
 use rg_lsp_proto::{
-    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
-    DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot,
-    FoldingClientCapabilities, InlayHintsConfig, OpenDocumentsRevision, ProjectInitialization,
-    QueryError, QueryValue,
+    CodeActionRequestContext, CompletionClientCapabilities, CompletionImport,
+    CompletionImportCandidate, CompletionResult, DocumentPositionSnapshot, DocumentRangeSnapshot,
+    DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, FoldingClientCapabilities,
+    InlayHintsConfig, OpenDocumentsRevision, ProjectInitialization, QueryError, QueryValue,
 };
 use rg_project::SavedFileChange;
 use tokio::sync::oneshot;
@@ -90,7 +90,13 @@ pub(crate) enum EngineCommand {
     Completion {
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-        respond_to: QueryResponder<Vec<CompletionItem>>,
+        respond_to: QueryResponder<CompletionResult>,
+    },
+    ResolveCompletionImport {
+        input: DocumentPositionSnapshot,
+        import: CompletionImport,
+        candidate: Option<CompletionImportCandidate>,
+        respond_to: QueryResponder<Option<TextEdit>>,
     },
     Formatting {
         snapshot: EditorDocumentSnapshot,

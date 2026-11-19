@@ -213,6 +213,22 @@ impl<S> EditorIngress<S> {
                     completion,
                 }
             }
+            "completionItem/resolve" => {
+                // The URI comes back in the item's data. Capture it here so a preceding
+                // didChange is already reflected in the buffer used to plan the import.
+                let path = request
+                    .params()
+                    .and_then(|item| item.get("data"))
+                    .and_then(|data| data.get("uri"))
+                    .and_then(|uri| uri.as_str())
+                    .and_then(|uri| uri.parse().ok())
+                    .as_ref()
+                    .and_then(methods::uri_to_path);
+                IngressCall::Document {
+                    document: Mutex::new(Some(self.editor.document(path))),
+                    completion: None,
+                }
+            }
             method if Self::is_document_request(method) => {
                 let path =
                     Self::request_document_uri(request).and_then(|uri| methods::uri_to_path(&uri));

@@ -11,13 +11,14 @@ use std::{ffi::OsStr, path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
 use gen_lsp_types::{
-    CodeAction, CompletionItem, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint,
-    Location, PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
+    CodeAction, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint, Location,
+    PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
 };
 use rg_lsp_proto::{
-    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
-    DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
-    EngineError, EngineResult, EngineService, FoldingClientCapabilities, OpenDocumentsRevision,
+    CodeActionRequestContext, CompletionClientCapabilities, CompletionImport,
+    CompletionImportCandidate, CompletionResult, DocumentPositionSnapshot, DocumentRangeSnapshot,
+    DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig, EngineError,
+    EngineResult, EngineService, FoldingClientCapabilities, OpenDocumentsRevision,
     ProjectInitialization, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
 };
 use rg_project::SavedFileChange;
@@ -301,11 +302,28 @@ impl EngineService for Service {
         _: context::Context,
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-    ) -> Result<QueryValue<Vec<CompletionItem>>, QueryError> {
+    ) -> Result<QueryValue<CompletionResult>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Completion {
                 input,
                 client_capabilities,
+                respond_to,
+            })
+            .await
+    }
+
+    async fn resolve_completion_import(
+        self,
+        _: context::Context,
+        input: DocumentPositionSnapshot,
+        import: CompletionImport,
+        candidate: Option<CompletionImportCandidate>,
+    ) -> Result<QueryValue<Option<TextEdit>>, QueryError> {
+        self.engine
+            .query(|respond_to| EngineCommand::ResolveCompletionImport {
+                input,
+                import,
+                candidate,
                 respond_to,
             })
             .await

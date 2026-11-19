@@ -9,13 +9,15 @@
 //! still working. The same logical request moves its cursor to `RwLock|` and starts a second
 //! semantic attempt with the newer document. A separate completion message from the editor
 //! replaces the whole logical request, including any attempt it is running.
+//!
+//! Resolving an import is a separate request for a row the editor already has.
 
-use rg_lsp_proto::QueryError;
+use rg_lsp_proto::{CompletionCandidate, CompletionImportData, QueryError};
 use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::{
     completion_scheduler::CompletionAttemptOutcome,
-    methods::{self, CompletionMethodContext},
+    methods::{self, CompletionMethodContext, DocumentMethodContext},
 };
 
 #[tracing::instrument(
@@ -109,10 +111,43 @@ pub(crate) async fn completion(
                 match ctx.document.finish_attempt(result) {
                     Ok(completions) => {
                         tracing::trace!(
-                            result_count = completions.len(),
+                            result_count = completions.items.len(),
                             "completion request answered"
                         );
-                        return Ok(Some(complete_response(completions)));
+                        let uri = &params.text_document_position_params.text_document.uri;
+                        let items = completions
+                            .items
+                            .into_iter()
+                            .map(
+                                |CompletionCandidate {
+                                     mut item,
+                                     import,
+                                     import_site,
+                                 }| {
+                                    if let Some(import) = import {
+                                        item.data = Some(
+                                            serde_json::to_value(CompletionImportData {
+                                                uri: uri.clone(),
+                                                position,
+                                                document: captured.document().target().clone(),
+                                                editor_revision: captured.open_documents_revision(),
+                                                site: import_site,
+                                                import,
+                                            })
+                                            .map_err(|error| {
+                                                methods::internal_error(error.into())
+                                            })?,
+                                        );
+                                    }
+                                    Ok(item)
+                                },
+                            )
+                            .collect::<Result<_>>()?;
+                        return Ok(Some(CompletionResponse::CompletionList(CompletionList {
+                            items,
+                            is_incomplete: completions.is_incomplete,
+                            ..Default::default()
+                        })));
                     }
                     Err(QueryError::EditorChanged) => {
                         tracing::debug!(
@@ -129,15 +164,39 @@ pub(crate) async fn completion(
     }
 }
 
-/// Return the complete result computed for the final captured document revision.
-///
-/// The retry loop already follows edits that overtake an in-flight request. Claiming that this
-/// same result is incomplete makes clients immediately request the identical position again,
-/// duplicating semantic work and competing with the presentation queries triggered by the edit.
-fn complete_response(items: Vec<CompletionItem>) -> CompletionResponse {
-    CompletionResponse::CompletionList(CompletionList {
-        is_incomplete: false,
-        items,
-        ..Default::default()
-    })
+/// Compute the import edit for one selected candidate. Resolve has no scheduler lease because
+/// previewing a row must not replace a newer request for the completion list.
+pub(crate) async fn resolve_import(
+    ctx: DocumentMethodContext,
+    mut item: CompletionItem,
+    data: CompletionImportData,
+) -> Result<CompletionItem> {
+    item.additional_text_edits = None;
+    let captured = ctx.captured_document();
+    let current = captured.document().target();
+    if current != &data.document || captured.open_documents_revision() != data.editor_revision {
+        return Ok(item);
+    }
+    let Ok(input) = ctx.position(data.position) else {
+        return Ok(item);
+    };
+    let result = ctx
+        .engine_client
+        .query("resolve_completion_import", |client, context| async move {
+            client
+                .resolve_completion_import(context, input, data.import, None)
+                .await
+        })
+        .await;
+    // The edit belongs to the capture we sent. If the editor overtook it, skip the edit.
+    match ctx.finish_attempt(result) {
+        Ok(edit) => item.additional_text_edits = edit.map(|edit| vec![edit]),
+        Err(
+            QueryError::EditorChanged
+            | QueryError::SavedSourceChanged
+            | QueryError::TemporarilyUnavailable,
+        ) => {}
+        Err(error) => return Err(methods::into_lsp_error(error)),
+    }
+    Ok(item)
 }

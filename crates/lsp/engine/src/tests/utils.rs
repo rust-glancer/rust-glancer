@@ -867,7 +867,12 @@ impl LspEngineFixture {
                     )
                     .await
                     .expect("completion query should succeed");
-                let completions = outcome.into_value();
+                let completions = outcome
+                    .into_value()
+                    .items
+                    .into_iter()
+                    .map(|candidate| candidate.item)
+                    .collect::<Vec<_>>();
                 Self::assert_completion_edits_fit_source(&current_text, &completions);
 
                 self.render_completions(rendered, path.as_path(), &completions);

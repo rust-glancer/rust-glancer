@@ -1,43 +1,66 @@
 use gen_lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionItemTextEdit, Documentation,
-    InsertTextFormat, MarkupContent, MarkupKind,
+    InsertTextFormat, MarkupContent, MarkupKind, TextEdit,
 };
 use rg_analysis::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
+    CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+    CompletionItem, CompletionKind,
 };
+use rg_lsp_proto::{CompletionCandidate, CompletionImport, CompletionImportSite};
 use rg_parse::LineIndex;
 
 use crate::proto::{markdown, position, text_edit};
 
-pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> LspCompletionItem {
+pub(crate) fn completion_candidate(
+    item: CompletionItem,
+    line_index: &LineIndex,
+    import_site: Option<CompletionImportSite>,
+) -> CompletionCandidate {
     let detail = completion_detail(item.detail, item.applicability);
     let insert_text_format = completion_insert_text_format(&item.insert_text);
     let text_edit = completion_text_edit(&item.label, item.insert_text, item.edit, line_index);
-    let additional_text_edits = (!item.additional_edits.is_empty()).then(|| {
-        item.additional_edits
-            .into_iter()
-            .map(|edit| {
-                text_edit::new(
-                    line_index,
-                    position::range(line_index, edit.replace),
-                    edit.new_text,
-                )
-            })
-            .collect()
-    });
-
-    LspCompletionItem {
-        label: item.label,
-        kind: Some(completion_kind(item.kind)),
-        detail,
-        documentation: item.documentation.and_then(markdown_documentation),
-        sort_text: Some(item.sort_text),
-        filter_text: item.filter_text,
-        insert_text_format,
-        text_edit,
-        additional_text_edits,
-        ..Default::default()
+    CompletionCandidate {
+        item: LspCompletionItem {
+            label: item.label,
+            kind: Some(completion_kind(item.kind)),
+            detail,
+            documentation: item.documentation.and_then(markdown_documentation),
+            sort_text: Some(item.sort_text),
+            filter_text: item.filter_text,
+            insert_text_format,
+            text_edit,
+            ..Default::default()
+        },
+        import: item.import.map(|import| CompletionImport {
+            path: import.path.to_string(),
+            anonymous: import.anonymous,
+        }),
+        import_site,
     }
+}
+
+pub(crate) fn import_edit(edit: CompletionAdditionalEdit, line_index: &LineIndex) -> TextEdit {
+    text_edit::new(
+        line_index,
+        position::range(line_index, edit.replace),
+        edit.new_text,
+    )
+}
+
+/// Only items with an import can come back for semantic validation.
+pub(crate) fn import_kind(kind: CompletionItemKind) -> Option<CompletionKind> {
+    Some(match kind {
+        CompletionItemKind::Method => CompletionKind::TraitMethod,
+        CompletionItemKind::Function => CompletionKind::Function,
+        CompletionItemKind::Constant => CompletionKind::Const,
+        CompletionItemKind::Enum => CompletionKind::Enum,
+        CompletionItemKind::EnumMember => CompletionKind::EnumVariant,
+        CompletionItemKind::Variable => CompletionKind::Static,
+        CompletionItemKind::Struct => CompletionKind::Struct,
+        CompletionItemKind::Interface => CompletionKind::Trait,
+        CompletionItemKind::Class => CompletionKind::TypeAlias,
+        _ => return None,
+    })
 }
 
 fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
@@ -120,17 +143,17 @@ mod tests {
         MarkupKind,
     };
     use rg_analysis::{
-        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
-        CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
+        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionImport,
+        CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
     };
-    use rg_ir_model::Span;
+    use rg_ir_model::{Path, Span};
     use rg_parse::LineIndex;
 
-    use super::completion_item;
+    use super::{completion_candidate, import_edit};
 
     #[test]
     fn renders_plain_completion_metadata_and_replacement_edit() {
-        let completion = completion_item(
+        let completion = completion_candidate(
             CompletionItem {
                 label: "name".to_string(),
                 filter_text: Some("na".to_string()),
@@ -144,10 +167,12 @@ mod tests {
                 edit: Some(CompletionEdit {
                     replace: Span { start: 5, end: 7 },
                 }),
-                additional_edits: Vec::new(),
+                import: None,
             },
             &LineIndex::new("user.na"),
-        );
+            None,
+        )
+        .item;
 
         assert_eq!(completion.kind, Some(CompletionItemKind::Method));
         assert_eq!(
@@ -177,8 +202,9 @@ mod tests {
     }
 
     #[test]
-    fn renders_crlf_snippet_and_additional_edits_through_the_whole_item() {
-        let completion = completion_item(
+    fn renders_crlf_snippet_and_resolved_import() {
+        let line_index = LineIndex::new("HashM\r\n");
+        let candidate = completion_candidate(
             CompletionItem {
                 label: "HashMap".to_string(),
                 filter_text: None,
@@ -194,13 +220,18 @@ mod tests {
                 edit: Some(CompletionEdit {
                     replace: Span { start: 0, end: 5 },
                 }),
-                additional_edits: vec![CompletionAdditionalEdit {
-                    replace: Span { start: 0, end: 0 },
-                    new_text: "use std::collections::HashMap;\n".to_string(),
-                }],
+                import: Some(CompletionImport {
+                    path: Path::from_text("std::collections::HashMap", None).expect("known path"),
+                    anonymous: false,
+                }),
             },
-            &LineIndex::new("HashM\r\n"),
+            &line_index,
+            None,
         );
+        let import = candidate.import.expect("auto-import payload");
+        assert_eq!(import.path, "std::collections::HashMap");
+        let completion = candidate.item;
+        assert!(completion.additional_text_edits.is_none());
 
         assert_eq!(
             completion.insert_text_format,
@@ -211,13 +242,13 @@ mod tests {
         };
         assert_eq!(edit.new_text, "HashMap::<${1:K}, ${2:V}>$0\r\n");
 
-        let [additional_edit] = completion
-            .additional_text_edits
-            .as_deref()
-            .expect("completion should contain its auto-import edit")
-        else {
-            panic!("completion should contain one auto-import edit");
-        };
+        let additional_edit = import_edit(
+            CompletionAdditionalEdit {
+                replace: Span { start: 0, end: 0 },
+                new_text: "use std::collections::HashMap;\n".to_string(),
+            },
+            &line_index,
+        );
         assert_eq!(
             additional_edit.new_text,
             "use std::collections::HashMap;\r\n"
