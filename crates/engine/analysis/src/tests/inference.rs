@@ -2520,6 +2520,34 @@ pub fn use_it(user: User, error: Error) {
 }
 
 #[test]
+fn infers_record_update_base_bidirectionally() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:record_updates
+pub struct Packet<T> {
+    seen: bool,
+    payload: Option<T>,
+}
+
+impl<T> Default for Packet<T> {
+    fn default() -> Self { Self { seen: false, payload: Option::None } }
+}
+
+pub fn update(existing: Packet<u64>) {
+    let updated = Packet { seen: true, ..existing }$0; // ty("update result").in_lib("record_updates")
+    updated.payload$0; // ty("field inherited from base").in_lib("record_updates")
+    let _ = Packet { payload: Option::Some(42u64), ..Default::default()$0 }; // ty("default base").in_lib("record_updates")
+}
+"#,
+        expect![[r#"
+            nominal struct record_updates[lib]::crate::Packet<u64> // update result
+            nominal enum core[lib]::crate::option::Option<u64> // field inherited from base
+            nominal struct record_updates[lib]::crate::Packet<u64> // default base
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_impl_self_associated_types_in_signatures() {
     check_analysis(
         r#"

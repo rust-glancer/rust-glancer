@@ -642,11 +642,10 @@ where
                     self.infer_optional(field.value, &expected)
                         .context("infer optional expression")?;
                 }
-                self.infer_optional(
-                    spread.as_ref().and_then(|spread| spread.expr),
-                    &self.cx.unknown(),
-                )
-                .context("infer optional expression")?;
+                // The update base shares the record's generic slots. `..existing` can fill in
+                // omitted arguments, and `..Default::default()` gets an expected type.
+                self.infer_optional(spread.as_ref().and_then(|spread| spread.expr), &ty)
+                    .context("infer record update base")?;
             }
             ExprKind::Wrapper { kind, inner } => {
                 let resolved_expected = self.inference.root_resolved_ty(expected);
