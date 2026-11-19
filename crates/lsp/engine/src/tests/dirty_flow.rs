@@ -4,6 +4,82 @@ use rg_lsp_proto::QueryError;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
+async fn resolves_named_and_extension_trait_completion_imports() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_completion_imports"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod consumer;
+        mod sibling;
+        pub mod collections {
+            pub struct Widget;
+        }
+        pub use sibling::RenderExt as WidgetRenderer;
+
+        //- /src/consumer.rs
+        fn render_widget(value: u32) {
+            let _: Wid$type$;
+            value.render_wi$method$;
+        }
+
+        //- /src/sibling.rs
+        pub trait RenderExt { fn render_widget(&self); }
+        impl RenderExt for u32 { fn render_widget(&self) {} }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/consumer.rs", 1).await;
+    let widget = fixture
+        .check_auto_import("type", "Widget", "use crate::collections::Widget;")
+        .await;
+    let method = fixture
+        .check_auto_import("method", "render_widget", "use crate::WidgetRenderer as _;")
+        .await;
+
+    // The displayed return type changes, but the same method still needs the same import.
+    fixture
+        .did_change_full(
+            "src/sibling.rs",
+            2,
+            "pub trait RenderExt { fn render_widget(&self) -> u32; }\n\
+             impl RenderExt for u32 { fn render_widget(&self) -> u32 { *self } }\n",
+        )
+        .await;
+    fixture
+        .check_revalidated_auto_import(
+            "src/consumer.rs",
+            &widget,
+            "use crate::collections::Widget;",
+        )
+        .await;
+
+    fixture.accept_completion("src/consumer.rs", 3, &method.item);
+    fixture
+        .check_revalidated_auto_import(
+            "src/consumer.rs",
+            &method,
+            "use crate::WidgetRenderer as _;",
+        )
+        .await;
+    fixture.accept_completion("src/consumer.rs", 4, &widget.item);
+    fixture
+        .check_revalidated_auto_import(
+            "src/consumer.rs",
+            &widget,
+            "use crate::collections::Widget;",
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn completes_applicable_extension_methods_across_crates() {
     // These names sort before the applicable methods and would otherwise fill the shortlist.
     let decoys = (0..17)

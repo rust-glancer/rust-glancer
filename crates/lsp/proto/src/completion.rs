@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gen_lsp_types::{CompletionItem, CompletionItemKind, Position, Uri};
 use serde::{Deserialize, Serialize};
 
@@ -73,6 +75,63 @@ pub struct CompletionImportSite {
     before: String,
     replaced: String,
     cursor: usize,
+}
+
+impl CompletionImportSite {
+    /// Save the original cursor within the replacement so it can be restored if the name
+    /// stays the same and edits above it move the site.
+    pub fn capture(text: &str, cursor: usize, replace: Range<usize>) -> Option<Self> {
+        let replaced = text.get(replace.clone())?;
+        let cursor = cursor.checked_sub(replace.start)?;
+        if !replaced.is_char_boundary(cursor) {
+            return None;
+        }
+
+        // Keep the text immediately before the name, including the receiver and dot for a
+        // method on a short expression. Repeated source is ambiguous even before the edit.
+        let anchor_start = text[..replace.start]
+            .char_indices()
+            .rev()
+            .nth(63)
+            .map_or(0, |(offset, _)| offset);
+        let before = &text[anchor_start..replace.start];
+        (Self::unique_anchor_end(text, before)? == replace.start).then(|| Self {
+            before: before.to_owned(),
+            replaced: replaced.to_owned(),
+            cursor,
+        })
+    }
+
+    /// Locate the selected name for import validation. The anchor must still be unique.
+    pub fn offset_in(&self, text: &str, label: &str) -> Option<usize> {
+        let start = Self::unique_anchor_end(text, &self.before)?;
+        let tail = &text[start..];
+        let starts_with_name = |name: &str| {
+            !name.is_empty()
+                && tail.strip_prefix(name).is_some_and(|rest| {
+                    rest.chars().next().is_none_or(|ch| {
+                        ch.is_whitespace() || (ch.is_ascii_punctuation() && ch != '_')
+                    })
+                })
+        };
+
+        // An accepted snippet may have added arguments. Check the name at its end even
+        // if the editor's cursor has moved into those arguments.
+        if starts_with_name(label) {
+            Some(start + label.len())
+        } else if starts_with_name(&self.replaced) && self.replaced.is_char_boundary(self.cursor) {
+            Some(start + self.cursor)
+        } else {
+            None
+        }
+    }
+
+    fn unique_anchor_end(text: &str, before: &str) -> Option<usize> {
+        let first_width = before.chars().next()?.len_utf8();
+        let start = text.find(before)?;
+        // Start at the next character so overlapping matches count as ambiguous as well.
+        (!text[start + first_width..].contains(before)).then_some(start + before.len())
+    }
 }
 
 /// Data round-tripped by the client when it selects an auto-import row.

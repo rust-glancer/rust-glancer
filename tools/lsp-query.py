@@ -48,6 +48,7 @@ class Options:
     timeout_ms: int = DEFAULT_TIMEOUT_MS
     json_output: bool = False
     show_logs: bool = False
+    auto_import: bool = False
     max_hints: int = MAX_HINTS
     max_completions: int = MAX_COMPLETIONS
     max_code_actions: int = MAX_CODE_ACTIONS
@@ -110,6 +111,8 @@ Notes:
   - agent-debug supplies its managed binary; direct invocation defaults to target/release/rust-glancer.
   - Use --workspace-root for an ad-hoc Cargo project under target/agent-debug/fixtures.
   - A plan may contain bounded inline "text" instead of an overlay file.
+  - --auto-import advertises support for resolving completion import edits.
+  - A completion query can set "resolveCompletion" to the label to resolve.
   - --line/--col are 1-based for human ergonomics.
 """.strip()
 
@@ -173,6 +176,8 @@ def parse_args(argv: Sequence[str]) -> Options:
             continue
         if argument == "--json":
             options.json_output = True
+        elif argument == "--auto-import":
+            options.auto_import = True
         elif argument == "--show-logs":
             options.show_logs = True
         elif argument.startswith("--"):
@@ -1015,7 +1020,12 @@ async def run(argv: Sequence[str]) -> None:
                         "hover": {"contentFormat": ["markdown", "plaintext"]},
                         "completion": {
                             "dynamicRegistration": False,
-                            "completionItem": {"snippetSupport": True},
+                            "completionItem": {
+                                "snippetSupport": True,
+                                "resolveSupport": {
+                                    "properties": ["additionalTextEdits"] if options.auto_import else [],
+                                },
+                            },
                         },
                         "codeAction": {
                             "codeActionLiteralSupport": {
@@ -1103,9 +1113,24 @@ async def run(argv: Sequence[str]) -> None:
                 request_started = time.perf_counter_ns()
                 response = await client.request("textDocument/completion", params)
                 elapsed_ms = (time.perf_counter_ns() - request_started) / 1_000_000
-                completions = normalize_completions(
-                    response.get("result"), options.max_completions
-                )
+                raw_result = response.get("result")
+                completions = normalize_completions(raw_result, options.max_completions)
+                if resolve_label := query.get("resolveCompletion"):
+                    items = raw_result.get("items", []) if isinstance(raw_result, dict) else raw_result
+                    selected = [
+                        item for item in items or []
+                        if item.get("label") == resolve_label and item.get("data")
+                    ]
+                    if len(selected) != 1:
+                        fail("expected one auto-import completion labeled {!r}, got {}".format(
+                            resolve_label, len(selected)
+                        ))
+                    resolve_started = time.perf_counter_ns()
+                    resolved = await client.request("completionItem/resolve", selected[0])
+                    completions["resolved"] = resolved["result"]
+                    completions["resolveElapsedMs"] = round(
+                        (time.perf_counter_ns() - resolve_started) / 1_000_000, 3
+                    )
                 results.append(
                     {
                         "kind": "completion",

@@ -24,7 +24,7 @@ use rg_analysis::{
 use rg_ir_model::{Path, Span};
 use rg_lsp_proto::{
     CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
-    CompletionImport, CompletionImportCandidate, CompletionResult,
+    CompletionImport, CompletionImportCandidate, CompletionImportSite, CompletionResult,
     DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot,
     EditorSnapshot, FoldingClientCapabilities,
 };
@@ -161,14 +161,36 @@ impl<'a> QueryRunner<'a> {
                 // Discard cancelled work before converting its result.
                 rg_std::check_cancel!(cancellation, "after semantic completion");
                 let protocol_conversion_started = Instant::now();
+                let mut last_import_site = None;
                 for (index, item) in result.items.into_iter().enumerate() {
                     if index % 64 == 0 {
                         rg_std::check_cancel!(cancellation, "completion conversion");
                     }
+                    let import_site =
+                        if let Some(edit) = item.edit.filter(|_| item.import.is_some()) {
+                            // The auto-import rows normally replace the same name. Locate the
+                            // anchor once, even when many candidates came from that site.
+                            if last_import_site
+                                .as_ref()
+                                .is_none_or(|(span, _)| *span != edit.replace)
+                            {
+                                last_import_site = Some((
+                                    edit.replace,
+                                    CompletionImportSite::capture(
+                                        source_text,
+                                        offset as usize,
+                                        edit.replace.start as usize..edit.replace.end as usize,
+                                    ),
+                                ));
+                            }
+                            last_import_site.as_ref().and_then(|(_, site)| site.clone())
+                        } else {
+                            None
+                        };
                     completions.push(completion::completion_candidate(
                         item,
                         current.line_index,
-                        None,
+                        import_site,
                     ));
                 }
                 let protocol_conversion_us = protocol_conversion_started.elapsed().as_micros();

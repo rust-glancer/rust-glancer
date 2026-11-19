@@ -10,9 +10,13 @@
 //! semantic attempt with the newer document. A separate completion message from the editor
 //! replaces the whole logical request, including any attempt it is running.
 //!
-//! Resolving an import is a separate request for a row the editor already has.
+//! Resolving an import is a separate request for a row the editor already has. An updated
+//! target buffer may need a new cursor position. Changes in any open buffer can require
+//! a fresh check that the row still applies.
 
-use rg_lsp_proto::{CompletionCandidate, CompletionImportData, QueryError};
+use rg_lsp_proto::{
+    CompletionCandidate, CompletionImportCandidate, CompletionImportData, QueryError,
+};
 use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::{
@@ -174,17 +178,54 @@ pub(crate) async fn resolve_import(
     item.additional_text_edits = None;
     let captured = ctx.captured_document();
     let current = captured.document().target();
-    if current != &data.document || captured.open_documents_revision() != data.editor_revision {
+    if current.session() != data.document.session() || current.path() != data.document.path() {
         return Ok(item);
     }
-    let Ok(input) = ctx.position(data.position) else {
+
+    // A sibling edit can change which methods apply without moving the cursor. Only edits
+    // to the target require finding the position again.
+    let position = if current == &data.document {
+        data.position
+    } else {
+        let text = captured.document().text();
+        let Some(offset) = data
+            .site
+            .as_ref()
+            .and_then(|site| site.offset_in(text, &item.label))
+        else {
+            return Ok(item);
+        };
+        let prefix = &text[..offset];
+        let column = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
+        let (Ok(line), Ok(column)) = (
+            u32::try_from(prefix.bytes().filter(|&byte| byte == b'\n').count()),
+            u32::try_from(column.encode_utf16().count()),
+        ) else {
+            return Ok(item);
+        };
+        Position::new(line, column)
+    };
+    let candidate = if current != &data.document
+        || captured.open_documents_revision() != data.editor_revision
+    {
+        let Some(kind) = item.kind else {
+            return Ok(item);
+        };
+        Some(CompletionImportCandidate {
+            label: item.label.clone(),
+            kind,
+        })
+    } else {
+        None
+    };
+    let Ok(input) = ctx.position(position) else {
         return Ok(item);
     };
     let result = ctx
         .engine_client
         .query("resolve_completion_import", |client, context| async move {
             client
-                .resolve_completion_import(context, input, data.import, None)
+                .resolve_completion_import(context, input, data.import, candidate)
                 .await
         })
         .await;
