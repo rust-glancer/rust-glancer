@@ -1,11 +1,10 @@
 //! Recovers cfg and environment instructions retained for one Cargo build-script unit.
 //!
-//! Cargo stores a build script's stdout in an `output` file beside its `out` directory. Dep-info
-//! has already established which generated files belong to the candidate; this module only adds
+//! Dep-info has already established which generated files belong to the candidate. This module adds
 //! the `cargo::rustc-cfg` and `cargo::rustc-env` values needed to interpret those files. Other
 //! directives are irrelevant to source indexing and are ignored.
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs::File, io::Read as _, path::Path, str};
 
 use rg_cfg_eval::CfgOptions;
 use rg_std::ExpectedUnique;
@@ -19,35 +18,34 @@ const MAX_COMPILE_ENV_VARS: usize = 128;
 /// Bounded analysis-facing subset of one retained build-script output file.
 #[derive(Default)]
 pub(super) struct BuildScriptInstructions {
-    pub(super) cfg_options: CfgOptions,
+    cfg_options: CfgOptions,
     compile_env: Vec<CargoCompileEnvVar>,
 }
 
 impl BuildScriptInstructions {
-    /// Reads the sibling Cargo `output` file, falling back to empty enrichment on any mismatch.
+    /// Reads Cargo's retained stdout file, falling back to empty enrichment on any mismatch.
     ///
     /// Build-output recovery is optional, so a missing, oversized, non-UTF-8, or unfamiliar
     /// file must not turn workspace loading into an error.
-    pub(super) fn read(out_dir: &Path) -> Self {
-        let Some(unit_dir) = out_dir.parent() else {
+    pub(super) fn read(stdout: &Path) -> Self {
+        let Ok(file) = File::open(stdout) else {
             return Self::default();
         };
-        let output_path = unit_dir.join("output");
-        let Ok(metadata) = fs::metadata(&output_path) else {
-            return Self::default();
-        };
-        if metadata.len() > MAX_BUILD_OUTPUT_BYTES {
+        let mut contents = Vec::new();
+        if file
+            .take(MAX_BUILD_OUTPUT_BYTES + 1)
+            .read_to_end(&mut contents)
+            .is_err()
+            || contents.len() as u64 > MAX_BUILD_OUTPUT_BYTES
+        {
             return Self::default();
         }
-        let Ok(contents) = fs::read(output_path) else {
-            return Self::default();
-        };
 
         Self::parse(&contents).unwrap_or_default()
     }
 
     fn parse(contents: &[u8]) -> Option<Self> {
-        let contents = std::str::from_utf8(contents).ok()?;
+        let contents = str::from_utf8(contents).ok()?;
         let mut recovered = Self::default();
         let mut cfg_entries = 0;
         let mut compile_env = BTreeMap::<String, ExpectedUnique<String>>::new();
@@ -103,12 +101,15 @@ impl BuildScriptInstructions {
         Some(recovered)
     }
 
-    /// Returns stable compile-time environment with `OUT_DIR` anchored to the attributed unit.
+    /// Returns cfg values and the compile-time environment for the attributed build-script run.
     ///
     /// Cargo chooses `OUT_DIR` structurally rather than through a `rustc-env` instruction. Any
     /// printed value with that name is therefore replaced by the concrete directory found from
     /// dep-info.
-    pub(super) fn compile_env_with_out_dir(mut self, out_dir: &Path) -> Vec<CargoCompileEnvVar> {
+    pub(super) fn into_cfg_and_env(
+        mut self,
+        out_dir: &Path,
+    ) -> (CfgOptions, Vec<CargoCompileEnvVar>) {
         self.compile_env.retain(|entry| entry.name != "OUT_DIR");
         self.compile_env.push(CargoCompileEnvVar {
             name: "OUT_DIR".to_string(),
@@ -116,7 +117,7 @@ impl BuildScriptInstructions {
         });
         self.compile_env
             .sort_by(|left, right| left.name.cmp(&right.name));
-        self.compile_env
+        (self.cfg_options, self.compile_env)
     }
 }
 

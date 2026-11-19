@@ -1,6 +1,80 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, process::Command};
+
+use cargo_metadata::MetadataCommand;
+use rg_workspace::{SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{Project, SavedFileChange, testonly::ProjectSourceFixture};
+
+#[test]
+fn indexes_generated_sources_from_a_cargo_check_with_a_split_build_directory() {
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/demo"]
+resolver = "3"
+
+//- /crates/demo/Cargo.toml
+[package]
+name = "generated-demo"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "demo_api"
+
+//- /crates/demo/build.rs
+use std::{env, fs, path::PathBuf};
+
+fn main() {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    fs::write(out_dir.join("generated.rs"), "pub struct CargoGenerated;")
+        .expect("Cargo creates OUT_DIR");
+    println!("cargo::rustc-check-cfg=cfg(has_generated)");
+    println!("cargo::rustc-cfg=has_generated");
+    println!("cargo::rustc-env=GENERATED_FILE=generated.rs");
+}
+
+//- /crates/demo/src/lib.rs
+#[cfg(has_generated)]
+include!(concat!(env!("OUT_DIR"), "/", env!("GENERATED_FILE")));
+"#,
+    );
+    let root = fixture.path("");
+    let build_dir = fixture.path("intermediates");
+    let target_dir = fixture.path("artifacts");
+    let cargo = env!("CARGO");
+    let checked = Command::new(cargo)
+        .current_dir(&root)
+        .env("CARGO_BUILD_BUILD_DIR", &build_dir)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .env_remove("__CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT")
+        .args(["check", "--offline"])
+        .output()
+        .expect("fixture cargo check should start");
+    assert!(
+        checked.status.success(),
+        "fixture cargo check failed: {}",
+        String::from_utf8_lossy(&checked.stderr),
+    );
+
+    let metadata = MetadataCommand::new()
+        .cargo_path(cargo)
+        .current_dir(root)
+        .env("CARGO_BUILD_BUILD_DIR", build_dir.as_os_str())
+        .env("CARGO_TARGET_DIR", target_dir.as_os_str())
+        .exec()
+        .expect("fixture Cargo metadata should load");
+    let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+        .expect("fixture sysroot should be complete");
+    let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect("fixture metadata should lower")
+        .with_sysroot_sources(Some(sysroot));
+    let project = Project::builder(workspace)
+        .build()
+        .expect("fixture project should build");
+    assert_symbol_count(&project, "CargoGenerated", 1);
+}
 
 #[test]
 fn passively_recovered_out_dir_sources_enter_semantic_analysis() {
