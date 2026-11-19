@@ -853,7 +853,8 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         Ok(bindings)
     }
 
-    fn bindings_in_module(
+    /// Look up one spelling in a known module and keep bindings visible to the caller.
+    pub fn bindings_in_module(
         &self,
         importing_module: ModuleRef,
         module_ref: ModuleRef,

@@ -93,6 +93,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     pub(crate) fn generic_scope_candidates_for_unqualified(
         &self,
         site: &UnqualifiedCompletionSite,
+        exact_name: Option<&str>,
     ) -> anyhow::Result<Vec<GenericScopeCompletionCandidate>> {
         let (owner, context, impl_self_visible) = match site.source().scope() {
             IndexedUnqualifiedNameScope::Body {
@@ -125,7 +126,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         let mut candidates = Vec::new();
         for name in NameLookupView::new(self.db)
-            .generic_scope_names(owner)
+            .generic_scope_names(owner, exact_name)
             .context("read completion generic scope names")?
         {
             rg_std::check_cancel!(self.db, "completion candidate");

@@ -118,12 +118,12 @@ impl Path {
         Some(Self::new(root, segments))
     }
 
-    /// Parses the textual callee path stored in item-tree or AST macro-call data.
+    /// Parses a path written as identifier segments and an optional root.
     ///
     /// `$crate` only has meaning after resolution has selected the macro definition crate. Callers
     /// without that origin pass `None`, and the path is rejected instead of being guessed from the
     /// call site.
-    pub fn from_macro_path_text(path: &str, dollar_crate: Option<CrateRef>) -> Option<Self> {
+    pub fn from_text(path: &str, dollar_crate: Option<CrateRef>) -> Option<Self> {
         let path = path.trim();
         let absolute = path.starts_with("::");
         let path = path.strip_prefix("::").unwrap_or(path);

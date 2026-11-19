@@ -227,8 +227,7 @@ impl DeriveMacroCall {
                 }
                 if matches!(token.kind(), T![,] | T![')']) {
                     let path = range.take().and_then(|range| {
-                        Path::from_macro_path_text(&path_text, dollar_crate)
-                            .map(|path| (path, range))
+                        Path::from_text(&path_text, dollar_crate).map(|path| (path, range))
                     });
                     path_text.clear();
                     path

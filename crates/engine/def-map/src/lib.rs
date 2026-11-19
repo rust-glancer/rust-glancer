@@ -48,7 +48,7 @@ pub use self::{
         MacroScopeData, ModuleImportInput, ResolvedModuleImports,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
-    item_scope::{ItemScope, ItemScopeBuilder, NameBindings, NameBindingsView},
+    item_scope::{ImportableScope, ItemScope, ItemScopeBuilder, NameBindings, NameBindingsView},
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     },

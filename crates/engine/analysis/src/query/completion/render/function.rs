@@ -93,7 +93,7 @@ impl<'source> FunctionCompletionRenderer<'source> {
                 sort_text,
                 insert_text: metadata.insert_text,
                 edit: Some(request.edit),
-                additional_edits: Vec::new(),
+                import: None,
             },
         }
     }

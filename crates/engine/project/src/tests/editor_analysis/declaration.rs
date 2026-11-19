@@ -86,7 +86,7 @@ impl<Local> Service<Local> for Wor$header$ker<Local> {
                         _ => unreachable!("markers are enumerated above"),
                     };
                     let rows = labels
-                        .iter()
+                        .items.iter()
                         .filter(|item| item.label == expected)
                         .collect::<Vec<_>>();
                     assert_eq!(
@@ -96,7 +96,7 @@ impl<Local> Service<Local> for Wor$header$ker<Local> {
                     );
                     if marker == "members" {
                         assert_eq!(
-                            labels.iter().any(|item| item.label == "test_mode"),
+                            labels.items.iter().any(|item| item.label == "test_mode"),
                             !is_test,
                             "the test-only implementation changes missing-member completion: is_test={is_test}",
                         );

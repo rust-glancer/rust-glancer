@@ -98,7 +98,12 @@ pub fn wanted() -> u8 { 1u8 }
                 fixture.markers().position("completion").offset,
             ))
             .expect("saved impl completion");
-        assert!(completions.iter().any(|item| item.label == "required"));
+        assert!(
+            completions
+                .items
+                .iter()
+                .any(|item| item.label == "required")
+        );
     });
 
     // The request above needs no members from other.rs. Its include must still receive its

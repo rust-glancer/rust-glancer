@@ -70,7 +70,7 @@ pub trait Factory { fn create() -> Self; }
                         .with_completion_source(&completion),
                 )?;
                 assert!(
-                    items.iter().any(|item| item.label == expected),
+                    items.items.iter().any(|item| item.label == expected),
                     "{body}: {items:?}"
                 );
                 Ok(())
@@ -136,7 +136,11 @@ fn outside(value: Service) { value.add$outside$; }
                     CompletionQuery::new(context.crate_ref, context.file, offset)
                         .with_completion_source(&completion),
                 )?;
-                let rows: Vec<_> = items.iter().filter(|item| item.label == expected).collect();
+                let rows: Vec<_> = items
+                    .items
+                    .iter()
+                    .filter(|item| item.label == expected)
+                    .collect();
                 assert_eq!(rows.len(), 1, "{marker}: {items:?}");
                 if let Some(detail) = detail {
                     assert!(

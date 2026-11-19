@@ -276,11 +276,9 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         // syntax. Source calls do not have such a definition context, so `$crate` remains invalid
         // for them here.
         // TODO: soft hack, we are not inside of macro resolution context here, so we use this
-        // Macro calls retain textual paths, so normalize them into the shared semantic path here.
-        // (it exists for historical reasons mostly, and it's equivalent to `Path`) and introduce
-        // appropriate constructors.
-        let Some(path) = Path::from_macro_path_text(&path_text, site.dollar_crate_for_path())
-        else {
+        // Macro calls retain textual paths. Lower them here, where the origin needed for
+        // a leading `$crate` is available.
+        let Some(path) = Path::from_text(&path_text, site.dollar_crate_for_path()) else {
             return Ok(None);
         };
         let resolved = Self::resolve_macro_definition(query, site.module(), &path)

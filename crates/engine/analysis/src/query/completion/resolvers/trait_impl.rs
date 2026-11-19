@@ -148,7 +148,7 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
                     CompletionInsertText::Text(rendered.plain)
                 },
                 edit: Some(edit),
-                additional_edits: Vec::new(),
+                import: None,
             });
         }
 
