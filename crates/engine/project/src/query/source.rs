@@ -8,14 +8,17 @@ use std::path::Path;
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_parse::SourceReader;
 use rg_semantic_ir::{complete_source_ownership, target_declarations};
+use rg_source::QueryContext;
 use rg_std::MemorySize;
+use rg_workspace::WorkspaceInput;
 
 use super::ProjectSnapshot;
 
 /// Analysis-ready context for one filesystem path.
 ///
-/// A shared module can belong to several crates. Editor queries use the first owner in
-/// package/target order, preferring written module owners before discovering include owners.
+/// A shared module can belong to several crates. Editor queries prefer a module owner in the
+/// file's own Cargo package, then other module owners, before discovering include owners.
+/// Within each group, package/target order selects one interpretation.
 /// Exhaustive operations use every owning crate instead of this editor selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
@@ -46,28 +49,21 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         source_path: &Path,
     ) -> anyhow::Result<Option<FileContext>> {
-        let file = FileId::for_path(&self.query_context().interner(), source_path)?;
-        if let Some(sources) = self.saved_sources {
-            if let Some(crate_ref) = sources.first_module_crate(file) {
-                return Ok(Some(FileContext { crate_ref, file }));
-            }
-        } else {
-            // An unsaved `mod shared;` in lib.rs can take precedence over main.rs's saved owner.
-            // Select from active declarations, rather than just validating the old selection.
-            for (crate_ref, _) in self.state.workspace().targets() {
-                let metadata = target_declarations(self.query_context(), crate_ref)?
-                    .metadata
-                    .value_ref(self.query_context())?;
-                if metadata.sources.modules.binary_search(&file).is_ok() {
-                    return Ok(Some(FileContext { crate_ref, file }));
-                }
-            }
+        let db = self.query_context();
+        let file = FileId::for_path(&db.interner(), source_path)?;
+        let preferred = self.state.workspace().source_package(source_path);
+        let module_crate = match self.saved_sources {
+            Some(sources) => sources.first_module_crate(file, preferred),
+            None => *first_module_crate(db, file, preferred)?,
+        };
+        if let Some(crate_ref) = module_crate {
+            return Ok(Some(FileContext { crate_ref, file }));
         }
         for (crate_ref, _) in self.state.workspace().targets() {
-            let target = target_declarations(self.query_context(), crate_ref)?;
+            let target = target_declarations(db, crate_ref)?;
             if !target
                 .source_ownership
-                .value_ref(self.query_context())?
+                .value_ref(db)?
                 .known_owners(file)
                 .is_empty()
             {
@@ -75,7 +71,7 @@ impl<'a> ProjectSnapshot<'a> {
             }
         }
         for (crate_ref, _) in self.state.workspace().targets() {
-            if !complete_source_ownership(self.query_context(), crate_ref)?
+            if !complete_source_ownership(db, crate_ref)?
                 .owners(file)
                 .is_empty()
             {
@@ -102,4 +98,30 @@ impl<'a> ProjectSnapshot<'a> {
         }
         Ok(crates)
     }
+}
+
+/// Start with the package containing the file so a private edit doesn't force declaration
+/// rebuilds in dependent crates just to route the request. Check its live targets in order:
+/// adding `mod shared;` to a library can give it priority over the binary. Files reached
+/// through an external `#[path]` can still find an owner in the rest of the workspace.
+#[ajika::query(returns(ref))]
+fn first_module_crate(
+    db: &QueryContext<'_>,
+    file: FileId,
+    preferred: Option<PackageSlot>,
+) -> ajika::Result<Option<CrateRef>> {
+    let targets = WorkspaceInput::at(()).targets(db)?;
+    let local = targets
+        .iter()
+        .filter(|krate| Some(krate.package) == preferred);
+    let other = targets
+        .iter()
+        .filter(|krate| Some(krate.package) != preferred);
+    for &krate in local.chain(other) {
+        let metadata = target_declarations(db, krate)?.metadata.value_ref(db)?;
+        if metadata.sources.modules.binary_search(&file).is_ok() {
+            return Ok(Some(krate));
+        }
+    }
+    Ok(None)
 }

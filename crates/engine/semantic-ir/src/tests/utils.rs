@@ -223,7 +223,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     trait_impl_functions.extend(
                         items
                             .associated_functions(trait_impl.impl_ref.member_store())
-                            .expect("fixture members"),
+                            .expect("fixture members")
+                            .map(|(function, _)| function),
                     );
                 }
 

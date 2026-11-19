@@ -218,8 +218,9 @@ fn normalizes_generic_associated_types_with_live_variables() {
               struct#1 User
             impls
               impl#0 impl<T> Iterator for Iter<T>
+              impl#1 impl Iterator for User
             type aliases
-              type#0 trait#0::Item
+              type#0 trait#0::Item = bool
               type#1 impl#0::Item = T
         "#,
         vec![
@@ -228,12 +229,17 @@ fn normalizes_generic_associated_types_with_live_variables() {
                 "<Iter<User> as Iterator>::Item",
             ),
             TraitSelectionCase::normalize_assoc(
+                "use trait default when impl omits the alias",
+                "<User as Iterator>::Item",
+            ),
+            TraitSelectionCase::normalize_assoc(
                 "preserve unresolved projection variable",
                 "<Iter<?item> as Iterator>::Item",
             ),
         ],
         expect![[r#"
             <Iter<User> as Iterator>::Item -> User (yes) // project concrete generic impl Item
+            <User as Iterator>::Item -> bool (yes) // use trait default when impl omits the alias
 
             // preserve unresolved projection variable
             <Iter<?item> as Iterator>::Item -> _ (yes)

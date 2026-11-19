@@ -32,7 +32,7 @@ impl BenchWorkspace {
     pub(crate) fn load(target: BenchTarget) -> Self {
         let workspace = target.workspace();
         let mut targets = Vec::new();
-        let inputs = ajika::Inputs::default()
+        let inputs = SourceInput::snapshot(workspace.source_durability_roots())
             .edit(|update| {
                 workspace.write_inputs(update)?;
                 targets = CrateDependencies::write_inputs(&workspace, update)?;
@@ -58,11 +58,11 @@ impl BenchWorkspace {
         QueryDatabase::memory(
             inputs,
             QueryServices::default(),
-            ajika::Retention {
+            ajika::DatabaseOptions::new(ajika::Retention {
                 max_entries: usize::MAX,
                 max_bytes: u64::MAX,
                 max_idle: Duration::MAX,
-            },
+            }),
         )
     }
 

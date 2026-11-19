@@ -30,8 +30,8 @@ declare_metrics! {
             counter DECODED = "decoded" [title "Values decoded"];
             counter METADATA_READS = "metadata_reads" [title "Query records read"];
             gauge PAYLOAD_BYTES_READ = "payload_bytes_read" [Bytes, title "Payload bytes read"];
-            gauge PAYLOAD_BYTES_WRITTEN = "payload_bytes_written" [Bytes, title "Payload bytes written"];
-            gauge METADATA_BYTES_WRITTEN = "metadata_bytes_written" [Bytes, title "Query record bytes written"];
+            gauge PAYLOAD_BYTES_WRITTEN = "payload_bytes_written" [Bytes, title "Payload bytes written during the query operation"];
+            gauge METADATA_BYTES_WRITTEN = "metadata_bytes_written" [Bytes, title "Query record bytes written during the query operation"];
         }
     }
 }

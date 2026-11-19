@@ -26,8 +26,9 @@ impl PackageId {
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize, SchemaRead, SchemaWrite)]
 pub enum PackageOrigin {
     Workspace,
-    Dependency,
+    OtherDependency,
     Sysroot(SysrootCrate),
+    RegistryDependency,
 }
 
 impl PackageOrigin {

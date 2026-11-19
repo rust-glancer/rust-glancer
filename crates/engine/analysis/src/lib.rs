@@ -35,7 +35,9 @@ pub use self::{
     query::{
         code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
         completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
-        references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
+        references::{
+            ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind, ReferenceSearchLabel,
+        },
     },
 };
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
@@ -316,10 +318,11 @@ impl<'a> Analysis<'a> {
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
+        kind: ReferenceSearchKind,
     ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
         self.run_query("reference_search_labels", || {
             query::references::ReferenceResolver::reference_search_labels(
-                self, crate_ref, file_id, offset,
+                self, crate_ref, file_id, offset, kind,
             )
         })
     }

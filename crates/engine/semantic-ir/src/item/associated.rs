@@ -1,5 +1,7 @@
 use rg_arena::Arena;
-use rg_ir_model::{AssocItemId, ConstId, FunctionId, ItemStoreRef, SemanticItemRef, TypeAliasId};
+use rg_ir_model::{
+    AssocItemId, ConstId, FunctionId, FunctionRef, ItemStoreRef, SemanticItemRef, TypeAliasId,
+};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -82,6 +84,23 @@ pub struct AssociatedItemStore {
 impl AssociatedItemStore {
     pub fn items(&self) -> &[AssocItemId] {
         &self.items
+    }
+
+    /// Pair each function with a reference its caller can use outside this store. Pass the
+    /// same `store` used to acquire these members, since different impls reuse local IDs.
+    pub(crate) fn functions_with_refs(
+        &self,
+        store: ItemStoreRef,
+    ) -> impl Iterator<Item = (FunctionRef, &FunctionData)> {
+        self.functions
+            .iter_with_ids()
+            .map(move |(id, data)| (FunctionRef::new(store, id), data))
+    }
+
+    pub(crate) fn type_alias_by_name(&self, name: &str) -> Option<TypeAliasId> {
+        self.type_aliases
+            .iter_with_ids()
+            .find_map(|(id, alias)| (alias.name == name).then_some(id))
     }
 
     pub fn function_data(&self, id: FunctionId) -> Option<&FunctionData> {

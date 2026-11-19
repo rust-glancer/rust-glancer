@@ -8,12 +8,12 @@ use crate::{CapturedSource, SourceEntry, SourceError, SourceRevision, read_sourc
 fn evicted_saved_text_rejects_changed_disk_bytes() {
     let dir = tempfile::tempdir().expect("temporary source directory should be created");
     let path = dir.path().join("lib.rs");
-    fs::write(&path, "pub struct Before;\n").expect("fixture source should be written");
+    fs::write(&path, "pub const N: u8 = 1;\n").expect("fixture source should be written");
 
     let text = read_source_text(&path).expect("fixture source should be read");
     let entry = SourceEntry::saved(path.clone(), text);
     entry.evict_saved_text();
-    fs::write(&path, "pub struct After;\n").expect("fixture source should be replaced");
+    fs::write(&path, "pub const N: u8 = 2;\n").expect("fixture source should be replaced");
 
     let error = entry.text().expect_err("changed source should be rejected");
     assert!(matches!(error, SourceError::Stale { .. }));

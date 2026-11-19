@@ -7,13 +7,14 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ScopeId, TraitApplicability, TraitDefRef};
-use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
+use rg_semantic_ir::{FunctionData, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{
     lookup::MemberMethodCandidateRef,
     solver::{
-        DefId, InferenceSubstitution, InferenceTable, Outcome, TraitApplication, Ty, TyShape,
+        DefId, ImplSelection, InferenceSubstitution, InferenceTable, Outcome, TraitApplication, Ty,
+        TyShape,
     },
 };
 
@@ -44,7 +45,17 @@ pub(crate) struct MemberCandidate<'s> {
     pub outcome: Outcome,
 }
 
-impl MemberCandidate<'_> {
+impl<'s> MemberCandidate<'s> {
+    fn inherent(function: FunctionRef, selection: ImplSelection<'s>) -> Self {
+        Self {
+            function,
+            trait_ref: None,
+            subst: selection.subst,
+            table: selection.table,
+            outcome: selection.outcome,
+        }
+    }
+
     pub(crate) fn method_ref(&self) -> MemberMethodCandidateRef {
         match self.trait_ref {
             Some(_) => MemberMethodCandidateRef::trait_method(
@@ -65,6 +76,10 @@ where
     D: DefMapSource + Copy,
     I: SemanticItemSource<'query> + Copy,
 {
+    /// Find candidate functions for one possible `Self` type at the call site. For example,
+    /// resolving `v.pop()` on a `Vec<T>` can ask first about `Vec<T>` and then about `[T]`
+    /// after dereferencing. Each result carries what inference learned while checking that
+    /// candidate, so the caller can keep those assignments if it selects the function.
     pub(crate) fn function_candidates<'s>(
         &self,
         scope: ScopeId,
@@ -81,72 +96,74 @@ where
             FunctionLookup::Completion => (None, None),
         };
         let needs_self = !matches!(request, FunctionLookup::Associated { .. });
+        let accepts = |data: &FunctionData| {
+            name.is_none_or(|name| data.name == name) && (!needs_self || data.has_self_receiver())
+        };
         let body_items = self.context.body_local_items();
         let items = self.context.item_query();
         let lookup = self.context.item_lookup_query();
         let mut candidates = Vec::new();
 
-        // Combine body-local impls with the crate index. A named call filters crate declarations
-        // by name; only completion expands the whole inherent declaration surface.
         if qualification.is_none() {
-            let mut functions = UniqueVec::new();
             if let Some(adt) = receiver.as_adt() {
+                // Look up crate functions by the type's definition and add impls declared
+                // inside the body. The index groups `Vec<u8>` and `Vec<u16>` under the same `Vec`
+                // definition, so each function's impl still needs to match the receiver.
+                let mut functions = UniqueVec::new();
                 for &impl_ref in body_items.inherent_impls_for_type(adt.def)? {
-                    functions.extend(items.associated_functions(impl_ref.member_store())?);
+                    functions.extend(
+                        items
+                            .associated_functions(impl_ref.member_store())?
+                            .map(|(function, _)| function),
+                    );
                 }
                 match name {
-                    Some(name) => {
-                        functions
-                            .extend(lookup.inherent_functions_for_type_and_name(adt.def, name)?);
-                    }
+                    Some(name) => functions
+                        .extend(lookup.inherent_functions_for_type_and_name(adt.def, name)?),
                     None => functions.extend(lookup.inherent_functions_for_type(&items, adt.def)?),
                 }
-            } else {
-                if !matches!(
-                    receiver.shape(),
-                    TyShape::InferVar { .. }
-                        | TyShape::Unknown
-                        | TyShape::Param(_)
-                        | TyShape::Alias(_)
-                ) {
-                    match name {
-                        Some(name) => {
-                            functions = lookup.structural_inherent_functions_by_name(name)?;
-                        }
-                        None => {
-                            for impl_ref in
-                                lookup.structural_inherent_impls(AssociatedItemFilter::All)?
-                            {
-                                functions
-                                    .extend(items.associated_functions(impl_ref.member_store())?);
-                            }
-                        }
+                for function in functions {
+                    let Some(data) = items.function_data(function)? else {
+                        continue;
+                    };
+                    let ItemOwner::Impl(id) = data.owner else {
+                        continue;
+                    };
+                    if accepts(data)
+                        && let Some(selection) = table.select_impl(
+                            ImplRef::new(function.store.origin, id),
+                            receiver,
+                            None,
+                        )
+                    {
+                        candidates.push(MemberCandidate::inherent(function, selection));
                     }
                 }
-            }
-            for function in functions {
-                let Some(data) = items.function_data(function)? else {
-                    continue;
-                };
-                if name.is_some_and(|name| data.name != name)
-                    || needs_self && !data.has_self_receiver()
-                {
-                    continue;
+            } else if !matches!(
+                receiver.shape(),
+                TyShape::InferVar { .. } | TyShape::Unknown | TyShape::Param(_) | TyShape::Alias(_)
+            ) {
+                // A lookup on `[T]` can turn up `impl u8 { methods!(); }` because the macro
+                // might declare the requested name. Checking the receiver first rules out
+                // that impl without expanding its methods.
+                for impl_ref in lookup.structural_impls_for_function(name)? {
+                    let Some(selection) = table.select_impl(impl_ref, receiver, None) else {
+                        continue;
+                    };
+                    let mut functions = items
+                        .associated_functions(impl_ref.member_store())?
+                        .filter_map(|(function, data)| accepts(data).then_some(function));
+                    let Some(mut function) = functions.next() else {
+                        continue;
+                    };
+                    // Each candidate needs its own inference table. Let the last match take
+                    // the original table, so finding just one method requires no copy.
+                    for next in functions {
+                        candidates.push(MemberCandidate::inherent(function, selection.clone()));
+                        function = next;
+                    }
+                    candidates.push(MemberCandidate::inherent(function, selection));
                 }
-                let ItemOwner::Impl(id) = data.owner else {
-                    continue;
-                };
-                let impl_ref = ImplRef::new(function.store.origin, id);
-                let Some(selection) = table.select_impl(impl_ref, receiver, None) else {
-                    continue;
-                };
-                candidates.push(MemberCandidate {
-                    function,
-                    trait_ref: None,
-                    subst: selection.subst,
-                    table: selection.table,
-                    outcome: selection.outcome,
-                });
             }
             if matches!(request, FunctionLookup::Associated { .. }) && !candidates.is_empty() {
                 return Ok(candidates);
@@ -174,15 +191,14 @@ where
                 Some(functions) => functions,
                 None => items
                     .associated_functions(trait_ref.member_store())?
+                    .map(|(function, _)| function)
                     .collect(),
             };
             for function in functions {
                 let Some(data) = items.function_data(function)? else {
                     continue;
                 };
-                if name.is_some_and(|name| data.name != name)
-                    || needs_self && !data.has_self_receiver()
-                {
+                if !accepts(data) {
                     continue;
                 }
                 let trial = table.probe();

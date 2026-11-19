@@ -321,11 +321,11 @@ pub struct Ready;
             "shutdown-release-check",
             ajika::Inputs::default(),
             rg_source::QueryServices::default(),
-            ajika::Retention {
+            ajika::DatabaseOptions::new(ajika::Retention {
                 max_entries: 0,
                 max_bytes: 0,
                 max_idle: Duration::ZERO,
-            },
+            }),
         )
         .expect("shutdown released the query storage lock before replying");
     }

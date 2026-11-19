@@ -1,6 +1,6 @@
 //! Cursor/source symbol indexing over indexed source occurrences.
 
-use rg_ir_model::{CrateRef, FileId};
+use rg_ir_model::{BodyKey, CrateRef, FileId};
 use rg_ir_view::{
     IndexedViewDb,
     source::{ReferenceSourceSelection, SourceOccurrenceView},
@@ -38,6 +38,14 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         Ok(SourceOccurrenceView::new(self.db)
             .occurrences_in_crate(crate_ref, file_id, Some(selection))?
+            .into_iter()
+            .map(SourceSymbol::from_occurrence)
+            .collect())
+    }
+
+    pub(crate) fn symbols_in_body(&self, owner: BodyKey) -> anyhow::Result<Vec<SourceSymbol>> {
+        Ok(SourceOccurrenceView::new(self.db)
+            .occurrences_in_body(owner)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
             .collect())

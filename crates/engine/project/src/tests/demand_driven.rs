@@ -2,11 +2,62 @@ use std::{fmt::Write as _, fs};
 
 use rg_analysis::{ReferenceLocation, ReferenceQuery};
 use rg_ir_model::{DefMapRef, PrimitiveTy, Span, UnsignedIntTy};
+use rg_item_tree::{target_sources, testonly::fixture_database};
 use rg_profile::test_support::ProfileTest;
 use rg_semantic_ir::{ItemLookupQuery, ItemReader};
+use rg_source::{CapturedSource, QueryDatabase, SourceInput};
 use rg_std::CancellationToken;
 
 use crate::{Project, SavedFileChange, profile_descriptors, testonly::ProjectSourceFixture};
+
+#[test]
+fn workspace_save_reuses_sysroot_module_discovery() -> anyhow::Result<()> {
+    // An editable package can live inside the toolchain checkout.
+    let app = "sysroot/library/app/src/lib.rs";
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        "//- /sysroot/library/app/src/lib.rs crate:app root:sysroot/library/app\n",
+    );
+    fixture.write_fixture_files(
+        r#"
+//- /sysroot/library/core/src/lib.rs
+mod inner;
+//- /sysroot/library/core/src/inner/mod.rs
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let mut db = fixture_database(&workspace);
+    let (core, _) = workspace
+        .targets()
+        .find(|(_, target)| target.name == "core")
+        .expect("fixture core");
+    // Finding inner/mod.rs also observes the absence of inner.rs.
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 2);
+
+    let save = |db: &mut QueryDatabase, path: &str, text: &str| -> anyhow::Result<()> {
+        let path = fixture.path(path);
+        fs::write(&path, text)?;
+        let source = CapturedSource::new(path, text)?;
+        let interner = db.interner();
+        db.update_inputs(|update| SourceInput::set_saved(update, &interner, &source))?;
+        Ok(())
+    };
+    save(&mut db, app, "pub struct First;")?;
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 2);
+    assert_eq!(db.statistics().validated, 0);
+
+    // A real change to an installed file must still invalidate the query. The explicitly
+    // saved capture should retain the same policy as the original lazy capture.
+    save(
+        &mut db,
+        "sysroot/library/core/src/lib.rs",
+        "pub struct Changed;",
+    )?;
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 1);
+    save(&mut db, app, "pub struct Second;")?;
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 1);
+    assert_eq!(db.statistics().validated, 0);
+    Ok(())
+}
 
 #[test]
 fn ranged_inlay_hints_acquire_only_overlapping_owners() {
@@ -129,6 +180,58 @@ pub fn wanted() -> u8 { 1u8 }
 }
 
 #[test]
+fn finds_nested_macro_calls_without_inferring_their_bodies() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /src/lib.rs crate:macro_references
+#[macro_export]
+macro_rules! $definition$make { () => { 1u8 }; }
+fn outer() {
+    fn nested() -> u8 { crate::$call$make!() }
+}
+"#,
+    );
+    let project = fixture.build_project();
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route source")
+            .expect("source target");
+        let locations = snapshot
+            .analysis()
+            .references(
+                context.crate_ref,
+                context.file,
+                fixture.markers().position("definition").offset,
+                ReferenceQuery::find_references(&[context.crate_ref], false),
+            )
+            .expect("macro references");
+        let start = fixture.markers().position("call").offset;
+        assert_eq!(
+            locations,
+            [ReferenceLocation {
+                crate_ref: context.crate_ref,
+                file_id: context.file,
+                span: Span {
+                    start,
+                    end: start + 4
+                },
+            }]
+        );
+    });
+    let report = profile.finish();
+    report.assert_counter_path("body_ir.owner.owners", 1);
+    assert_eq!(
+        report
+            .inner()
+            .counter("body_ir.owner.inference_owners")
+            .unwrap_or_default(),
+        0
+    );
+}
+
+#[test]
 fn macro_binding_references_keep_their_local_scan_scope() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -139,6 +242,9 @@ fn demo() {
     let bind!($binding$value) = 1u8;
     let _ = $usage$value;
 }
+fn neighbor() { let value = 4u8; let _ = value; }
+impl Value { fn same_file() { let value = 5u8; let _ = value; } }
+struct Value;
 //- /src/other.rs
 fn first() { let value = 2u8; let _ = value; }
 fn second() { let value = 3u8; let _ = value; }
@@ -163,7 +269,7 @@ fn second() { let value = 3u8; let _ = value; }
             },
         }];
         // Both the copied binding and its ordinary use identify the same local. Whether the
-        // declaration can be edited must not send either search into unrelated files.
+        // declaration can be edited must not send either search into unrelated owners.
         for marker in ["binding", "usage"] {
             assert_eq!(
                 analysis

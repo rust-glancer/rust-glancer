@@ -10,6 +10,58 @@ use rg_std::CancellationToken;
 use crate::{AnalysisChangeSummary, Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
+fn structural_method_lookup_opens_only_applicable_impls() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /src/lib.rs crate:structural_methods
+#[rustc_builtin_macro]
+macro_rules! include { ($($args:tt)*) => {}; }
+macro_rules! define_method { () => { fn read(self) -> u8 { self } }; }
+impl u8 { define_method!(); }
+impl u32 { include!("methods.rs"); }
+
+fn first(value: u8) { let result = value.read(); let _ = $first$result; }
+fn second(value: u32) { let result = value.read(); let _ = $second$result; }
+//- /src/methods.rs
+fn read(self) -> u32 { self }
+"#,
+    );
+    let project = fixture.build_project();
+    let result_type = |marker| {
+        project.inspect(|snapshot| {
+            let context = snapshot
+                .file_context_for_path(fixture.path("src/lib.rs"))
+                .expect("route source")
+                .expect("target");
+            snapshot
+                .analysis()
+                .type_at(
+                    context.crate_ref,
+                    context.file,
+                    fixture.markers().position(marker).offset,
+                )
+                .expect("type at binding")
+                .expect("method result")
+                .primitive()
+        })
+    };
+    assert_eq!(
+        result_type("first"),
+        Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8))
+    );
+
+    // Change the include on disk without notifying the project. Seeing u16 on the next
+    // lookup tells us the earlier u8 call left this file unread. An earlier capture would
+    // still give us the original u32 signature.
+    fs::write(fixture.path("src/methods.rs"), "fn read(self) -> u16 { 0 }")
+        .expect("update unread include");
+    assert_eq!(
+        result_type("second"),
+        Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U16))
+    );
+}
+
+#[test]
 fn trait_impl_completion_preserves_lazy_member_capture() {
     let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"

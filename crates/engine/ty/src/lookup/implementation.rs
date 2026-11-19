@@ -220,17 +220,13 @@ where
         method_name: &str,
     ) -> Result<UniqueVec<FunctionRef>, ReadError> {
         let mut functions = UniqueVec::new();
-        for function in self
+        for (function, function_data) in self
             .context
             .item_paths()
             .items()
             .associated_functions(impl_ref.member_store())?
         {
             rg_std::check_cancel!(self.context, "implementation candidates");
-            let Some(function_data) = self.context.item_paths().items().function_data(function)?
-            else {
-                continue;
-            };
             if function_data.name.as_str() != method_name {
                 continue;
             }

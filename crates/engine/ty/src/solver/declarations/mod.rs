@@ -57,9 +57,10 @@ pub(crate) enum DeclarationKind {
         is_unsafe: bool,
         associated_types: Vec<DefId>,
     },
+    /// Method lookup checks the impl's polarity before comparing receiver types. Reading
+    /// it from the header lets that check leave the member store unopened.
     Impl {
         polarity: ImplPolarity,
-        associated_types: Vec<(String, DefId)>,
     },
     Alias {
         has_value: bool,
@@ -84,6 +85,13 @@ pub(crate) enum LangItem {
 /// the predicates whose lowering requested it.
 pub(crate) trait DeclarationProvider {
     fn metadata(&self, id: DefId) -> Option<Arc<DeclarationMetadata>>;
+    /// Once an impl is selected, find the alias whose value the solver should instantiate.
+    /// This can be the trait's own alias when the impl inherits its default.
+    fn associated_type_definition_for_impl(
+        &self,
+        impl_ref: ImplRef,
+        trait_alias: TypeAliasRef,
+    ) -> Option<TypeAliasRef>;
     fn impl_header<'s>(&self, cx: SolverInterner<'s>, id: ImplRef) -> Option<ImplHeader<'s>>;
     fn function_signature<'s>(
         &self,
@@ -287,7 +295,7 @@ where
         };
         match id {
             DefId::Trait(id) => {
-                let Some(data) = items.trait_data(id)? else {
+                let Some(data) = item.trait_data() else {
                     return Ok(None);
                 };
                 result.kind = DeclarationKind::Trait {
@@ -319,27 +327,16 @@ where
                     }
                 }
             }
-            DefId::Impl(id) => {
-                let Some(data) = items.impl_data(id)? else {
+            DefId::Impl(_) => {
+                let Some(data) = item.impl_data() else {
                     return Ok(None);
                 };
-                let mut associated_types = Vec::new();
-                for item in items.associated_items(id.member_store(), AssociatedItemFilter::All)? {
-                    if let AssocItemId::TypeAlias(alias) = item {
-                        let alias = TypeAliasRef::new(id.member_store(), *alias);
-                        let Some(data) = items.type_alias_data(alias)? else {
-                            return Ok(None);
-                        };
-                        associated_types.push((data.name.to_string(), DefId::TypeAlias(alias)));
-                    }
-                }
                 result.kind = DeclarationKind::Impl {
                     polarity: data.polarity,
-                    associated_types,
                 };
             }
-            DefId::TypeAlias(id) => {
-                let Some(data) = items.type_alias_data(id)? else {
+            DefId::TypeAlias(_) => {
+                let Some(data) = item.type_alias_data() else {
                     return Ok(None);
                 };
                 result.kind = DeclarationKind::Alias {
@@ -453,6 +450,18 @@ where
             cache.metadata.insert(id, data.clone());
         });
         Some(data)
+    }
+
+    fn associated_type_definition_for_impl(
+        &self,
+        impl_ref: ImplRef,
+        trait_alias: TypeAliasRef,
+    ) -> Option<TypeAliasRef> {
+        self.load(|| {
+            self.paths
+                .items()
+                .associated_type_definition_for_impl(impl_ref, trait_alias)
+        })
     }
 
     fn impl_header<'s>(&self, cx: SolverInterner<'s>, id: ImplRef) -> Option<ImplHeader<'s>> {

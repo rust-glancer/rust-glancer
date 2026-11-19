@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use rg_ir_model::{CrateRef, FileId};
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_semantic_ir::TargetSourceFiles;
 use rg_std::MemorySize;
 
@@ -32,19 +32,33 @@ impl ProjectSourceIndex {
             .any(|sources| sources.collected.binary_search(&file).is_ok())
     }
 
-    /// Prefer the first written module interpretation in package/target order. Build order is
-    /// dependency-first and must not change which interpretation an editor request selects.
-    pub(crate) fn first_module_crate(&self, file: FileId) -> Option<CrateRef> {
+    /// Prefer a written module in the file's own package. A cross-package `#[path]` can supply
+    /// the owner if there is no local module. Cargo target order breaks ties within a package.
+    pub(crate) fn first_module_crate(
+        &self,
+        file: FileId,
+        preferred: Option<PackageSlot>,
+    ) -> Option<CrateRef> {
         self.by_crate
             .iter()
             .filter(|(_, sources)| sources.modules.binary_search(&file).is_ok())
             .map(|(&krate, _)| krate)
-            .min_by_key(|krate| (krate.package.0, krate.crate_id.0))
+            .min_by_key(|krate| {
+                (
+                    Some(krate.package) != preferred,
+                    krate.package.0,
+                    krate.crate_id.0,
+                )
+            })
     }
 
     /// Syntax queries can use collected includes too, without discovering further owners.
-    pub(crate) fn first_source_crate(&self, file: FileId) -> Option<CrateRef> {
-        self.first_module_crate(file).or_else(|| {
+    pub(crate) fn first_source_crate(
+        &self,
+        file: FileId,
+        preferred: Option<PackageSlot>,
+    ) -> Option<CrateRef> {
+        self.first_module_crate(file, preferred).or_else(|| {
             self.by_crate
                 .iter()
                 .filter(|(_, sources)| sources.collected.binary_search(&file).is_ok())

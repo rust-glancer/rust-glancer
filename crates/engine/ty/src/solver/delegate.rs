@@ -15,8 +15,8 @@ use rustc_type_ir::{
 };
 
 use super::{
-    Const, DeclarationKind, DefId, GenericArg, GenericArgs, InferCtxt, ParamEnv, Predicate, Region,
-    SolverInterner, Ty,
+    Const, DefId, GenericArg, GenericArgs, InferCtxt, ParamEnv, Predicate, Region, SolverInterner,
+    Ty,
 };
 
 type I<'s> = SolverInterner<'s>;
@@ -307,21 +307,12 @@ impl<'s> SolverDelegate for Solver<'s> {
         item: DefId,
         implementation: DefId,
     ) -> FetchEligibleAssocItemResponse<I<'s>> {
-        let item_data = self.interner.metadata(item);
-        let impl_data = self.interner.metadata(implementation);
-        if let DeclarationKind::Impl {
-            associated_types, ..
-        } = &impl_data.kind
+        if let (DefId::Impl(impl_ref), DefId::TypeAlias(trait_alias)) = (implementation, item)
+            && let Some(alias) = self
+                .interner
+                .associated_type_definition_for_impl(impl_ref, trait_alias)
         {
-            if let Some((_, id)) = associated_types
-                .iter()
-                .find(|(name, _)| *name == item_data.name)
-            {
-                return FetchEligibleAssocItemResponse::Found(*id);
-            }
-            if matches!(&item_data.kind, DeclarationKind::Alias { has_value: true }) {
-                return FetchEligibleAssocItemResponse::Found(item);
-            }
+            return FetchEligibleAssocItemResponse::Found(DefId::TypeAlias(alias));
         }
         self.interner.unavailable("associated item implementation");
         FetchEligibleAssocItemResponse::Err(super::types::ErrorGuaranteed)

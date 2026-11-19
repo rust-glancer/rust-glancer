@@ -11,7 +11,7 @@ use rg_ir_view::{
     source::{IndexedSourceProvenance, IndexedSourceSurface, SourceOccurrenceView},
 };
 
-use super::references::ReferenceResolver;
+use super::references::{ReferenceResolver, ReferenceSearchKind};
 use crate::{
     Analysis, ReferenceQuery, SymbolKind,
     model::{RenameEdit, RenameResult, RenameTarget, SymbolAt},
@@ -102,7 +102,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         // Reference resolution gives us source occurrences. Rename then handles the final surface
         // rewrite, because shorthand records may need a larger replacement than the selected span.
         let symbols = ReferenceResolver::new(self.analysis, query)
-            .source_symbols_matching_declarations(&declarations)?;
+            .source_symbols_matching_declarations(&declarations, ReferenceSearchKind::Rename)?;
         // A duplicated literal can also be ordinary string data or belong to an unlowered body.
         // Those uses will not appear in the reference results. Reject the whole rename when a
         // capture cannot be edited, rather than returning a partial set of changes.

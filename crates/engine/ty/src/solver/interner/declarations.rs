@@ -32,6 +32,16 @@ pub(crate) struct WorkingDeclarations<'s> {
 }
 
 impl<'s> SolverInterner<'s> {
+    pub(crate) fn associated_type_definition_for_impl(
+        self,
+        impl_ref: ImplRef,
+        trait_alias: TypeAliasRef,
+    ) -> Option<TypeAliasRef> {
+        self.0
+            .provider
+            .associated_type_definition_for_impl(impl_ref, trait_alias)
+    }
+
     pub(crate) fn metadata(self, id: DefId) -> Arc<DeclarationMetadata> {
         if let Some(data) = self.0.declarations.borrow().metadata.get(&id) {
             self.profile(|p| p.declaration_hits += 1);

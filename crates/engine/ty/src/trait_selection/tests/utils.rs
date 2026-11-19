@@ -927,13 +927,18 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             };
             function_refs.push(FunctionRef { store, id });
         }
+        // An empty impl still has a member store. Reading it lets a projection use a trait default.
+        let store = builder.build();
+        for owner in store.member_stores() {
+            members.entry(owner.id).or_default();
+        }
         let members = members
             .into_iter()
             .map(|(id, members)| (id, members.build()))
             .collect();
         let mut fixture = TraitSelectionFixture {
             def_map: def_map_builder.build(),
-            store: builder.build(),
+            store,
             members,
             target: target(),
             lookup_index: ItemLookupIndex::default(),

@@ -15,8 +15,8 @@ use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
 use crate::{
-    BodyLocalItems, BodyOwner, BodySourceStore, BodyStore, BodyView, PreparedBodyStore, body_store,
-    infer_body, prepare_body,
+    BodyLocalItems, BodyMacroCallData, BodyOwner, BodySourceStore, BodyStore, BodyView,
+    PreparedBody, PreparedBodyStore, body_store, infer_body, prepare_body,
 };
 
 /// Owner metadata identifies bodies without lowering or inferring them. Enumerating methods can
@@ -49,27 +49,14 @@ impl<'db> BodyReader<'db> {
         source: ItemSource,
     ) -> Result<DeclarationSourceView<'_>, ReadError> {
         if let ItemSourceKind::Body(source) = source.kind {
-            // Resolving an occurrence only needs the location output. Keep this separate from
-            // local declaration reads, which must observe prepared meaning alone.
-            let sources = if self.targets.contains(&source.body.crate_ref) {
-                let prepared =
-                    prepare_body(self.db, source.body.key()).map_err(ReadError::Query)?;
-                match prepared.as_ref() {
-                    Some(prepared) => prepared
-                        .sources
-                        .value_ref(self.db)
-                        .map_err(ReadError::Query)?
-                        .get(source.body.body),
-                    None => None,
-                }
-            } else {
-                None
-            };
-            return sources.map(DeclarationSourceView::Body).ok_or_else(|| {
-                ReadError::Query(ajika::Error::application(
-                    "body declaration source is absent",
-                ))
-            });
+            return self
+                .body_sources(source.body)?
+                .map(DeclarationSourceView::Body)
+                .ok_or_else(|| {
+                    ReadError::Query(ajika::Error::application(
+                        "body declaration source is absent",
+                    ))
+                });
         }
         ItemSourceView::new(self.db, krate, source)
             .map(DeclarationSourceView::Item)
@@ -89,6 +76,40 @@ impl<'db> BodyReader<'db> {
         Ok(self
             .owner(body.key())?
             .and_then(|owner| owner.body(body.body)))
+    }
+
+    /// Read an occurrence's location and macro provenance without acquiring inferred body facts.
+    pub fn body_sources(&self, body: BodyRef) -> Result<Option<&BodySourceStore>, ReadError> {
+        if !self.targets.contains(&body.crate_ref) {
+            return Ok(None);
+        }
+        let prepared = prepare_body(self.db, body.key()).map_err(ReadError::Query)?;
+        let Some(prepared) = prepared.as_ref() else {
+            return Ok(None);
+        };
+        Ok(prepared
+            .sources
+            .value_ref(self.db)
+            .map_err(ReadError::Query)?
+            .get(body.body))
+    }
+
+    /// Expansion resolves the callee before inference. Each invocation's source IDs belong
+    /// to the body that contains it, which can be a nested function or initializer.
+    pub fn macro_calls(
+        &self,
+        key: BodyKey,
+    ) -> Result<impl Iterator<Item = (BodyRef, &BodyMacroCallData)>, ReadError> {
+        Ok(self
+            .prepared_owner(key)?
+            .into_iter()
+            .flat_map(move |owner| {
+                owner.bodies.iter_with_ids().flat_map(move |(id, body)| {
+                    body.macro_calls()
+                        .iter()
+                        .map(move |call| (key.body(id), call))
+                })
+            }))
     }
 
     fn body_local_items(&self, body: BodyRef) -> Result<Option<&BodyLocalItems>, ReadError> {
@@ -119,43 +140,43 @@ impl<'db> BodyReader<'db> {
         if !self.targets.contains(&krate) {
             return Ok(Vec::new().into_iter());
         }
-        Ok(body_owners(self.db, krate, selection)
-            .map_err(ReadError::Query)?
-            .into_iter())
+        let mut owners = body_owners(self.db, krate, selection)?;
+        owners.retain(PreparedBody::can_prepare);
+        Ok(owners.into_iter())
     }
 
-    pub fn bodies_matching(
+    pub fn bodies(
         &self,
         krate: CrateRef,
         selection: SourceSelection,
-        selected: &dyn Fn(&BodyOwnerData) -> bool,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
         let keys: Vec<_> = self
             .owners(krate, selection)?
-            .filter(|root| selected(root))
             .map(|root| BodyKey {
                 krate,
                 owner: root.owner,
             })
             .collect();
-        self.acquire_bodies(keys)
+        self.bodies_for_owners(&keys)
     }
 
-    fn acquire_bodies(
+    /// Read known worklists directly, including their nested bodies. No source-owner discovery
+    /// is needed when a resolved declaration already supplies the owning keys.
+    pub fn bodies_for_owners(
         &self,
-        keys: Vec<BodyKey>,
+        keys: &[BodyKey],
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
         // Selection happens before inference. Ajika owns the batch so parallel owners retain
         // their individual dependency frames and share any candidate queries they demand.
         let profile = ProfileThreadContext::capture();
         self.db
-            .parallel_map(&keys, |db, &key| {
+            .parallel_map(keys, |db, &key| {
                 let _profile = profile.enter();
                 body_store(db, key).map(|_| ())
             })
             .map_err(ReadError::Query)?;
         let mut bodies = Vec::new();
-        for key in keys {
+        for &key in keys {
             if let Some(owner) = self.owner(key)? {
                 bodies.extend(owner.body_views().map(|(id, view)| (key.body(id), view)));
             }
@@ -176,14 +197,6 @@ impl<'db> BodyReader<'db> {
                     "declaration occurrence is absent",
                 ))
             })
-    }
-
-    pub fn bodies(
-        &self,
-        krate: CrateRef,
-        selection: SourceSelection,
-    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
-        self.bodies_matching(krate, selection, &|_| true)
     }
 
     /// Speculative completion syntax may end before the cursor. Its declaration start can still
@@ -211,7 +224,7 @@ impl<'db> BodyReader<'db> {
                 });
             }
         }
-        self.acquire_bodies(selected)
+        self.bodies_for_owners(&selected)
     }
 
     /// Read the initializer's computed value without loading source maps.
