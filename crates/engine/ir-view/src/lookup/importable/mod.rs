@@ -4,9 +4,11 @@
 //! path found for each declaration. An import code action uses the same walk with the full name.
 //!
 //! For a method, the receiver check has already identified the trait. Look for a path to
-//! that trait even if a re-export gave it a different name.
+//! that trait even if a re-export gave it a different name. Once the user selects a row,
+//! check the saved path in the edited source.
 
 mod by_definition;
+mod selected;
 mod walk;
 
 use std::{

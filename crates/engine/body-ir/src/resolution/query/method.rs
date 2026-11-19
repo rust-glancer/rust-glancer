@@ -45,6 +45,7 @@ where
         &self,
         scope: ScopeId,
         ty: &Ty,
+        name: Option<&str>,
     ) -> Result<Vec<MemberMethodCandidateRef>, ReadError> {
         let context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&context, &self.context);
@@ -58,7 +59,7 @@ where
                 for candidate in lookup.function_candidates(
                     scope,
                     receiver,
-                    FunctionLookup::Completion,
+                    name.map_or(FunctionLookup::Completion, FunctionLookup::Method),
                     &table,
                 )? {
                     Self::push_candidate(&mut candidates, candidate.method_ref());

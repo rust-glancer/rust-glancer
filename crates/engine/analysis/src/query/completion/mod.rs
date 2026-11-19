@@ -28,12 +28,21 @@ use std::{
 };
 
 use rg_ir_model::{CrateRef, FileId};
-use rg_ir_view::lookup::importable::ImportableNameSearch;
+use rg_ir_view::{
+    display::syntax::SyntaxRenderer, lookup::importable::ImportableNameSearch, member::MemberView,
+    ty::locals::BodyView,
+};
 
+use self::{candidates::CompletionCandidateSource, site::CompletionSite};
 pub(crate) use self::{
     resolvers::CompletionResolver,
     site::{CompletionSiteDetector, PathCompletionSite},
     syntax::CompletionSyntaxContext,
+};
+use crate::{
+    Analysis,
+    model::{CompletionAdditionalEdit, CompletionEdit, CompletionImport, CompletionKind},
+    query::import::{ImportContext, ImportEditPlan, ImportEditPlanner},
 };
 
 /// Parsed and classified editor text used by the selected completion query.
@@ -161,4 +170,80 @@ impl CompletionContext<'_> {
         (self.client_capabilities.auto_import && ImportableNameSearch::supports_prefix(prefix))
             .then(|| Instant::now() + AUTO_IMPORT_BUDGET)
     }
+}
+
+/// Check the selected path and plan its `use` in the module containing the current cursor.
+pub(crate) fn resolve_import(
+    analysis: &Analysis<'_>,
+    query: CompletionQuery<'_>,
+    source: &str,
+    import: &CompletionImport,
+    selected: Option<(&str, CompletionKind)>,
+) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
+    let Some(syntax) = CompletionSyntaxContext::at(source, query.offset) else {
+        return Ok(None);
+    };
+    let db = analysis.view_db();
+    let site = CompletionSiteDetector::new(analysis).site_at(
+        query.crate_ref,
+        query.file_id,
+        query.offset,
+        Some(syntax.site_syntax()),
+    )?;
+    let replace = match site {
+        Some(CompletionSite::Unqualified(site)) if !import.anonymous => {
+            if !CompletionCandidateSource::new(db).can_import_selected_name(
+                &site,
+                &import.path,
+                selected,
+            )? {
+                return Ok(None);
+            }
+            site.replace_span()
+        }
+        Some(CompletionSite::Dot(site)) if import.anonymous => {
+            let Some(context) = ImportContext::for_dot_site(db, site.source())? else {
+                return Ok(None);
+            };
+            let Some(trait_ref) =
+                ImportableNameSearch::new(db).trait_for_import(context.module(), &import.path)?
+            else {
+                return Ok(None);
+            };
+            if let Some((name, kind)) = selected {
+                let receiver = site.source().receiver();
+                let Some(ty) = BodyView::new(db).expr_ty(receiver.body_ir(), receiver.expr_id())?
+                else {
+                    return Ok(None);
+                };
+                if kind != CompletionKind::TraitMethod
+                    || !MemberView::new(db).needs_method_import(
+                        site.source().scope(),
+                        &ty,
+                        trait_ref,
+                        name.strip_prefix("r#").unwrap_or(name),
+                    )?
+                {
+                    return Ok(None);
+                }
+            }
+            site.replace_span()
+        }
+        _ => return Ok(None),
+    };
+
+    let rendered_path = SyntaxRenderer::new(db.crate_edition(query.crate_ref)?)
+        .path(&import.path)
+        .to_string();
+    // Build the edit against this buffer. The row's original replacement span may have moved
+    // or may already contain the completed name.
+    let planner =
+        ImportEditPlanner::for_completion(&syntax, CompletionEdit { replace }, import.anonymous);
+    Ok(match planner.plan(&import.path, &rendered_path) {
+        ImportEditPlan::Edit(edit) => Some(CompletionAdditionalEdit {
+            replace: edit.replace,
+            new_text: edit.new_text,
+        }),
+        ImportEditPlan::AlreadyImported | ImportEditPlan::Unavailable => None,
+    })
 }

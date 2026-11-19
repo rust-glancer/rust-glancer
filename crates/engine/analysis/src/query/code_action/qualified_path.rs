@@ -394,16 +394,15 @@ impl<'analysis, 'db, 'source> QualifiedPathCodeActionProvider<'analysis, 'db, 's
         label: &str,
     ) -> anyhow::Result<bool> {
         Ok(NameLookupView::new(self.analysis.view_db())
-            .generic_scope_names(owner)
+            .generic_scope_names(owner, Some(label))
             .context("read qualified path generic scope names")?
             .into_iter()
             .any(|name| {
-                name.label() == label
-                    && matches!(
-                        (namespace, name.kind()),
-                        (NameNamespace::Types, GenericScopeNameKind::Type)
-                            | (NameNamespace::Values, GenericScopeNameKind::Const)
-                    )
+                matches!(
+                    (namespace, name.kind()),
+                    (NameNamespace::Types, GenericScopeNameKind::Type)
+                        | (NameNamespace::Values, GenericScopeNameKind::Const)
+                )
             }))
     }
 

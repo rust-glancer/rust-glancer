@@ -248,6 +248,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         ty: &Ty,
+        name: Option<&str>,
     ) -> anyhow::Result<Option<Vec<MemberMethodCandidateRef>>> {
         let Some((body, item_lookup_query)) = self
             .body_with_lookup(body_ref)
@@ -266,7 +267,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db.cancellation().clone(),
             )
             .methods()
-            .method_candidates_for_ty(scope, ty)
+            .method_candidates_for_ty(scope, ty, name)
             .context("resolve body method candidates")?,
         ))
     }

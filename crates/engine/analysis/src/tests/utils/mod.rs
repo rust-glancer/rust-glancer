@@ -739,7 +739,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     AnalysisQueryKind::CompletionsAtVerbose
                         | AnalysisQueryKind::CompletionKeywordsAtVerbose
                 ) {
-                    self.render_completions_verbose(completions, &mut dump);
+                    self.render_completions_verbose(completions, completion_query, &mut dump);
                 } else {
                     self.render_completions(completions, &mut dump);
                 }
@@ -1105,7 +1105,12 @@ impl AnalysisQuerySnapshot<'_, '_> {
         }
     }
 
-    fn render_completions_verbose(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
+    fn render_completions_verbose(
+        &self,
+        mut completions: Vec<CompletionItem>,
+        query: CompletionQuery<'_>,
+        dump: &mut String,
+    ) {
         completions.sort_by_key(|completion| completion.sort_text.clone());
 
         if completions.is_empty() {
@@ -1132,7 +1137,13 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(dump, "  replace: {}..{}", span.start, span.end)
                     .expect("string writes should not fail");
             }
-            for edit in &completion.additional_edits {
+            if let Some(import) = &completion.import
+                && let Some(edit) = self
+                    .db
+                    .analysis()
+                    .resolve_completion_import(query, import, None)
+                    .expect("fixture import should resolve")
+            {
                 writeln!(
                     dump,
                     "  additional: {}..{} => {:?}",

@@ -3,8 +3,9 @@
 use std::{collections::HashSet, time::Instant};
 
 use anyhow::Context as _;
-use rg_ir_model::{FunctionRef, ModuleRef, Path, identity::LexicalScopeRef};
+use rg_ir_model::{FunctionRef, ModuleRef, Path, TraitDefRef, identity::LexicalScopeRef};
 use rg_semantic_ir::ItemStoreQuery;
+use rg_text::Name;
 use rg_ty::{Ty, lookup::MemberMethodCandidateRef};
 
 use super::{MemberFunction, MemberMethodCandidate, MemberView};
@@ -20,7 +21,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let candidates = self
-            .body_method_candidate_refs_for_ty(scope, ty.raw())
+            .body_method_candidate_refs_for_ty(scope, ty.raw(), None)
             .context("resolve method candidate references")?;
         self.method_candidates_from_refs(candidates)
             .context("project method candidates")
@@ -115,15 +116,41 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(result)
     }
 
+    /// Check the selected trait method after an edit. A method already available under
+    /// the same name wins, just as it does when building the completion list.
+    pub fn needs_method_import(
+        &self,
+        scope: LexicalScopeRef,
+        ty: &IndexedType,
+        trait_ref: TraitDefRef,
+        name: &str,
+    ) -> anyhow::Result<bool> {
+        if !self
+            .body_method_candidate_refs_for_ty(scope, ty.raw(), Some(name))?
+            .is_empty()
+        {
+            return Ok(false);
+        }
+        let selected = (Name::new(name), trait_ref);
+        let methods = BodyResolutionView::new(self.db).extension_methods_for_ty(
+            scope,
+            ty.raw(),
+            std::iter::once(&selected),
+            None,
+        )?;
+        Ok(methods.len() == 1)
+    }
+
     /// Return body-aware method refs.
     fn body_method_candidate_refs_for_ty(
         &self,
         scope: LexicalScopeRef,
         ty: &Ty,
+        name: Option<&str>,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         let body = scope.body_ir();
         let Some(candidates) = BodyResolutionView::new(self.db)
-            .method_candidate_refs_for_ty(body, scope.scope_id(), ty)
+            .method_candidate_refs_for_ty(body, scope.scope_id(), ty, name)
             .context("resolve body method candidates")?
         else {
             // Lexical trait scope belongs to the body's DefMap. If those facts disappeared between

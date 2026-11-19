@@ -378,6 +378,28 @@ impl<'a> Analysis<'a> {
         })
     }
 
+    /// Plan the source edit for a selected auto-import completion.
+    ///
+    /// For an older item, recheck the selected name or method against the current scope.
+    pub fn resolve_completion_import(
+        &self,
+        query: CompletionQuery<'_>,
+        import: &CompletionImport,
+        selected: Option<(&str, CompletionKind)>,
+    ) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
+        self.run_query("resolve_completion_import", || {
+            let snapshot_text;
+            let source = match query.source_text {
+                Some(text) => text,
+                None => {
+                    snapshot_text = self.sources.text(query.file_id)?;
+                    &snapshot_text
+                }
+            };
+            query::completion::resolve_import(self, query, source, import, selected)
+        })
+    }
+
     /// Returns source actions applicable to one range in the captured editor document.
     pub fn code_actions(&self, query: CodeActionQuery<'_>) -> anyhow::Result<Vec<CodeAction>> {
         self.run_query("code_actions", || {
