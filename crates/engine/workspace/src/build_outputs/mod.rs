@@ -235,6 +235,7 @@ impl CargoBuildOutputDiscovery {
     ) -> CargoBuildOutputScanStats {
         let started = Instant::now();
         let mut stats = CargoBuildOutputScanStats::default();
+        let reported_build_dir = cargo_build_dir.unwrap_or(cargo_target_dir);
         let scan_roots = Self::scan_roots(workspace_root, cargo_build_dir, cargo_target_dir);
         stats.target_directories = scan_roots.len();
 
@@ -290,16 +291,18 @@ impl CargoBuildOutputDiscovery {
                 let Some(rustc_input_paths) = dep_info::rustc_input_paths(&file.path) else {
                     continue;
                 };
-                // Cargo spells local target roots relative to the workspace. An external build
-                // directory can be shared with a checkout that has the same relative paths.
-                // TODO: Recognize external build directories dedicated to this workspace.
-                let workspace_local = scan_roots[file.root_rank].starts_with(workspace_root);
+                // Cargo spells local target roots relative to the workspace. Use that base for
+                // its reported build directory and checkout-local fallbacks. If checkouts share
+                // the reported directory, matching an entrypoint is only best-effort evidence.
+                let scan_root = &scan_roots[file.root_rank];
+                let allows_relative_paths =
+                    scan_root == reported_build_dir || scan_root.starts_with(workspace_root);
                 let rustc_input_paths = rustc_input_paths
                     .into_iter()
                     .filter_map(|path| {
                         if path.is_absolute() {
                             fs::canonicalize(path).ok()
-                        } else if workspace_local {
+                        } else if allows_relative_paths {
                             fs::canonicalize(workspace_root.join(path)).ok()
                         } else {
                             None

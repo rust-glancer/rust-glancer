@@ -2,11 +2,12 @@ use std::{fs, path::Path, process::Command};
 
 use cargo_metadata::MetadataCommand;
 use rg_workspace::{SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
+use test_fixture::CrateFixture;
 
 use crate::{Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
-fn indexes_generated_sources_from_a_cargo_check_with_a_split_build_directory() {
+fn indexes_generated_sources_from_a_cargo_check_with_an_external_build_directory() {
     let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
@@ -41,7 +42,8 @@ include!(concat!(env!("OUT_DIR"), "/", env!("GENERATED_FILE")));
 "#,
     );
     let root = fixture.path("");
-    let build_dir = fixture.path("intermediates");
+    let external_build = CrateFixture::from_files([]);
+    let build_dir = external_build.path("intermediates");
     let target_dir = fixture.path("artifacts");
     let cargo = env!("CARGO");
     let checked = Command::new(cargo)
@@ -67,13 +69,23 @@ include!(concat!(env!("OUT_DIR"), "/", env!("GENERATED_FILE")));
         .expect("fixture Cargo metadata should load");
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
-        .expect("fixture metadata should lower")
-        .with_sysroot_sources(Some(sysroot));
-    let project = Project::builder(workspace)
-        .build()
-        .expect("fixture project should build");
-    assert_symbol_count(&project, "CargoGenerated", 1);
+
+    // Older Cargo metadata reports the directory with intermediate artifacts as target_directory.
+    let mut metadata_without_build_dir = metadata.clone();
+    metadata_without_build_dir.target_directory = metadata_without_build_dir
+        .build_directory
+        .take()
+        .expect("Cargo should report the external build directory");
+
+    for metadata in [metadata, metadata_without_build_dir] {
+        let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+            .expect("fixture metadata should lower")
+            .with_sysroot_sources(Some(sysroot.clone()));
+        let project = Project::builder(workspace)
+            .build()
+            .expect("fixture project should build");
+        assert_symbol_count(&project, "CargoGenerated", 1);
+    }
 }
 
 #[test]
