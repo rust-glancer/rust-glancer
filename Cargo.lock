@@ -19,9 +19,9 @@ dependencies = [
 
 [[package]]
 name = "ajika"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bf6e17f149255154f437a1fb54610f4e5e8b43b7d5f8eee2054c9a78ad2689d"
+checksum = "fef98915a6838342dfb7b7d6daf4363fa8e8d973b50109f5678a1032aae3a234"
 dependencies = [
  "ajika_macros",
  "ajika_storage",
@@ -35,9 +35,9 @@ dependencies = [
 
 [[package]]
 name = "ajika_macros"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d68d7d36a7c6783a1220913c1d5d7446dce7fbca4e0afcc376c21e2ef6a0f49"
+checksum = "6ae8570110c10320a0fa25d1c6257c24d191fb6fd42fa646a55bd43ba1f0fe6e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -46,9 +46,9 @@ dependencies = [
 
 [[package]]
 name = "ajika_storage"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee49349715660dba0f39ab3cfbc2b366b1cb942e1b5fc4942ba18fffcde9f075"
+checksum = "5637fd0283bdcaf0862c7bcdabf8b9eecd1b3f35247703b8aedd897c75a2eb7e"
 dependencies = [
  "crc32c",
  "getrandom 0.4.3",
@@ -2203,7 +2203,6 @@ dependencies = [
  "ra-ap-rustc_parse_format",
  "rayon",
  "rg_parser",
- "rustc-hash",
  "rustc-literal-escaper",
  "rustc_apfloat",
  "smallvec",

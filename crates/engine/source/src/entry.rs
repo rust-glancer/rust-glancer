@@ -6,7 +6,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rg_ir_model::FileId;
 use rg_std::{MemoryRecorder, MemorySize};
 
 use crate::{CapturedSource, SourceError, SourceRevision, revision::SourceDescriptor};
@@ -46,25 +45,6 @@ impl SourceEntry {
         }
     }
 
-    pub(crate) fn init(
-        file: &FileId,
-        cx: &dyn ajika::InputInit,
-    ) -> ajika::Result<Result<Arc<Self>, Arc<SourceError>>> {
-        Self::read_capture(*file, &cx.interner())
-    }
-
-    /// Keep I/O failures in the captured value so optional includes can test readability without
-    /// failing the query. Resolving the file identity can still fail the operation itself.
-    pub(crate) fn read_capture(
-        file: FileId,
-        interner: &ajika::Interner,
-    ) -> ajika::Result<Result<Arc<Self>, Arc<SourceError>>> {
-        let path = file.path(interner)?;
-        Ok(Self::read_saved(&path)
-            .map(|text| Arc::new(Self::saved(path, text)))
-            .map_err(Arc::new))
-    }
-
     pub(crate) fn saved(path: PathBuf, text: Arc<str>) -> Self {
         Self {
             descriptor: SourceDescriptor::new(path, text.as_bytes()),
@@ -83,45 +63,6 @@ impl SourceEntry {
         Self {
             descriptor: source.descriptor(),
             text: SourceText::Editor(source.shared_text()),
-        }
-    }
-
-    /// Identify the captured content independently of its backing. Saving identical bytes changes
-    /// their lifetime, not their stamp, so retained query results can survive the save.
-    pub(crate) fn stamp(
-        capture: &Result<Arc<Self>, Arc<SourceError>>,
-    ) -> ajika::Result<ajika::Stamp> {
-        // Evicting saved text doesn't change what a reader can observe. SourceEntry verifies the
-        // revision if it has to reload those bytes from disk.
-        Ok(match capture {
-            Ok(entry) => entry.revision().stamp(),
-            // A readable source is UTF-8, so its bytes can never equal this error marker.
-            Err(_) => ajika::Stamp::of(&[0xff]),
-        })
-    }
-
-    /// Changed results depending on editor text stay out of disk storage. Read failures describe
-    /// saved disk captures and therefore use the saved policy too.
-    pub(crate) fn lifetime(capture: &Result<Arc<Self>, Arc<SourceError>>) -> ajika::Lifetime {
-        match capture {
-            Ok(entry) => match entry.text {
-                SourceText::Saved(_) => ajika::Lifetime::Persistent,
-                SourceText::Editor(_) => ajika::Lifetime::Session,
-            },
-            Err(_) => ajika::Lifetime::Persistent,
-        }
-    }
-
-    /// Durability controls dependency validation, separately from storage lifetime. Once a file
-    /// is dirty, later edits can skip rechecking work that depends only on unchanged saved or
-    /// Cargo inputs.
-    pub(crate) fn durability(capture: &Result<Arc<Self>, Arc<SourceError>>) -> ajika::Durability {
-        match capture {
-            Ok(entry) => match entry.text {
-                SourceText::Saved(_) => ajika::Durability::Medium,
-                SourceText::Editor(_) => ajika::Durability::Low,
-            },
-            Err(_) => ajika::Durability::Medium,
         }
     }
 

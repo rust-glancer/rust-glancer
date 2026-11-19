@@ -69,7 +69,7 @@ libraries = [
 ]
 
 [workspace.dependencies]
-ajika = "0.2.0"
+ajika = "0.2.1"
 anyhow = "1.0.103"
 bumpalo = "3.17.0"
 clap = "4.6.1"

@@ -32,7 +32,7 @@ impl BenchWorkspace {
     pub(crate) fn load(target: BenchTarget) -> Self {
         let workspace = target.workspace();
         let mut targets = Vec::new();
-        let inputs = ajika::Inputs::default()
+        let inputs = SourceInput::snapshot(workspace.source_durability_roots())
             .edit(|update| {
                 workspace.write_inputs(update)?;
                 targets = CrateDependencies::write_inputs(&workspace, update)?;

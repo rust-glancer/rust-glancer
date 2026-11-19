@@ -108,9 +108,13 @@ impl Project {
                 .iter()
                 .map(|change| FileId::for_path(&interner, change.path()))
                 .collect::<ajika::Result<Vec<_>>>()?;
+            if graph_changed {
+                // A new Cargo graph can give an existing path a different source policy.
+                // Recapture its observations together with the new workspace configuration.
+                database.replace_inputs(SourceInput::snapshot(workspace.source_durability_roots()));
+            }
             let (targets, presence_changed) = database.update_inputs(|update| {
                 let (targets, presence_changed) = if graph_changed {
-                    SourceInput::forget_observations(update);
                     workspace.write_inputs(update)?;
                     (CrateDependencies::write_inputs(&workspace, update)?, false)
                 } else {

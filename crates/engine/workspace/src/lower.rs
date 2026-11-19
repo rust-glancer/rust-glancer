@@ -212,8 +212,12 @@ impl CargoMetadataLowerer {
             edition: Self::rust_edition(package.edition),
             origin: if is_workspace_member {
                 PackageOrigin::Workspace
+            } else if package.source.as_ref().is_some_and(|source| {
+                source.repr.starts_with("registry+") || source.repr.starts_with("sparse+")
+            }) {
+                PackageOrigin::RegistryDependency
             } else {
-                PackageOrigin::Dependency
+                PackageOrigin::OtherDependency
             },
             is_workspace_member,
             manifest_path,

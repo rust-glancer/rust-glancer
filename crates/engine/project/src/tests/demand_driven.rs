@@ -2,11 +2,62 @@ use std::{fmt::Write as _, fs};
 
 use rg_analysis::{ReferenceLocation, ReferenceQuery};
 use rg_ir_model::{DefMapRef, PrimitiveTy, Span, UnsignedIntTy};
+use rg_item_tree::{target_sources, testonly::fixture_database};
 use rg_profile::test_support::ProfileTest;
 use rg_semantic_ir::{ItemLookupQuery, ItemReader};
+use rg_source::{CapturedSource, QueryDatabase, SourceInput};
 use rg_std::CancellationToken;
 
 use crate::{Project, SavedFileChange, profile_descriptors, testonly::ProjectSourceFixture};
+
+#[test]
+fn workspace_save_reuses_sysroot_module_discovery() -> anyhow::Result<()> {
+    // An editable package can live inside the toolchain checkout.
+    let app = "sysroot/library/app/src/lib.rs";
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        "//- /sysroot/library/app/src/lib.rs crate:app root:sysroot/library/app\n",
+    );
+    fixture.write_fixture_files(
+        r#"
+//- /sysroot/library/core/src/lib.rs
+mod inner;
+//- /sysroot/library/core/src/inner/mod.rs
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let mut db = fixture_database(&workspace);
+    let (core, _) = workspace
+        .targets()
+        .find(|(_, target)| target.name == "core")
+        .expect("fixture core");
+    // Finding inner/mod.rs also observes the absence of inner.rs.
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 2);
+
+    let save = |db: &mut QueryDatabase, path: &str, text: &str| -> anyhow::Result<()> {
+        let path = fixture.path(path);
+        fs::write(&path, text)?;
+        let source = CapturedSource::new(path, text)?;
+        let interner = db.interner();
+        db.update_inputs(|update| SourceInput::set_saved(update, &interner, &source))?;
+        Ok(())
+    };
+    save(&mut db, app, "pub struct First;")?;
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 2);
+    assert_eq!(db.statistics().validated, 0);
+
+    // A real change to an installed file must still invalidate the query. The explicitly
+    // saved capture should retain the same policy as the original lazy capture.
+    save(
+        &mut db,
+        "sysroot/library/core/src/lib.rs",
+        "pub struct Changed;",
+    )?;
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 1);
+    save(&mut db, app, "pub struct Second;")?;
+    assert_eq!(db.run(|db| target_sources(db, core))?.files.len(), 1);
+    assert_eq!(db.statistics().validated, 0);
+    Ok(())
+}
 
 #[test]
 fn ranged_inlay_hints_acquire_only_overlapping_owners() {

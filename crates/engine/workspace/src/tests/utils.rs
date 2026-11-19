@@ -50,7 +50,7 @@ fn render_workspace_metadata(workspace: &WorkspaceMetadata) -> String {
 fn render_package(workspace: &WorkspaceMetadata, package: &crate::Package, dump: &mut String) {
     let membership = match &package.origin {
         PackageOrigin::Workspace => "member",
-        PackageOrigin::Dependency => "dependency",
+        PackageOrigin::OtherDependency | PackageOrigin::RegistryDependency => "dependency",
         PackageOrigin::Sysroot(_) => "sysroot",
     };
     writeln!(dump, "package {} [{membership}]", package.name)

@@ -196,9 +196,10 @@ impl ProjectQueries {
 
     pub(crate) fn open(workspace: &WorkspaceMetadata, reuse_cache: bool) -> anyhow::Result<Self> {
         tracing::debug!(storage = ?STORAGE, reuse_cache, "opening project query storage");
+        let inputs = SourceInput::snapshot(workspace.source_durability_roots());
         let database = match STORAGE {
             QueryStorage::Memory => QueryDatabase::memory(
-                ajika::Inputs::default(),
+                inputs,
                 QueryServices::default(),
                 DatabaseOptions::new(RETENTION),
             ),
@@ -206,7 +207,7 @@ impl ProjectQueries {
                 let options = DatabaseOptions::new(RETENTION)
                     .compression(compression)
                     .defer_checkpoints(MAX_PENDING_BYTES);
-                let mut database = Self::open_disk(workspace, options)?;
+                let mut database = Self::open_disk(workspace, inputs, options)?;
                 if !reuse_cache {
                     database.invalidate()?;
                 }
@@ -222,6 +223,7 @@ impl ProjectQueries {
 
     fn open_disk(
         workspace: &WorkspaceMetadata,
+        inputs: ajika::Inputs,
         options: DatabaseOptions,
     ) -> anyhow::Result<QueryDatabase> {
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
@@ -237,7 +239,7 @@ impl ProjectQueries {
             match QueryDatabase::open(
                 root.join(slot.to_string()),
                 EPOCH,
-                ajika::Inputs::default(),
+                inputs.clone(),
                 QueryServices::default(),
                 options.clone(),
             ) {

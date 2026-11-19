@@ -8,6 +8,7 @@ use std::{
 
 #[cfg(test)]
 use rg_ir_model::{FileId, PackageSlot, Span};
+use rg_source::{QueryDatabase, QueryServices, SourceInput};
 #[cfg(test)]
 use rg_workspace::WorkspaceLoweringConfig;
 use rg_workspace::WorkspaceMetadata;
@@ -17,14 +18,14 @@ use test_fixture::{CrateFixture, fixture_crate};
 #[cfg(test)]
 use crate::{DeclarationSourceStore, ItemTrees, file_declarations, target_sources};
 
-pub fn fixture_database(workspace: &WorkspaceMetadata) -> rg_source::QueryDatabase {
-    let inputs = ajika::Inputs::default()
+pub fn fixture_database(workspace: &WorkspaceMetadata) -> QueryDatabase {
+    let inputs = SourceInput::snapshot(workspace.source_durability_roots())
         .edit(|update| workspace.write_inputs(update))
         .expect("fixture workspace inputs should install");
     // The fixture owns the whole database lifetime and can keep all its results until teardown.
-    rg_source::QueryDatabase::memory(
+    QueryDatabase::memory(
         inputs,
-        rg_source::QueryServices::default(),
+        QueryServices::default(),
         ajika::DatabaseOptions::new(ajika::Retention {
             max_entries: usize::MAX,
             max_bytes: u64::MAX,

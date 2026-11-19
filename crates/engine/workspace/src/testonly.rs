@@ -179,7 +179,7 @@ impl WorkspaceMetadata {
                 .collect::<Vec<_>>();
             let origin = match fields.get("origin").copied().unwrap_or("workspace") {
                 "workspace" => PackageOrigin::Workspace,
-                "dependency" => PackageOrigin::Dependency,
+                "dependency" => PackageOrigin::OtherDependency,
                 origin => panic!("unknown fixture package origin `{origin}`"),
             };
             let mut cfg_options = target_cfg.clone();

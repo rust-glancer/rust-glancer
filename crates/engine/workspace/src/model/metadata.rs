@@ -68,6 +68,30 @@ impl WorkspaceMetadata {
         }
     }
 
+    /// Saved files under a registry package or the installed Rust library change much less
+    /// often than workspace sources. Include the whole library tree for files shared between
+    /// sysroot crates, such as stdarch. Editable roots can sit inside an installed tree;
+    /// the source reader selects the closest root for each file or module path it probes.
+    pub fn source_durability_roots(&self) -> impl Iterator<Item = (&Path, ajika::Durability)> {
+        use ajika::Durability::{High, Medium};
+
+        let packages = self.packages.iter().filter_map(|package| {
+            let durability = match package.origin {
+                PackageOrigin::RegistryDependency => High,
+                PackageOrigin::Workspace | PackageOrigin::OtherDependency => Medium,
+                PackageOrigin::Sysroot(_) => return None,
+            };
+            Some((package.root_dir(), durability))
+        });
+        [
+            (self.workspace_root(), Medium),
+            (self.cargo_target_dir(), Medium),
+        ]
+        .into_iter()
+        .chain(self.sysroot_library_root().map(|root| (root, High)))
+        .chain(packages)
+    }
+
     /// Captures the settings used to interpret source and find target entrypoints.
     pub fn write_inputs(&self, update: &mut ajika::InputUpdate) -> ajika::Result<()> {
         update.forget_all(PackageInput::EDITION);
@@ -113,12 +137,14 @@ impl WorkspaceMetadata {
 
     /// Returns sysroot source roots that were previously injected into this metadata graph.
     pub fn sysroot_sources(&self) -> Option<SysrootSources> {
-        self.packages
-            .iter()
-            .find(|package| package.origin.is_sysroot())
-            .and_then(|package| package.manifest_path.parent())
-            .and_then(|crate_root| crate_root.parent())
+        self.sysroot_library_root()
             .and_then(SysrootSources::from_library_root)
+    }
+
+    fn sysroot_library_root(&self) -> Option<&Path> {
+        self.sysroot_package(SysrootCrate::Core)?
+            .root_dir()
+            .parent()
     }
 
     /// Adds the complete modeled sysroot package set.
