@@ -48,6 +48,7 @@ impl ReferenceSubject {
         let mut local_owners = Some(UniqueVec::new());
         let mut modules = Vec::new();
         let mut types = Vec::new();
+        let mut macro_definitions = Vec::new();
 
         for declaration_ref in declarations {
             let declaration = declaration_view.declaration(*declaration_ref)?;
@@ -62,6 +63,11 @@ impl ReferenceSubject {
                 }
                 exact_labels.extend(labels);
             } else if let Some(declaration) = &declaration {
+                if let DeclarationRef::LocalDef(definition) = *declaration_ref
+                    && declaration.kind() == SymbolKind::Macro
+                {
+                    macro_definitions.push(definition);
+                }
                 if let DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) = *declaration_ref {
                     types.push(ty);
                 }
@@ -119,6 +125,9 @@ impl ReferenceSubject {
         if !exact_labels_supported {
             exact_labels = UniqueVec::new();
         }
+        // A copied macro argument may also name a value. Its uses still need the full body scan.
+        let macro_definitions =
+            (macro_definitions.len() == declarations.len()).then_some(macro_definitions);
 
         let subject = Self {
             declarations: declarations.iter().copied().collect(),
@@ -129,6 +138,7 @@ impl ReferenceSubject {
                 labels: exact_labels.into_vec(),
                 modules,
                 types,
+                macro_definitions,
             },
             local_owners: local_owners.map(UniqueVec::into_vec),
         };

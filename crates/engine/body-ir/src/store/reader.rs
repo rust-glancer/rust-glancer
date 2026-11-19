@@ -15,8 +15,8 @@ use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
 use crate::{
-    BodyLocalItems, BodyOwner, BodySourceStore, BodyStore, BodyView, PreparedBody,
-    PreparedBodyStore, body_store, infer_body, prepare_body,
+    BodyLocalItems, BodyMacroCallData, BodyOwner, BodySourceStore, BodyStore, BodyView,
+    PreparedBody, PreparedBodyStore, body_store, infer_body, prepare_body,
 };
 
 /// Owner metadata identifies bodies without lowering or inferring them. Enumerating methods can
@@ -49,27 +49,14 @@ impl<'db> BodyReader<'db> {
         source: ItemSource,
     ) -> Result<DeclarationSourceView<'_>, ReadError> {
         if let ItemSourceKind::Body(source) = source.kind {
-            // Resolving an occurrence only needs the location output. Keep this separate from
-            // local declaration reads, which must observe prepared meaning alone.
-            let sources = if self.targets.contains(&source.body.crate_ref) {
-                let prepared =
-                    prepare_body(self.db, source.body.key()).map_err(ReadError::Query)?;
-                match prepared.as_ref() {
-                    Some(prepared) => prepared
-                        .sources
-                        .value_ref(self.db)
-                        .map_err(ReadError::Query)?
-                        .get(source.body.body),
-                    None => None,
-                }
-            } else {
-                None
-            };
-            return sources.map(DeclarationSourceView::Body).ok_or_else(|| {
-                ReadError::Query(ajika::Error::application(
-                    "body declaration source is absent",
-                ))
-            });
+            return self
+                .body_sources(source.body)?
+                .map(DeclarationSourceView::Body)
+                .ok_or_else(|| {
+                    ReadError::Query(ajika::Error::application(
+                        "body declaration source is absent",
+                    ))
+                });
         }
         ItemSourceView::new(self.db, krate, source)
             .map(DeclarationSourceView::Item)
@@ -89,6 +76,40 @@ impl<'db> BodyReader<'db> {
         Ok(self
             .owner(body.key())?
             .and_then(|owner| owner.body(body.body)))
+    }
+
+    /// Read an occurrence's location and macro provenance without acquiring inferred body facts.
+    pub fn body_sources(&self, body: BodyRef) -> Result<Option<&BodySourceStore>, ReadError> {
+        if !self.targets.contains(&body.crate_ref) {
+            return Ok(None);
+        }
+        let prepared = prepare_body(self.db, body.key()).map_err(ReadError::Query)?;
+        let Some(prepared) = prepared.as_ref() else {
+            return Ok(None);
+        };
+        Ok(prepared
+            .sources
+            .value_ref(self.db)
+            .map_err(ReadError::Query)?
+            .get(body.body))
+    }
+
+    /// Expansion resolves the callee before inference. Each invocation's source IDs belong
+    /// to the body that contains it, which can be a nested function or initializer.
+    pub fn macro_calls(
+        &self,
+        key: BodyKey,
+    ) -> Result<impl Iterator<Item = (BodyRef, &BodyMacroCallData)>, ReadError> {
+        Ok(self
+            .prepared_owner(key)?
+            .into_iter()
+            .flat_map(move |owner| {
+                owner.bodies.iter_with_ids().flat_map(move |(id, body)| {
+                    body.macro_calls()
+                        .iter()
+                        .map(move |call| (key.body(id), call))
+                })
+            }))
     }
 
     fn body_local_items(&self, body: BodyRef) -> Result<Option<&BodyLocalItems>, ReadError> {

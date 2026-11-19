@@ -129,6 +129,58 @@ pub fn wanted() -> u8 { 1u8 }
 }
 
 #[test]
+fn finds_nested_macro_calls_without_inferring_their_bodies() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /src/lib.rs crate:macro_references
+#[macro_export]
+macro_rules! $definition$make { () => { 1u8 }; }
+fn outer() {
+    fn nested() -> u8 { crate::$call$make!() }
+}
+"#,
+    );
+    let project = fixture.build_project();
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route source")
+            .expect("source target");
+        let locations = snapshot
+            .analysis()
+            .references(
+                context.crate_ref,
+                context.file,
+                fixture.markers().position("definition").offset,
+                ReferenceQuery::find_references(&[context.crate_ref], false),
+            )
+            .expect("macro references");
+        let start = fixture.markers().position("call").offset;
+        assert_eq!(
+            locations,
+            [ReferenceLocation {
+                crate_ref: context.crate_ref,
+                file_id: context.file,
+                span: Span {
+                    start,
+                    end: start + 4
+                },
+            }]
+        );
+    });
+    let report = profile.finish();
+    report.assert_counter_path("body_ir.owner.owners", 1);
+    assert_eq!(
+        report
+            .inner()
+            .counter("body_ir.owner.inference_owners")
+            .unwrap_or_default(),
+        0
+    );
+}
+
+#[test]
 fn macro_binding_references_keep_their_local_scan_scope() {
     let fixture = ProjectSourceFixture::build(
         r#"

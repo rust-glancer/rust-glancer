@@ -11,10 +11,10 @@
 //! ```
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyView, ExprKind, PatKind};
+use rg_body_ir::{BodyMacroCallData, BodySourceStore, BodyView, ExprKind, PatKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyKey, BodyRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
+    BindingId, BodyKey, BodyRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId, LocalDefRef,
     SemanticItemRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::SourceLocations;
@@ -51,6 +51,26 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
+    /// Expansion has already resolved each call, so only matching calls need source locations.
+    pub(crate) fn macro_calls_to(
+        &self,
+        definitions: &[LocalDefRef],
+    ) -> anyhow::Result<Vec<BodySourceCandidate>> {
+        let mut candidates = Vec::new();
+        for &owner in self.owners {
+            rg_std::check_cancel!(self.db, "body macro references");
+            for (body, call) in self.db.body_ir.macro_calls(owner)? {
+                rg_std::check_cancel!(self.db, "body occurrence candidates");
+                if definitions.contains(&call.definition)
+                    && let Some(sources) = self.db.body_ir.body_sources(body)?
+                {
+                    candidates.extend(self.macro_call_candidate(body, call, sources));
+                }
+            }
+        }
+        Ok(candidates)
+    }
+
     /// Returns candidates from the selected worklists, optionally limited to one file.
     pub(crate) fn scan(&self) -> anyhow::Result<Vec<BodySourceCandidate>> {
         let mut candidates = Vec::new();
@@ -60,8 +80,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
             self.push_declaration_candidates(body_ref, body, &mut candidates)
                 .context("collect body occurrences")?;
-            self.push_macro_call_candidates(body_ref, body, &mut candidates)
-                .context("collect body occurrences")?;
+            for call in body.macro_calls() {
+                rg_std::check_cancel!(self.db, "body occurrence candidates");
+                candidates.extend(self.macro_call_candidate(body_ref, call, body.sources()));
+            }
             self.push_expression_reference_candidates(body_ref, body, &mut candidates)
                 .context("collect body occurrences")?;
             self.push_record_field_key_candidates(body_ref, body, &mut candidates)
@@ -73,28 +95,21 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         Ok(candidates)
     }
 
-    /// Adds written macro invocations as references to the macro definition selected by expansion.
-    fn push_macro_call_candidates(
+    fn macro_call_candidate(
         &self,
         body_ref: BodyRef,
-        body: BodyView<'_>,
-        candidates: &mut Vec<BodySourceCandidate>,
-    ) -> anyhow::Result<()> {
-        for call in body.macro_calls() {
-            let source = body.source_at(call.source);
-            rg_std::check_cancel!(self.db, "body occurrence candidates");
-            if !source.is_written_in_selected_file(self.file_id) {
-                continue;
-            }
-
-            candidates.push(BodySourceCandidate::MacroCall {
+        call: &BodyMacroCallData,
+        sources: &BodySourceStore,
+    ) -> Option<BodySourceCandidate> {
+        let source = sources.source(call.source);
+        source
+            .is_written_in_selected_file(self.file_id)
+            .then(|| BodySourceCandidate::MacroCall {
                 body: body_ref,
                 definition: call.definition,
                 file_id: source.file_id,
-                span: body.span(call.name_location),
-            });
-        }
-        Ok(())
+                span: sources.span(call.name_location),
+            })
     }
 
     /// Adds declarations using the spans users expect to navigate from: names and field names.

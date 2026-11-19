@@ -479,6 +479,8 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             Some(file) => vec![file],
             None => self.db.body_ir.body_files(crate_ref)?,
         };
+        let macro_definitions =
+            selection.and_then(|selection| selection.macro_definitions.as_deref());
         for file in files {
             rg_std::check_cancel!(self.db, "body scan file");
             let selected = selection
@@ -498,7 +500,12 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     owner: owner.owner,
                 })
                 .collect();
-            for candidate in BodySourceScanner::new(self.db, file_id, &owners).scan()? {
+            let scanner = BodySourceScanner::new(self.db, file_id, &owners);
+            let candidates = match macro_definitions {
+                Some(definitions) => scanner.macro_calls_to(definitions)?,
+                None => scanner.scan()?,
+            };
+            for candidate in candidates {
                 if let Some(occurrence) = self
                     .body_occurrence(crate_ref, candidate, file_id)
                     .context("convert body occurrence")?
@@ -633,29 +640,26 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         let span = candidate.span();
         // Copied input can become a binding, field key, expression, or nested macro name. Its
         // provenance belongs to the token span rather than any one kind of semantic candidate.
-        let body = match &candidate {
+        let sources = match &candidate {
+            BodySourceCandidate::MacroCall { body, .. } => self.db.body_ir.body_sources(*body)?,
             BodySourceCandidate::Binding { body, .. }
             | BodySourceCandidate::Expr { body, .. }
-            | BodySourceCandidate::MacroCall { body, .. }
             | BodySourceCandidate::RecordFieldKey { body, .. }
             | BodySourceCandidate::ValueReference { body, .. }
-            | BodySourceCandidate::TypePath { body, .. } => Some(*body),
+            | BodySourceCandidate::TypePath { body, .. } => {
+                self.db.body_ir.body(*body)?.map(|body| body.sources())
+            }
             _ => None,
         };
-        let body = match body {
-            Some(body) => self.db.body_ir.body(body)?,
-            None => None,
-        };
-        let provenance = body
-            .as_ref()
-            .filter(|body| body.source_map().is_macro_argument(span))
-            .map_or(IndexedSourceProvenance::Direct, |body| {
-                IndexedSourceProvenance::MacroArgument {
-                    duplicated: body.source_map().is_duplicated_macro_argument(span),
-                }
-            });
+        let source_map = sources.map(|sources| sources.provenance());
+        let provenance = source_map.filter(|map| map.is_macro_argument(span)).map_or(
+            IndexedSourceProvenance::Direct,
+            |map| IndexedSourceProvenance::MacroArgument {
+                duplicated: map.is_duplicated_macro_argument(span),
+            },
+        );
         let format_capture = matches!(&candidate, BodySourceCandidate::Expr { expr, .. }
-            if body.as_ref().is_some_and(|body| body.source_map().is_format_capture(*expr, span)));
+            if source_map.is_some_and(|map| map.is_format_capture(*expr, span)));
         let occurrence = match candidate {
             BodySourceCandidate::Body { body, .. } => {
                 let Some(data) = self.db.body_ir.body(body)? else {

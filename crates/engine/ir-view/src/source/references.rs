@@ -7,7 +7,8 @@ use std::collections::{HashMap, HashSet};
 
 use rg_def_map::{DefMapSource as _, ModuleOrigin};
 use rg_ir_model::{
-    CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, ModuleRef, OuterBodyOwner, Span, TypeDefRef,
+    CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, LocalDefRef, ModuleRef, OuterBodyOwner,
+    Span, TypeDefRef,
 };
 use rg_semantic_ir::{BodyOwnerData, ItemStoreQuery, SourceSelection};
 use rg_syntax::{
@@ -106,6 +107,9 @@ pub struct ReferenceSourceSelection {
     pub modules: Vec<ModuleRef>,
     /// Searched nominal types, used to narrow `Self` in methods with a known impl receiver.
     pub types: Vec<TypeDefRef>,
+    /// When every target is a macro, expansion already identified its body calls. Other
+    /// searches need the ordinary scanner to resolve value and type references too.
+    pub macro_definitions: Option<Vec<LocalDefRef>>,
 }
 
 impl ReferenceSourceSelection {
