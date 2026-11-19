@@ -4,6 +4,7 @@
 //! table and assumptions. For example, `T: Deref<Target = Widget>` supplies a step from `T` to
 //! `Widget` without a concrete impl. Method lookup adds an array-to-slice alternative separately.
 
+use rg_ir_model::Mutability;
 use rg_std::UniqueVec;
 
 use super::{DefId, InferenceTable, List, ProjectionTy, Ty, TyShape, declarations::LangItem};
@@ -94,6 +95,21 @@ impl<'s> InferenceTable<'s> {
                 slice_element = Some(inner);
             }
             Some(ty)
+        })
+    }
+
+    /// For each possible Self, Rust tries the value, a shared borrow, and a mutable borrow.
+    pub fn method_receiver_adjustments(
+        &self,
+        self_types: &[Ty<'s>],
+    ) -> impl Iterator<Item = Ty<'s>> {
+        let cx = self.interner();
+        self_types.iter().flat_map(move |&ty| {
+            [
+                ty,
+                cx.reference(Mutability::Shared, ty),
+                cx.reference(Mutability::Mutable, ty),
+            ]
         })
     }
 }

@@ -29,7 +29,7 @@ use rustc_type_ir::{
 use self::stored::StoredDeclarations;
 use super::{
     CallableSignature, Clause, DefId, ImplHeader, InferenceSubstitution, InferenceTable, List,
-    ProjectionTy, Solver, SolverInterner, SolverStorage, TraitApplication, Ty,
+    ProjectionTy, Solver, SolverInterner, SolverStorage, TraitApplication, Ty, TyShape,
     profile::SolverProfile, types::AdtDef,
 };
 use crate::{
@@ -245,6 +245,52 @@ where
         })
     }
 
+    /// Screen extension traits using the same source-impl index as the solver. Ambiguous
+    /// receivers, assumptions and compiler-provided impls still need a proof attempt.
+    ///
+    /// For a `Widget` receiver, a trait with only an impl for `bool` can usually be skipped.
+    /// A blanket impl such as `impl<T: Display> Render for T` stays in the shortlist so
+    /// the solver can check the `Display` bound.
+    pub fn trait_may_apply(
+        &self,
+        table: &InferenceTable<'_>,
+        trait_ref: TraitDefRef,
+        self_types: &[Ty<'_>],
+    ) -> Result<bool, ReadError> {
+        let Some((context, scope)) = self.solving else {
+            return Ok(true);
+        };
+        if table.has_trait_assumption(trait_ref) || self.trait_lang_item(trait_ref).is_some() {
+            return Ok(true);
+        }
+        for &self_ty in self_types {
+            let filter = TraitImplFilter::from(self_ty);
+            if matches!(filter, TraitImplFilter::All)
+                || matches!(self_ty.shape(), TyShape::Dyn(_))
+                || !filter.candidates(context, trait_ref)?.is_empty()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(!scope.local_trait_impls(trait_ref)?.is_empty())
+    }
+
+    fn trait_lang_item(&self, id: TraitDefRef) -> Option<LangItem> {
+        [
+            SolverTraitLangItem::Fn,
+            SolverTraitLangItem::FnMut,
+            SolverTraitLangItem::FnOnce,
+            SolverTraitLangItem::PointeeSized,
+            SolverTraitLangItem::Sized,
+            SolverTraitLangItem::MetaSized,
+            SolverTraitLangItem::Tuple,
+            SolverTraitLangItem::Destruct,
+        ]
+        .into_iter()
+        .map(LangItem::Trait)
+        .find(|&lang| self.lang_item(lang) == Some(DefId::Trait(id)))
+    }
+
     /// Source-only queries need working type storage without an inference context. Both kinds
     /// of operation release their entire working graph here.
     pub(crate) fn with_storage<R>(
@@ -311,21 +357,7 @@ where
                         })
                         .collect(),
                 };
-                for item in [
-                    SolverTraitLangItem::Fn,
-                    SolverTraitLangItem::FnMut,
-                    SolverTraitLangItem::FnOnce,
-                    SolverTraitLangItem::PointeeSized,
-                    SolverTraitLangItem::Sized,
-                    SolverTraitLangItem::MetaSized,
-                    SolverTraitLangItem::Tuple,
-                    SolverTraitLangItem::Destruct,
-                ] {
-                    let lang = LangItem::Trait(item);
-                    if self.lang_item(lang) == Some(DefId::Trait(id)) {
-                        result.lang_item = Some(lang);
-                    }
-                }
+                result.lang_item = self.trait_lang_item(id);
             }
             DefId::Impl(_) => {
                 let Some(data) = item.impl_data() else {

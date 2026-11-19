@@ -173,6 +173,15 @@ pub struct ImplSelection<'s> {
 }
 
 impl<'s> InferenceTable<'s> {
+    pub(crate) fn has_trait_assumption(&self, trait_ref: TraitDefRef) -> bool {
+        self.environment().clauses.iter().any(|clause| {
+            matches!(
+                clause.kind().skip_binder(),
+                ir::ClauseKind::Trait(predicate) if predicate.trait_ref.def_id == DefId::Trait(trait_ref)
+            )
+        })
+    }
+
     /// Traits supplied by bounds on this receiver are method candidates even when the trait is
     /// named only in a bound, such as `fn draw<T: api::Render>(value: T)`. The environment already
     /// includes supertraits. Objects carry bounds in their type; opaque and associated types
