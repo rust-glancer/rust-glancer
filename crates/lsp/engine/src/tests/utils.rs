@@ -611,41 +611,27 @@ impl LspEngineFixture {
             self.marker_path(markers, marker),
             self.marker_position(markers, marker),
         );
-        // The optional search can exhaust its deadline if the test runner is busy. Retry
-        // discovery here so the assertion checks the resolved edit independently of scheduling.
-        let mut candidate = None;
-        for _ in 0..3 {
-            let list = self
-                .service
-                .clone()
-                .completion(
-                    context::current(),
-                    input.clone(),
-                    CompletionClientCapabilities {
-                        resolve_additional_text_edits: true,
-                        snippet_support: true,
-                    },
-                )
-                .await
-                .expect("completion list")
-                .into_value();
-            assert!(list.is_incomplete);
-            candidate = list
-                .items
-                .into_iter()
-                .find(|candidate| candidate.item.label == label)
-                .map(|candidate| {
-                    (
-                        candidate,
-                        list.import_site.expect("original completion site"),
-                    )
-                });
-            if candidate.is_some() {
-                break;
-            }
-        }
-        let (candidate, site) =
-            candidate.unwrap_or_else(|| panic!("missing auto-import completion {label}"));
+        let list = self
+            .service
+            .clone()
+            .completion(
+                context::current(),
+                input.clone(),
+                CompletionClientCapabilities {
+                    resolve_additional_text_edits: true,
+                    snippet_support: true,
+                },
+            )
+            .await
+            .expect("completion list")
+            .into_value();
+        assert!(list.is_incomplete);
+        let candidate = list
+            .items
+            .into_iter()
+            .find(|candidate| candidate.item.label == label)
+            .unwrap_or_else(|| panic!("missing auto-import completion {label}"));
+        let site = list.import_site.expect("original completion site");
         let import = candidate.import.expect("auto-import payload");
         assert!(candidate.item.additional_text_edits.is_none());
 

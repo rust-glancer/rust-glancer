@@ -117,6 +117,8 @@ pub struct CompletionQuery<'a> {
     completion_source: Option<&'a CompletionSource<'a>>,
     /// Client features used when building and applying completion items.
     pub client_capabilities: CompletionClientCapabilities,
+    /// Time available for optional imports once an eligible prefix is found.
+    pub auto_import_budget: Duration,
 }
 
 impl<'a> CompletionQuery<'a> {
@@ -128,6 +130,7 @@ impl<'a> CompletionQuery<'a> {
             source_text: None,
             completion_source: None,
             client_capabilities: CompletionClientCapabilities::default(),
+            auto_import_budget: AUTO_IMPORT_BUDGET,
         }
     }
 
@@ -167,13 +170,14 @@ pub(crate) struct CompletionContext<'a> {
     pub(crate) offset: u32,
     pub(crate) source_text: &'a str,
     pub(crate) client_capabilities: CompletionClientCapabilities,
+    pub(crate) auto_import_budget: Duration,
 }
 
 impl CompletionContext<'_> {
     /// Start the search budget when a resolver reaches an eligible prefix.
     pub(crate) fn auto_import_deadline(&self, prefix: &str) -> Option<Instant> {
         (self.client_capabilities.auto_import && ImportableNameSearch::supports_prefix(prefix))
-            .then(|| Instant::now() + AUTO_IMPORT_BUDGET)
+            .then(|| Instant::now() + self.auto_import_budget)
     }
 }
 

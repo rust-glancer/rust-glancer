@@ -151,6 +151,12 @@ impl<'a> QueryRunner<'a> {
                     Some(source) => query.with_completion_source(source),
                     None => query.with_source_text(source_text),
                 };
+                // Engine tests assert which imports are returned. Give them enough time
+                // for the same search to finish on slower CI runners.
+                #[cfg(test)]
+                {
+                    query.auto_import_budget = std::time::Duration::from_secs(30);
+                }
                 let analysis_compute_started = Instant::now();
                 let result = current
                     .analysis

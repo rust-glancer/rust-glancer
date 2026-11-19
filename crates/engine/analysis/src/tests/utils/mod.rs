@@ -715,11 +715,13 @@ impl AnalysisQuerySnapshot<'_, '_> {
             | AnalysisQueryKind::CompletionsAtVerbose
             | AnalysisQueryKind::CompletionKeywordsAt
             | AnalysisQueryKind::CompletionKeywordsAtVerbose => {
-                let completion_query = CompletionQuery::new(target, file_id, offset)
+                let mut completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_client_capabilities(CompletionClientCapabilities {
                         snippet_support: true,
                         auto_import: query.auto_import,
                     });
+                // The snapshot checks which imports apply, even on a busy test runner.
+                completion_query.auto_import_budget = std::time::Duration::from_secs(30);
                 let mut completions = self
                     .db
                     .analysis()

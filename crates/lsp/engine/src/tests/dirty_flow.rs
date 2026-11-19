@@ -123,6 +123,8 @@ async fn completes_applicable_extension_methods_across_crates() {
         impl RemoteExt for u32 {{}}
         pub trait CatalogExt {{ fn render_catalog(&self) {{}} }}
         impl CatalogExt for u32 {{}}
+        pub trait BorrowedExt {{ fn borrowed(self); }}
+        impl BorrowedExt for &u32 {{ fn borrowed(self) {{}} }}
 
         //- /app/Cargo.toml
         [package]
@@ -149,6 +151,9 @@ async fn completes_applicable_extension_methods_across_crates() {
         fn demo(value: &u32) {{
             value.render_$method$;
         }}
+        fn borrowed(value: u32) {{
+            value.bor$borrow$;
+        }}
         "#,
     ))
     .await;
@@ -161,6 +166,9 @@ async fn completes_applicable_extension_methods_across_crates() {
     ] {
         fixture.check_auto_import("method", label, edit).await;
     }
+    fixture
+        .check_auto_import("borrow", "borrowed", "use catalog::BorrowedExt as _;")
+        .await;
     fixture.shutdown().await;
 }
 

@@ -75,6 +75,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 offset: query.offset,
                 source_text,
                 client_capabilities: query.client_capabilities,
+                auto_import_budget: query.auto_import_budget,
             },
         }
     }

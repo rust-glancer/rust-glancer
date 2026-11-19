@@ -16,6 +16,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ScopeId, TraitDefRef};
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
+use rg_std::UniqueVec;
 use rg_text::Name;
 use rg_ty::{
     Ty,
@@ -98,7 +99,13 @@ where
                 return Ok(Vec::new());
             }
             let cx = table.interner();
-            let self_types = table.method_receivers(receiver).collect::<Vec<_>>();
+            // For `impl Ext for &u32 { fn borrowed(self) { ... } }`, a `u32` value
+            // can call `borrowed()` with `Self = &u32`. Include those borrows in both
+            // the impl-index lookup and the trait proof.
+            let deref_types = table.method_receivers(receiver).collect::<Vec<_>>();
+            let receivers = table
+                .method_receiver_adjustments(&deref_types)
+                .collect::<UniqueVec<_>>();
 
             // A name can match several different traits. Use every autoderef receiver when
             // screening the impl index, so unrelated traits can't fill the shortlist.
@@ -117,7 +124,7 @@ where
                     Entry::Vacant(entry) => *entry.insert(declarations.trait_may_apply(
                         &table,
                         *trait_ref,
-                        &self_types,
+                        receivers.as_slice(),
                     )?),
                 };
                 if !may_apply {
@@ -141,10 +148,7 @@ where
             }
             // A proof for `impl Render for Widget` establishes `Self = Widget`.
             // For `render(&self)`, also check that an adjustment produces an `&Widget`.
-            let adjustments = table
-                .method_receiver_adjustments(&self_types)
-                .collect::<Vec<_>>();
-            for self_ty in self_types {
+            for &self_ty in &receivers {
                 let bound_traits = table.bound_traits(self_ty);
                 for &(function, trait_ref) in &functions {
                     rg_std::check_cancel!(self.context, "extension method completion");
@@ -174,7 +178,7 @@ where
                     ) else {
                         continue;
                     };
-                    if adjustments
+                    if receivers
                         .iter()
                         .any(|&ty| candidate.table.try_unify(ty, parameter).is_ok())
                         && candidate
