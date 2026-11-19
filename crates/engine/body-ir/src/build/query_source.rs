@@ -100,6 +100,13 @@ impl DefMapSource for BodyBuildQuerySource<'_, '_> {
 }
 
 impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource<'_, 'db> {
+    fn item_lookup_for_crate(
+        &self,
+        krate: CrateRef,
+    ) -> Result<Option<ItemLookupQuery<'source>>, ReadError> {
+        self.semantic_ir.item_lookup_for_crate(krate)
+    }
+
     fn associated_items(
         &self,
         store: ItemStoreRef,

@@ -4,7 +4,7 @@ use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 
 #[test]
 fn implements_required_trait_members_with_concrete_substitution() {
-    check_analysis(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /src/lib.rs crate:analysis_trait_member_actions
 trait Service<T> {
@@ -15,12 +15,13 @@ trait Service<T> {
     const DEFAULTED: T = loop {};
 
     fn required(&self, value: T) -> Self::Output;
+    async fn load(&self) -> T;
     fn defaulted(&self) -> T { loop {} }
 }
 
 struct Worker;
 
-impl Service$0<u8> for Worker { // code_actions("implement missing members")
+impl Service$0<u8> for Worker { // code_actions("implement missing members").in_lib("analysis_trait_member_actions")
 }
 "#,
         expect![[r#"
@@ -36,6 +37,7 @@ impl Service$0<u8> for Worker { // code_actions("implement missing members")
                     const DEFAULTED: T = loop {};
 
                     fn required(&self, value: T) -> Self::Output;
+                    async fn load(&self) -> T;
                     fn defaulted(&self) -> T { loop {} }
                 }
 
@@ -47,6 +49,10 @@ impl Service$0<u8> for Worker { // code_actions("implement missing members")
                     const REQUIRED: u8 = todo!();
 
                     fn required(&self, value: u8) -> Self::Output {
+                        todo!()
+                    }
+
+                    async fn load(&self) -> u8 {
                         todo!()
                     }
                 }

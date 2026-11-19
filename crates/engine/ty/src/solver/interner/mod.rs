@@ -578,7 +578,11 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         let Some(sig) = self.function_signature(function) else {
             return ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig::dummy()));
         };
-        let tys = sig.params.iter().chain([sig.ret]).collect::<Vec<_>>();
+        let tys = sig
+            .params
+            .iter()
+            .chain([sig.call_return])
+            .collect::<Vec<_>>();
         ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig {
             inputs_and_output: List::new(self, &tys),
             fn_sig_kind: ir::FnSigKind::new(
@@ -968,8 +972,8 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         false
     }
 
-    fn coroutine_is_async(self, _: DefId) -> bool {
-        false
+    fn coroutine_is_async(self, id: DefId) -> bool {
+        matches!(id, DefId::AsyncCoroutine(_))
     }
 
     fn coroutine_is_gen(self, _: DefId) -> bool {

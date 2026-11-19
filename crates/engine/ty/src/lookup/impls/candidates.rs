@@ -93,7 +93,9 @@ impl From<&Ty> for TraitImplFilter {
                 Err(_) => return Self::Fallbacks,
             },
             Ty::Adt(ty) => TraitImplSelfHead::Adt(ty.def),
-            Ty::Closure(_) | Ty::FnDef(_) | Ty::Dyn(_) => return Self::Fallbacks,
+            Ty::Closure(_) | Ty::AsyncCoroutine(_) | Ty::FnDef(_) | Ty::Dyn(_) => {
+                return Self::Fallbacks;
+            }
         };
         Self::Head(head)
     }
@@ -120,7 +122,12 @@ impl From<solver::Ty<'_>> for TraitImplFilter {
                 Err(_) => return Self::Fallbacks,
             },
             TyShape::Adt(adt) => TraitImplSelfHead::Adt(adt.def),
-            TyShape::Closure(_) | TyShape::FnDef(_) | TyShape::Dyn(_) => return Self::Fallbacks,
+            TyShape::Closure(_)
+            | TyShape::AsyncCoroutine { .. }
+            | TyShape::FnDef(_)
+            | TyShape::Dyn(_) => {
+                return Self::Fallbacks;
+            }
             TyShape::InferVar { kind } => {
                 return match kind {
                     InferVarKind::Integer => Self::Integers,

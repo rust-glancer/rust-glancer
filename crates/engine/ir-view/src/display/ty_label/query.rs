@@ -12,7 +12,8 @@ use rg_item_tree::{LangItem, VisibilityLevel};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
-    AdtTy, ConstValue, GenericArg, ProjectionTy, Substitution, TraitApplication, Ty, TyContext,
+    AdtTy, ConstValue, GenericArg, OpaqueTy, ProjectionTy, Substitution, TraitApplication,
+    TraitRefLowering, Ty, TyContext,
     signature::SemanticSignatureQuery,
     trait_selection::{TraitGoal, TraitSelectionQuery},
 };
@@ -20,14 +21,19 @@ use rg_ty::{
 use crate::{IndexedViewDb, display::syntax::SyntaxRenderer, item::path::PathView};
 
 /// Supplies display choices that need indexed declarations or trait solving.
+///
+/// An inlay-hint request shares this query across the whole range. Once it encounters an
+/// opaque type, it keeps the signature query so later hints can reuse the lowered bounds.
+///
 /// Iterator shortening opts into a type context for projecting `<Adapter as Iterator>::Item`;
 /// ordinary name and default-argument queries do not need that context.
-#[derive(Clone)]
 pub(super) struct TypeLabelQuery<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
     syntax: SyntaxRenderer,
     iterator_use_site: Option<CrateRef>,
     iterator_context: OnceCell<TyContext<'a, &'a IndexedViewDb<'db>, &'a IndexedViewDb<'db>>>,
+    signature_query:
+        OnceCell<SemanticSignatureQuery<'a, &'a IndexedViewDb<'db>, &'a IndexedViewDb<'db>>>,
 }
 
 impl<'a, 'db> TypeLabelQuery<'a, 'db> {
@@ -37,7 +43,15 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
             syntax: SyntaxRenderer::new(edition),
             iterator_use_site: None,
             iterator_context: OnceCell::new(),
+            signature_query: OnceCell::new(),
         }
+    }
+
+    pub(super) fn opaque_bounds(&self, opaque: &OpaqueTy) -> anyhow::Result<Vec<TraitRefLowering>> {
+        let signatures = self
+            .signature_query
+            .get_or_init(|| SemanticSignatureQuery::new(self.db, self.db));
+        Ok(signatures.opaque_bounds(opaque)?.unwrap_or_default())
     }
 
     pub(super) fn enable_iterator_simplification(&mut self, use_site: CrateRef) {

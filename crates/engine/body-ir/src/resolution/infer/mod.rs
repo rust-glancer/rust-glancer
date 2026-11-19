@@ -8,7 +8,7 @@
 //! and `deferred` retries lookups and projections that need more evidence. Finalization resolves the
 //! live variables before moving the expression and binding facts into `BodyFacts`.
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, mem};
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
@@ -82,7 +82,11 @@ where
                     deferred: VecDeque::new(),
                     method_calls: Vec::new(),
                     break_targets: Vec::new(),
-                    return_ty: cx.unknown(),
+                    diverging_outputs: Vec::new(),
+                    return_target: ReturnTarget {
+                        expected: cx.unknown(),
+                        values: None,
+                    },
                     inference_exhausted: false,
                     depth: 0,
                 }
@@ -90,6 +94,13 @@ where
             })
             .context("read solver declarations")?
     }
+}
+
+struct ReturnTarget<'s> {
+    expected: Ty<'s>,
+    // Async expressions merge explicit returns with fallthrough before choosing a fallback.
+    // Functions and ordinary closures coerce returns to their signature's output directly.
+    values: Option<Vec<Ty<'s>>>,
 }
 
 /// One body's recursive inference operation. Structure and semantic query inputs are immutable;
@@ -103,7 +114,8 @@ struct BodyInference<'s, 'query, D, I> {
     // Navigation candidates are collected after receiver types have had the whole body to settle.
     method_calls: Vec<ExprId>,
     break_targets: Vec<BreakTarget<'s, 'query>>,
-    return_ty: Ty<'s>,
+    diverging_outputs: Vec<Ty<'s>>,
+    return_target: ReturnTarget<'s>,
     inference_exhausted: bool,
     depth: usize,
 }
@@ -119,13 +131,26 @@ where
             .lower(ty, self.body.owner().generic_def().into())
     }
 
+    /// A nested body owns its explicit returns. Restore the enclosing target on error too.
+    fn with_return_target<R>(
+        &mut self,
+        target: ReturnTarget<'s>,
+        infer: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let outer = mem::replace(&mut self.return_target, target);
+        let result = infer(self);
+        self.return_target = outer;
+        result
+    }
+
     /// Infer the body once, finish pending semantic work, then publish durable facts.
     #[rg_std::cancelable("start body inference", token = self.context)]
     pub(crate) fn infer_body(mut self) -> anyhow::Result<BodyFacts> {
         // Make declaration types available before visiting any parameter uses or return values.
         self.infer_parameters()
             .context("infer function parameters")?;
-        self.infer_expr(self.body.root_expr(), &self.return_ty.clone())
+        let expected = self.return_target.expected;
+        self.infer_expr(self.body.root_expr(), &expected)
             .context("infer root expression")?;
         // The last subtree may have supplied evidence for earlier operations. Complete those
         // before choosing the declarations that editor queries will see.
@@ -135,6 +160,18 @@ where
         self.inference.table().fallback_numeric();
         self.fulfill_pending()
             .context("complete inference after numeric fallback")?;
+        // A diverging coroutine's output can be any type. Give its consumers the first chance
+        // to constrain it. Settling one await can reveal that an enclosing coroutine diverges too.
+        while !self.diverging_outputs.is_empty() {
+            for output in mem::take(&mut self.diverging_outputs) {
+                if self.inference.root_resolved_ty(&output).is_var() {
+                    self.inference
+                        .constrain_infer_tys(&output, &self.cx.never());
+                }
+            }
+            self.fulfill_pending()
+                .context("complete inference after async output fallback")?;
+        }
         self.resolve_method_declarations()
             .context("resolve method declarations")?;
 
@@ -152,7 +189,7 @@ where
     /// Populate editor-facing declarations after inference settles. A uniquely selected call
     /// keeps its target; otherwise navigation can retain the broader lookup candidates.
     fn resolve_method_declarations(&mut self) -> Result<(), ReadError> {
-        for call in std::mem::take(&mut self.method_calls) {
+        for call in mem::take(&mut self.method_calls) {
             rg_std::check_cancel!(self.context, "method declaration resolution");
             let ExprKind::MethodCall { receiver, .. } = self.body.expr_unchecked(call).kind else {
                 continue;

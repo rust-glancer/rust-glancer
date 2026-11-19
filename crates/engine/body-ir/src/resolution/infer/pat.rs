@@ -22,24 +22,20 @@ where
     /// Pass each signature type through its parameter pattern before the body reads its bindings.
     /// Even a pattern with one binding can change the type: `&value: &u8` binds `value: u8`.
     pub(super) fn infer_parameters(&mut self) -> anyhow::Result<()> {
-        let signature = self
-            .body
-            .owner()
-            .function()
-            .and_then(|function| self.cx.function_signature(function));
-        // A missing arrow has no body expectation, even though the semantic signature uses unit.
-        if let Some(function) = self.body.owner().function()
-            && self
-                .context
-                .item_query()
-                .function_data(function)
-                .context("read function return annotation")?
-                .is_some_and(|data| data.signature.ret_ty().is_some())
+        let function = self.body.owner().function();
+        let signature = function.and_then(|function| self.cx.function_signature(function));
+        // A missing arrow leaves the expectation open for ordinary functions. An async
+        // function with no annotation has a future whose output is unit.
+        if let (Some(function), Some(signature)) = (function, signature)
+            && (signature.qualifiers.is_async
+                || self
+                    .context
+                    .item_query()
+                    .function_data(function)
+                    .context("read function return annotation")?
+                    .is_some_and(|data| data.signature.ret_ty().is_some()))
         {
-            self.return_ty = signature
-                .as_ref()
-                .map(|signature| signature.ret)
-                .unwrap_or(self.cx.unknown());
+            self.return_target.expected = signature.body_output();
         }
         for (index, param) in self.body.function_params().iter().enumerate() {
             rg_std::check_cancel!(self.context, "infer parameter binding");

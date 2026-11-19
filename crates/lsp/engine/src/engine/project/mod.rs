@@ -146,7 +146,7 @@ impl ProjectCoordinator {
         let cargo_build_outputs = workspace.cargo_build_output_stats();
         tracing::info!(
             target_directories = cargo_build_outputs.target_directories(),
-            deps_directories = cargo_build_outputs.deps_directories(),
+            dep_info_directories = cargo_build_outputs.dep_info_directories(),
             dep_info_files = cargo_build_outputs.dep_info_files(),
             build_script_packages = cargo_build_outputs.build_script_packages(),
             matched_rustc_units = cargo_build_outputs.matched_rustc_units(),

@@ -14,7 +14,7 @@ declare_id! {
     pub struct ConstId;
     pub struct StaticId;
 
-    /// Owner-local ordinal of one opaque `impl Trait` occurrence.
+    /// Owner-local identity of one opaque type.
     ///
     /// For `fn make() -> (impl Debug, impl Debug)`, the two return components get different IDs
     /// even though their bounds are identical. [`OpaqueTyRef`] pairs this ordinal with the
@@ -289,7 +289,7 @@ pub struct ConstParamRef {
     pub local_id: LocalTypeOrConstParamId,
 }
 
-/// Owner-local identity of one `impl Trait` occurrence.
+/// Owner-local identity of one written or synthesized opaque type.
 ///
 /// Bounds are deliberately absent: two occurrences with identical bounds are still different
 /// opaque types, while one occurrence keeps its identity if its predicates are queried elsewhere.
@@ -298,6 +298,11 @@ pub struct ConstParamRef {
 pub struct OpaqueTyRef {
     pub owner: GenericDefRef,
     pub id: OpaqueTyId,
+}
+
+impl OpaqueTyId {
+    /// The synthetic future of an async function has a slot outside written `impl Trait` ordinals.
+    pub const ASYNC_RETURN: Self = Self(usize::MAX);
 }
 
 /// Parameter identity used by semantic types and ordered argument lists.

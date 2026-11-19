@@ -41,7 +41,8 @@ pub use self::{
     profile::profile_descriptors,
     substitution::Substitution,
     ty::{
-        AdtTy, AliasTy, ClosureTy, ClosureTyId, DynAssocTypeBinding, DynTy, ExpectedAdtTyExt,
-        ExpectedTyExt, FnDefTy, OpaqueTy, ProjectionTy, Ty,
+        AdtTy, AliasTy, AsyncCoroutineTy, AsyncCoroutineTyId, ClosureTy, ClosureTyId,
+        DynAssocTypeBinding, DynTy, ExpectedAdtTyExt, ExpectedTyExt, FnDefTy, OpaqueTy,
+        ProjectionTy, Ty,
     },
 };

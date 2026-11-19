@@ -297,6 +297,13 @@ struct TraitSelectionDependency {
 }
 
 impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
+    fn item_lookup_for_crate(
+        &self,
+        krate: CrateRef,
+    ) -> Result<Option<ItemLookupQuery<'a>>, ReadError> {
+        (&ItemReader(*self)).item_lookup_for_crate(krate)
+    }
+
     fn associated_items(
         &self,
         store: ItemStoreRef,
@@ -1757,6 +1764,12 @@ impl TraitSelectionSnapshot {
                 format!("fn({params}) -> {}", self.render_ty(ret))
             }
             Ty::Closure(closure) => format!("{{closure#{}}}", closure.id),
+            Ty::AsyncCoroutine(coroutine) => {
+                format!(
+                    "impl Future<Output = {}>",
+                    self.render_ty(&coroutine.output)
+                )
+            }
             Ty::FnDef(function) => format!(
                 "{{fn-item:{:?}{}}}",
                 function.def,
@@ -2037,7 +2050,7 @@ impl<'a, 's> TraitSelectionQueryParser<'a, 's> {
                 .function(cx, function)
                 .expect("fixture opaque signature should lower")
                 .unwrap_or_else(|| panic!("query refers to unknown opaque function `{index}`"))
-                .ret;
+                .body_output();
         }
         if let Some(ty) = parse_bracket_ty(text) {
             return match ty {

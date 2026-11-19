@@ -24,6 +24,7 @@ use rustc_type_ir::{
 };
 
 use super::{SolverInterner, interner::ListElement};
+use crate::{AsyncCoroutineTyId, ClosureTyId};
 
 type Interner<'s> = SolverInterner<'s>;
 pub type GenericArgs<'s> = List<'s, GenericArg<'s>>;
@@ -223,7 +224,8 @@ pub enum DefId {
     Static(rg_ir_model::StaticRef),
     TypeAlias(TypeAliasRef),
     Opaque(OpaqueTyRef),
-    Closure(crate::ClosureTyId),
+    Closure(ClosureTyId),
+    AsyncCoroutine(AsyncCoroutineTyId),
     /// A mandatory callback had no source declaration. The operation records that it is
     /// unavailable and discards any resulting proof, rather than inventing a source identity.
     Unavailable,
@@ -241,7 +243,7 @@ impl DefId {
             Self::Static(id) => G::Static(id),
             Self::TypeAlias(id) => G::TypeAlias(id),
             Self::Opaque(id) => id.owner,
-            Self::Closure(_) | Self::Unavailable => return None,
+            Self::Closure(_) | Self::AsyncCoroutine(_) | Self::Unavailable => return None,
         })
     }
 }

@@ -10,6 +10,7 @@ pub use core::{
     include_str, line, module_path, option_env, stringify,
 };
 pub use core::cell;
+pub use core::future;
 pub use core::{clone, cmp, default, fmt, hash, marker};
 pub use core::clone::Clone;
 pub use core::marker::Copy;

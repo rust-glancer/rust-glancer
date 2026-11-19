@@ -129,6 +129,9 @@ impl IndexedType {
                 }
                 Self::collect_type_declarations(&closure.ret, declarations);
             }
+            Ty::AsyncCoroutine(coroutine) => {
+                Self::collect_type_declarations(&coroutine.output, declarations);
+            }
             Ty::FnDef(function) => {
                 Self::collect_type_arg_declarations(&function.args, declarations)
             }

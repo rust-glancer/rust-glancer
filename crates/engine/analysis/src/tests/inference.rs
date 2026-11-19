@@ -12,6 +12,34 @@ use super::utils::{
 };
 
 #[test]
+fn infers_future_outputs_from_async_closures_and_diverging_blocks() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:async_outputs
+use core::future::Future;
+
+fn invoke<F: FnOnce() -> R, R>(call: F) -> R { call() }
+fn keep<F: Future<Output = u8>>(future: F) -> F { future }
+
+pub async fn demo() {
+    let pending = invoke(async || 1u8)$0; // ty("async closure call").in_lib("async_outputs")
+    let value = pending.await$0; // ty("awaited closure call").in_lib("async_outputs")
+    let returned = invoke(async || -> u16 { return 2; }).await$0; // ty("async closure return").in_lib("async_outputs")
+    let contextual = keep(async { loop {} }).await$0; // ty("divergent body with bound").in_lib("async_outputs")
+    let unconstrained = (async { loop {} }).await$0; // ty("divergent body without bound").in_lib("async_outputs")
+}
+"#,
+        expect![[r#"
+            impl Future<Output = u8> // async closure call
+            u8 // awaited closure call
+            u16 // async closure return
+            u8 // divergent body with bound
+            ! // divergent body without bound
+        "#]],
+    );
+}
+
+#[test]
 fn infers_auto_traits_from_aggregate_fields() {
     check_analysis(
         r#"

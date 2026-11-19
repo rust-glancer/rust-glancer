@@ -5,13 +5,15 @@
 //! lowerer in temporary storage and export the result before returning. A whole signature is
 //! lowered in one session so its parameters and `impl Trait` occurrences keep the same identities.
 
+use std::{cell::RefCell, collections::HashMap};
+
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericParamRef, ImplRef, StaticRef,
-    TraitDefRef, TypeAliasRef, TypeParamRef,
+    ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
+    OpaqueTyId, StaticRef, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
 use rg_item_tree::FunctionQualifiers;
-use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
+use rg_semantic_ir::{GenericParamSource, Generics, SemanticItemSource};
 use rg_source::ReadError;
 use rustc_type_ir::TypeVisitableExt as _;
 
@@ -28,10 +30,19 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallableSignature {
     pub params: Vec<Ty>,
-    pub ret: Ty,
+    /// The type of the call expression. For an async function this is the future.
+    pub call_return: Ty,
+    pub(crate) async_output: Option<Box<Ty>>,
     /// Keep qualifiers beside the lowered types so semantic consumers do not have to reopen the
     /// source-shaped declaration to distinguish safe, unsafe, and async function items.
     pub qualifiers: FunctionQualifiers,
+}
+
+impl CallableSignature {
+    /// The type written after `->`, or unit when the declaration omits it.
+    pub fn body_output(&self) -> &Ty {
+        self.async_output.as_deref().unwrap_or(&self.call_return)
+    }
 }
 
 /// The receiver and positional trait arguments of an impl, before checking its requirements.
@@ -50,11 +61,37 @@ pub(crate) struct TraitHeader {
     pub clauses: Vec<Clause>,
 }
 
+/// The bounds for every opaque type introduced by one declaration.
+///
+/// An `async fn` that returns `impl Iterator` has two entries here. One describes the
+/// future returned by the call, and the other describes the iterator it produces.
+struct OpaqueBounds<'query> {
+    generics: Generics<'query>,
+    entries: Vec<(OpaqueTyId, Vec<TraitRefLowering>)>,
+}
+
+impl OpaqueBounds<'_> {
+    fn instantiate(&self, opaque: &OpaqueTy) -> Option<Vec<TraitRefLowering>> {
+        let (_, bounds) = self
+            .entries
+            .iter()
+            .find(|(id, _)| *id == opaque.opaque.id)?;
+        let subst = Substitution::from_args(&self.generics, &opaque.args);
+        Some(
+            bounds
+                .iter()
+                .map(|bound| subst.apply_trait_ref(bound))
+                .collect(),
+        )
+    }
+}
+
 /// Semantic declaration queries. Results borrow no syntax and are safe to pass between type
 /// algorithms within the request that owns the underlying package transaction.
 pub struct SemanticSignatureQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
     item_paths: ItemPathQuery<'query, D, I>,
     resolver: R,
+    opaque_bounds_by_owner: RefCell<HashMap<GenericDefRef, Option<OpaqueBounds<'query>>>>,
 }
 
 impl<'query, D, I> SemanticSignatureQuery<'query, D, I>
@@ -63,10 +100,11 @@ where
     I: SemanticItemSource<'query>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
-        Self {
-            item_paths: ItemPathQuery::new(def_maps.clone(), items.clone()),
-            resolver: ItemPathQuery::new(def_maps, items),
-        }
+        Self::with_resolver(
+            def_maps.clone(),
+            items.clone(),
+            ItemPathQuery::new(def_maps, items),
+        )
     }
 }
 
@@ -84,6 +122,7 @@ where
         Self {
             item_paths: ItemPathQuery::new(def_maps, items),
             resolver,
+            opaque_bounds_by_owner: RefCell::default(),
         }
     }
 
@@ -230,36 +269,52 @@ where
         })
     }
 
-    /// Returns the predicates declared by one opaque occurrence.
+    /// Returns the bounds for an opaque type with its generic arguments applied.
     ///
-    /// Bounds are queried declaration data, not part of opaque type equality. Replaying the
-    /// owner's canonical lowering session keeps occurrence IDs and nested alias traversal aligned
-    /// with the type that introduced the opaque identity.
+    /// For `async fn fetch<T>() -> T`, both `fetch::<u8>()` and `fetch::<bool>()` use
+    /// the same cached bound, `Future<Output = T>`. Each call substitutes its own `T`
+    /// when asking for its bounds.
     pub fn opaque_bounds(
         &self,
         opaque: &OpaqueTy,
     ) -> Result<Option<Vec<TraitRefLowering>>, ReadError> {
+        let owner = opaque.opaque.owner;
+        if let Some(cached) = self.opaque_bounds_by_owner.borrow().get(&owner) {
+            return Ok(cached
+                .as_ref()
+                .and_then(|bounds| bounds.instantiate(opaque)));
+        }
+
+        // Walk the whole signature once. Lowering can also visit an alias that declares its
+        // own opaque types. Those get their own cache entry when a caller asks for them.
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
-        let bounds = lowering.with_storage(|cx| {
-            Ok(lowering
-                .opaque_bounds_for_owner(cx, opaque.opaque.owner)?
-                .into_iter()
-                .find_map(|(candidate, bounds)| {
-                    (candidate.opaque == opaque.opaque)
-                        .then(|| bounds.iter().map(|b| b.raise(cx)).collect::<Vec<_>>())
-                }))
+        let entries = lowering.with_storage(|cx| {
+            let mut entries = Vec::new();
+            for (candidate, bounds) in lowering.opaque_bounds_for_owner(cx, owner)? {
+                if candidate.opaque.owner == owner {
+                    let bounds = bounds.iter().map(|bound| bound.raise(cx)).collect();
+                    entries.push((candidate.opaque.id, bounds));
+                }
+            }
+            Ok(entries)
         })?;
-        let Some(bounds) = bounds else {
-            return Ok(None);
+
+        // Cache an empty result too, so a missing declaration only needs one lookup.
+        let owner_bounds = if entries.is_empty() {
+            None
+        } else {
+            Some(OpaqueBounds {
+                generics: self.item_paths.generics().generics(owner)?,
+                entries,
+            })
         };
-        let generics = self.item_paths.generics().generics(opaque.opaque.owner)?;
-        let subst = Substitution::from_args(&generics, &opaque.args);
-        Ok(Some(
-            bounds
-                .iter()
-                .map(|bound| subst.apply_trait_ref(bound))
-                .collect(),
-        ))
+        let bounds = owner_bounds
+            .as_ref()
+            .and_then(|bounds| bounds.instantiate(opaque));
+        self.opaque_bounds_by_owner
+            .borrow_mut()
+            .insert(owner, owner_bounds);
+        Ok(bounds)
     }
 
     pub fn const_ty(&self, konst: ConstRef) -> Result<Option<Ty>, ReadError> {
