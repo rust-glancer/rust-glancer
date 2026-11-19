@@ -38,17 +38,15 @@ impl CompletionClientCapabilities {
 pub struct CompletionResult {
     pub items: Vec<CompletionCandidate>,
     pub is_incomplete: bool,
+    /// All auto-import rows replace the same name at the completion cursor.
+    pub import_site: Option<CompletionImportSite>,
 }
 
 /// The LSP item and the import the server can resolve for it.
-///
-/// An importable row can carry a source anchor along with the path. The server passes both
-/// back to the editor in the row's `data` so they are available when it later asks to resolve.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct CompletionCandidate {
     pub item: CompletionItem,
     pub import: Option<CompletionImport>,
-    pub import_site: Option<CompletionImportSite>,
 }
 
 /// An import path in canonical spelling, with the binding mode carried separately.
@@ -63,6 +61,8 @@ pub struct CompletionImport {
 pub struct CompletionImportCandidate {
     pub label: String,
     pub kind: CompletionItemKind,
+    /// Present when the cursor was relocated in a changed document.
+    pub inline_module_path: Option<Vec<String>>,
 }
 
 /// A short stretch of source immediately before the name being completed.
@@ -72,6 +72,7 @@ pub struct CompletionImportCandidate {
 /// The row carries the anchor so resolve can work after the original buffer is gone.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CompletionImportSite {
+    pub inline_module_path: Vec<String>,
     before: String,
     replaced: String,
     cursor: usize,
@@ -80,7 +81,12 @@ pub struct CompletionImportSite {
 impl CompletionImportSite {
     /// Save the original cursor within the replacement so it can be restored if the name
     /// stays the same and edits above it move the site.
-    pub fn capture(text: &str, cursor: usize, replace: Range<usize>) -> Option<Self> {
+    pub fn capture(
+        text: &str,
+        cursor: usize,
+        replace: Range<usize>,
+        inline_module_path: Vec<String>,
+    ) -> Option<Self> {
         let replaced = text.get(replace.clone())?;
         let cursor = cursor.checked_sub(replace.start)?;
         if !replaced.is_char_boundary(cursor) {
@@ -96,6 +102,7 @@ impl CompletionImportSite {
             .map_or(0, |(offset, _)| offset);
         let before = &text[anchor_start..replace.start];
         (Self::unique_anchor_end(text, before)? == replace.start).then(|| Self {
+            inline_module_path,
             before: before.to_owned(),
             replaced: replaced.to_owned(),
             cursor,

@@ -55,22 +55,12 @@ impl ImportableNameSearch<'_, '_> {
         let resolver = maps.name_resolver();
         let bindings = self.selected_bindings(module, path, NamespaceSet::TYPES_VALUES)?;
         let short_path = Path::unqualified_name(label.as_str());
-        let occupied = resolver.import_bindings(module, &short_path, NamespaceSet::TYPES_VALUES)?;
-        // For `struct Widget;`, the same use brings in the type and its constructor.
-        // An existing `fn Widget()` would conflict even at `let _: Widget`.
-        if bindings.iter().any(|(ns, incoming)| {
-            occupied
-                .iter()
-                .any(|(other_ns, existing)| ns == other_ns && incoming.def != existing.def)
-        }) {
-            return Ok(false);
-        }
+        let available =
+            self.available_import_namespaces(module, label, bindings.iter().copied())?;
 
         // The import must still add a name the user can reach at this cursor.
         for (ns, binding) in bindings {
-            if !kind.namespaces().contains(ns)
-                || occupied.iter().any(|(other_ns, _)| *other_ns == ns)
-            {
+            if !kind.namespaces().contains(ns) || !available.contains(ns) {
                 continue;
             }
             if let Some(scope) = body_scope {

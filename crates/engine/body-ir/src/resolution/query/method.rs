@@ -177,6 +177,9 @@ where
                     if adjustments
                         .iter()
                         .any(|&ty| candidate.table.try_unify(ty, parameter).is_ok())
+                        && candidate
+                            .table
+                            .method_receiver_bounds_hold(function, candidate.subst)
                     {
                         candidates.push(function);
                     }

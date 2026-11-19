@@ -77,6 +77,11 @@ impl<'source> CompletionSource<'source> {
         self.offset
     }
 
+    /// The file and these inline module names identify the module that will receive the import.
+    pub fn inline_module_path(&self) -> Vec<String> {
+        self.syntax.inline_module_path()
+    }
+
     /// Returns the exact editor buffer used to build the speculative tree.
     pub fn source_text(&self) -> &'source str {
         self.syntax.source()
@@ -179,10 +184,16 @@ pub(crate) fn resolve_import(
     source: &str,
     import: &CompletionImport,
     selected: Option<(&str, CompletionKind)>,
+    expected_inline_module: Option<&[String]>,
 ) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
     let Some(syntax) = CompletionSyntaxContext::at(source, query.offset) else {
         return Ok(None);
     };
+    // A unique stretch of text may have moved into a sibling module. Never add the
+    // import there on behalf of a completion offered in the original module.
+    if expected_inline_module.is_some_and(|original| syntax.inline_module_path() != original) {
+        return Ok(None);
+    }
     let db = analysis.view_db();
     let site = CompletionSiteDetector::new(analysis).site_at(
         query.crate_ref,

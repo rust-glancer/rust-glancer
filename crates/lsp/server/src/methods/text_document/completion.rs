@@ -122,30 +122,22 @@ pub(crate) async fn completion(
                         let items = completions
                             .items
                             .into_iter()
-                            .map(
-                                |CompletionCandidate {
-                                     mut item,
-                                     import,
-                                     import_site,
-                                 }| {
-                                    if let Some(import) = import {
-                                        item.data = Some(
-                                            serde_json::to_value(CompletionImportData {
-                                                uri: uri.clone(),
-                                                position,
-                                                document: captured.document().target().clone(),
-                                                editor_revision: captured.open_documents_revision(),
-                                                site: import_site,
-                                                import,
-                                            })
-                                            .map_err(|error| {
-                                                methods::internal_error(error.into())
-                                            })?,
-                                        );
-                                    }
-                                    Ok(item)
-                                },
-                            )
+                            .map(|CompletionCandidate { mut item, import }| {
+                                if let Some(import) = import {
+                                    item.data = Some(
+                                        serde_json::to_value(CompletionImportData {
+                                            uri: uri.clone(),
+                                            position,
+                                            document: captured.document().target().clone(),
+                                            editor_revision: captured.open_documents_revision(),
+                                            site: completions.import_site.clone(),
+                                            import,
+                                        })
+                                        .map_err(|error| methods::internal_error(error.into()))?,
+                                    );
+                                }
+                                Ok(item)
+                            })
                             .collect::<Result<_>>()?;
                         return Ok(Some(CompletionResponse::CompletionList(CompletionList {
                             items,
@@ -184,15 +176,14 @@ pub(crate) async fn resolve_import(
 
     // A sibling edit can change which methods apply without moving the cursor. Only edits
     // to the target require finding the position again.
-    let position = if current == &data.document {
-        data.position
+    let (position, inline_module_path) = if current == &data.document {
+        (data.position, None)
     } else {
         let text = captured.document().text();
-        let Some(offset) = data
-            .site
-            .as_ref()
-            .and_then(|site| site.offset_in(text, &item.label))
-        else {
+        let Some(site) = data.site else {
+            return Ok(item);
+        };
+        let Some(offset) = site.offset_in(text, &item.label) else {
             return Ok(item);
         };
         let prefix = &text[..offset];
@@ -203,9 +194,9 @@ pub(crate) async fn resolve_import(
         ) else {
             return Ok(item);
         };
-        Position::new(line, column)
+        (Position::new(line, column), Some(site.inline_module_path))
     };
-    let candidate = if current != &data.document
+    let candidate = if inline_module_path.is_some()
         || captured.open_documents_revision() != data.editor_revision
     {
         let Some(kind) = item.kind else {
@@ -214,6 +205,7 @@ pub(crate) async fn resolve_import(
         Some(CompletionImportCandidate {
             label: item.label.clone(),
             kind,
+            inline_module_path,
         })
     } else {
         None

@@ -161,37 +161,25 @@ impl<'a> QueryRunner<'a> {
                 // Discard cancelled work before converting its result.
                 rg_std::check_cancel!(cancellation, "after semantic completion");
                 let protocol_conversion_started = Instant::now();
-                let mut last_import_site = None;
+                // The import rows share a cursor and replacement span. Keep their source anchor
+                // on the list until the server hands each row to the editor.
+                let import_site = result
+                    .items
+                    .iter()
+                    .find_map(|item| item.edit.filter(|_| item.import.is_some()))
+                    .and_then(|edit| {
+                        CompletionImportSite::capture(
+                            source_text,
+                            offset as usize,
+                            edit.replace.start as usize..edit.replace.end as usize,
+                            completion_source.as_ref()?.inline_module_path(),
+                        )
+                    });
                 for (index, item) in result.items.into_iter().enumerate() {
                     if index % 64 == 0 {
                         rg_std::check_cancel!(cancellation, "completion conversion");
                     }
-                    let import_site =
-                        if let Some(edit) = item.edit.filter(|_| item.import.is_some()) {
-                            // The auto-import rows normally replace the same name. Locate the
-                            // anchor once, even when many candidates came from that site.
-                            if last_import_site
-                                .as_ref()
-                                .is_none_or(|(span, _)| *span != edit.replace)
-                            {
-                                last_import_site = Some((
-                                    edit.replace,
-                                    CompletionImportSite::capture(
-                                        source_text,
-                                        offset as usize,
-                                        edit.replace.start as usize..edit.replace.end as usize,
-                                    ),
-                                ));
-                            }
-                            last_import_site.as_ref().and_then(|(_, site)| site.clone())
-                        } else {
-                            None
-                        };
-                    completions.push(completion::completion_candidate(
-                        item,
-                        current.line_index,
-                        import_site,
-                    ));
+                    completions.push(completion::completion_candidate(item, current.line_index));
                 }
                 let protocol_conversion_us = protocol_conversion_started.elapsed().as_micros();
 
@@ -216,6 +204,7 @@ impl<'a> QueryRunner<'a> {
                 Ok(CompletionResult {
                     items: completions,
                     is_incomplete: result.is_incomplete,
+                    import_site,
                 })
             },
         )
@@ -264,7 +253,12 @@ impl<'a> QueryRunner<'a> {
                 };
                 Ok(current
                     .analysis
-                    .resolve_completion_import(query, &import, selected)?
+                    .resolve_completion_import(
+                        query,
+                        &import,
+                        selected,
+                        candidate.and_then(|row| row.inline_module_path.as_deref()),
+                    )?
                     .map(|edit| completion::import_edit(edit, current.line_index)))
             },
         )

@@ -19,8 +19,8 @@ use gen_lsp_types::{
     Location, Position, Range, TextEdit, Tooltip, Uri, WorkspaceEdit,
 };
 use rg_lsp_proto::{
-    AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionCandidate,
-    CompletionClientCapabilities, CompletionImportCandidate, DocumentPositionSnapshot,
+    AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
+    CompletionImport, CompletionImportCandidate, CompletionImportSite, DocumentPositionSnapshot,
     DocumentRevision, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
     EngineResult, EngineService, FoldingClientCapabilities, OpenDocumentSession,
     OpenDocumentsRevision, QueryError, QueryScope, QueryValue, SaveProposal, SavedProjectChanges,
@@ -43,6 +43,12 @@ use crate::{
     MemoryControl, Service, ServiceNotificationsSink, engine::ProjectConfiguration,
     proto::position, service::ServiceNotificationPublisher,
 };
+
+pub(super) struct SelectedAutoImport {
+    pub(super) item: CompletionItem,
+    import: CompletionImport,
+    site: CompletionImportSite,
+}
 
 pub(super) struct LspEngineFixture {
     fixture: CrateFixture,
@@ -599,7 +605,7 @@ impl LspEngineFixture {
         marker: &str,
         label: &str,
         expected_edit: &str,
-    ) -> CompletionCandidate {
+    ) -> SelectedAutoImport {
         let markers = QueryMarkers::Saved;
         let input = self.position_snapshot(
             self.marker_path(markers, marker),
@@ -627,20 +633,26 @@ impl LspEngineFixture {
             candidate = list
                 .items
                 .into_iter()
-                .find(|candidate| candidate.item.label == label);
+                .find(|candidate| candidate.item.label == label)
+                .map(|candidate| {
+                    (
+                        candidate,
+                        list.import_site.expect("original completion site"),
+                    )
+                });
             if candidate.is_some() {
                 break;
             }
         }
-        let candidate =
+        let (candidate, site) =
             candidate.unwrap_or_else(|| panic!("missing auto-import completion {label}"));
-        let import = candidate.import.clone().expect("auto-import payload");
+        let import = candidate.import.expect("auto-import payload");
         assert!(candidate.item.additional_text_edits.is_none());
 
         let edit = self
             .service
             .clone()
-            .resolve_completion_import(context::current(), input.clone(), import, None)
+            .resolve_completion_import(context::current(), input.clone(), import.clone(), None)
             .await
             .expect("resolve completion import")
             .into_value()
@@ -653,21 +665,23 @@ impl LspEngineFixture {
             }],
         );
         assert_eq!(edit.new_text.trim(), expected_edit);
-        candidate
+        SelectedAutoImport {
+            item: candidate.item,
+            import,
+            site,
+        }
     }
 
     pub(super) async fn check_revalidated_auto_import(
         &self,
         path: &str,
-        original: &CompletionCandidate,
-        expected_edit: &str,
+        original: &SelectedAutoImport,
+        expected_edit: Option<&str>,
     ) {
         let snapshot = self.document_snapshot(self.fixture.path(path));
         let text = snapshot.document().text();
         let offset = original
-            .import_site
-            .as_ref()
-            .expect("original completion site")
+            .site
             .offset_in(text, &original.item.label)
             .expect("completion site in edited text");
         let position = position::position(
@@ -675,10 +689,10 @@ impl LspEngineFixture {
             offset.try_into().expect("fixture offset"),
         );
         let input = snapshot.with_position(position);
-        let import = original.import.as_ref().expect("auto-import payload");
         let candidate = CompletionImportCandidate {
             label: original.item.label.clone(),
             kind: original.item.kind.expect("auto-import kind"),
+            inline_module_path: Some(original.site.inline_module_path.clone()),
         };
         let edit = self
             .service
@@ -686,21 +700,23 @@ impl LspEngineFixture {
             .resolve_completion_import(
                 context::current(),
                 input.clone(),
-                import.clone(),
+                original.import.clone(),
                 Some(candidate),
             )
             .await
             .expect("revalidate completion import")
-            .into_value()
-            .expect("selected import edit");
+            .into_value();
+        assert_eq!(
+            edit.as_ref().map(|edit| edit.new_text.trim()),
+            expected_edit
+        );
         Self::assert_completion_edits_fit_source(
             input.document().text(),
             &[CompletionItem {
-                additional_text_edits: Some(vec![edit.clone()]),
+                additional_text_edits: edit.map(|edit| vec![edit]),
                 ..Default::default()
             }],
         );
-        assert_eq!(edit.new_text.trim(), expected_edit);
     }
 
     pub(super) fn accept_completion(&self, path: &str, version: i32, item: &CompletionItem) {

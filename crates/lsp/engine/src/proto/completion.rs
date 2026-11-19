@@ -6,7 +6,7 @@ use rg_analysis::{
     CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
     CompletionItem, CompletionKind,
 };
-use rg_lsp_proto::{CompletionCandidate, CompletionImport, CompletionImportSite};
+use rg_lsp_proto::{CompletionCandidate, CompletionImport};
 use rg_parse::LineIndex;
 
 use crate::proto::{markdown, position, text_edit};
@@ -14,7 +14,6 @@ use crate::proto::{markdown, position, text_edit};
 pub(crate) fn completion_candidate(
     item: CompletionItem,
     line_index: &LineIndex,
-    import_site: Option<CompletionImportSite>,
 ) -> CompletionCandidate {
     let detail = completion_detail(item.detail, item.applicability);
     let insert_text_format = completion_insert_text_format(&item.insert_text);
@@ -35,7 +34,6 @@ pub(crate) fn completion_candidate(
             path: import.path.to_string(),
             anonymous: import.anonymous,
         }),
-        import_site,
     }
 }
 
@@ -170,7 +168,6 @@ mod tests {
                 import: None,
             },
             &LineIndex::new("user.na"),
-            None,
         )
         .item;
 
@@ -226,7 +223,6 @@ mod tests {
                 }),
             },
             &line_index,
-            None,
         );
         let import = candidate.import.expect("auto-import payload");
         assert_eq!(import.path, "std::collections::HashMap");

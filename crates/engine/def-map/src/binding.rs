@@ -270,7 +270,7 @@ impl NameBinding {
         self.direct_only
     }
 
-    pub(crate) fn is_explicit(self) -> bool {
+    pub fn is_explicit(self) -> bool {
         self.priority == BindingPriority::Explicit
     }
 

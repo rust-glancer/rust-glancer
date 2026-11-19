@@ -386,6 +386,7 @@ impl<'a> Analysis<'a> {
         query: CompletionQuery<'_>,
         import: &CompletionImport,
         selected: Option<(&str, CompletionKind)>,
+        expected_inline_module: Option<&[String]>,
     ) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
         self.run_query("resolve_completion_import", || {
             let snapshot_text;
@@ -396,7 +397,14 @@ impl<'a> Analysis<'a> {
                     &snapshot_text
                 }
             };
-            query::completion::resolve_import(self, query, source, import, selected)
+            query::completion::resolve_import(
+                self,
+                query,
+                source,
+                import,
+                selected,
+                expected_inline_module,
+            )
         })
     }
 

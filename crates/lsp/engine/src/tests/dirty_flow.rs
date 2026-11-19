@@ -26,6 +26,8 @@ async fn resolves_named_and_extension_trait_completion_imports() {
             let _: Wid$type$;
             value.render_wi$method$;
         }
+        #[cfg(any())]
+        use crate::collections::Widget;
 
         //- /src/sibling.rs
         pub trait RenderExt { fn render_widget(&self); }
@@ -55,7 +57,7 @@ async fn resolves_named_and_extension_trait_completion_imports() {
         .check_revalidated_auto_import(
             "src/consumer.rs",
             &widget,
-            "use crate::collections::Widget;",
+            Some("use crate::collections::Widget;"),
         )
         .await;
 
@@ -64,7 +66,7 @@ async fn resolves_named_and_extension_trait_completion_imports() {
         .check_revalidated_auto_import(
             "src/consumer.rs",
             &method,
-            "use crate::WidgetRenderer as _;",
+            Some("use crate::WidgetRenderer as _;"),
         )
         .await;
     fixture.accept_completion("src/consumer.rs", 4, &widget.item);
@@ -72,8 +74,21 @@ async fn resolves_named_and_extension_trait_completion_imports() {
         .check_revalidated_auto_import(
             "src/consumer.rs",
             &widget,
-            "use crate::collections::Widget;",
+            Some("use crate::collections::Widget;"),
         )
+        .await;
+
+    // The accepted name still follows the saved text, but now that text is inside a
+    // different module. Resolving the old row must leave that module alone.
+    fixture
+        .did_change_full(
+            "src/consumer.rs",
+            5,
+            "mod elsewhere {\nfn render_widget(value: u32) {\n    let _: Widget;\n}\n}\n",
+        )
+        .await;
+    fixture
+        .check_revalidated_auto_import("src/consumer.rs", &widget, None)
         .await;
 
     fixture.shutdown().await;

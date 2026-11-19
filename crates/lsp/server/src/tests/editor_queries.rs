@@ -793,7 +793,6 @@ impl EngineService for GatedEditorEngine {
                         path: "std::sync::RwLock".to_string(),
                         anonymous: false,
                     }),
-                    import_site: None,
                 }],
                 ..Default::default()
             },

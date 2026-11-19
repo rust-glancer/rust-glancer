@@ -193,13 +193,28 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
                     if matches!(search, Search::Exact(name) if label.as_str() != name) {
                         break;
                     }
-                    for namespace in namespaces.iter() {
-                        let Some(binding) = bindings.binding(namespace) else {
-                            continue;
-                        };
-                        if occupied(label.as_str(), namespace.into()) {
-                            continue;
-                        }
+                    let mut matching = namespaces
+                        .iter()
+                        .filter_map(|ns| {
+                            let binding = bindings.binding(ns)?;
+                            (!occupied(label.as_str(), ns.into())).then_some((ns, binding))
+                        })
+                        .peekable();
+                    if matching.peek().is_none() {
+                        continue;
+                    }
+
+                    // A type completion can also import a value constructor. Check all
+                    // bindings at this spelling before offering any of them.
+                    let available = if matches!(search, Search::Prefix(_)) {
+                        let incoming = NamespaceSet::TYPES_VALUES
+                            .iter()
+                            .filter_map(|ns| bindings.binding(ns).map(|binding| (ns, *binding)));
+                        self.available_import_namespaces(importing_module, label, incoming)?
+                    } else {
+                        namespaces
+                    };
+                    for (namespace, binding) in matching.filter(|(ns, _)| available.contains(*ns)) {
                         let Some(candidate) = self.importable_binding(
                             importing_module,
                             &module,
@@ -248,6 +263,51 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
             )
         });
         Ok(results.into_iter().map(|(_, item)| item).collect())
+    }
+
+    /// A single `use` imports all of a path's visible bindings. A conflicting module-level
+    /// value rules out importing its type too. A binding already present needs no edit.
+    fn available_import_namespaces(
+        &self,
+        module: ModuleRef,
+        label: &Name,
+        incoming: impl Iterator<Item = (Namespace, NameBinding)>,
+    ) -> anyhow::Result<NamespaceSet> {
+        let maps = DefMapQuery::new(self.db);
+        let resolver = maps.name_resolver();
+        let existing = resolver.import_bindings(
+            module,
+            &Path::unqualified_name(label.as_str()),
+            NamespaceSet::TYPES_VALUES,
+        )?;
+        let available = NamespaceSet::TYPES_VALUES
+            .iter()
+            .filter(|ns| !existing.iter().any(|(other, _)| ns == other))
+            .collect();
+        if existing.is_empty() || available == NamespaceSet::EMPTY {
+            return Ok(available);
+        }
+
+        // A re-export can bundle a new type with a constant we already see. A glob or
+        // prelude may supply that same constant, but two explicit imports are an error.
+        let local = resolver.bindings_in_module(
+            module,
+            module,
+            label.as_str(),
+            NamespaceSet::TYPES_VALUES,
+        )?;
+        for (ns, binding) in incoming {
+            let replaces = existing
+                .iter()
+                .any(|(other_ns, other)| ns == *other_ns && binding.def != other.def);
+            let duplicates = local
+                .iter()
+                .any(|(other_ns, other)| ns == *other_ns && other.is_explicit());
+            if (replaces || duplicates) && resolver.binding_is_visible(module, &binding)? {
+                return Ok(NamespaceSet::EMPTY);
+            }
+        }
+        Ok(available)
     }
 
     /// Turn a scope binding into a path the importing module can actually use. In particular,

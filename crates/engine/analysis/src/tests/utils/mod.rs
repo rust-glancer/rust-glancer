@@ -1141,7 +1141,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 && let Some(edit) = self
                     .db
                     .analysis()
-                    .resolve_completion_import(query, import, None)
+                    .resolve_completion_import(query, import, None, None)
                     .expect("fixture import should resolve")
             {
                 writeln!(

@@ -161,6 +161,66 @@ fn values() {
 }
 
 #[test]
+fn offers_imports_that_are_usable_at_the_cursor() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:import_bindings
+mod catalog {
+    pub struct Widget;
+    pub struct Record {}
+    pub trait Paint {}
+    pub trait Canvas {}
+    pub trait Source { type Item; }
+    pub trait Draw {
+        fn draw_with<T: Paint>(&self, brush: T) where Self: Canvas {}
+        fn draw_item<T: Paint>(&self) where Self: Source<Item = T> {}
+        fn draw_from<T: Source>(&self, other: T) where Self: Source<Item = T::Item> {}
+    }
+    impl Draw for u32 {}
+    impl Draw for bool {}
+    impl Canvas for bool {}
+    impl Paint for bool {}
+    impl Source for bool { type Item = bool; }
+    impl Source for u32 { type Item = u32; }
+    pub struct Bundled {}
+    pub use crate::constants::Bundled;
+}
+mod constants { pub const Bundled: u32 = 0; }
+mod explicit {
+    use crate::constants::Bundled;
+    fn f() { let _: Bun$0; } // complete("explicit constant would be imported twice").auto_import().matching("Bundled")
+}
+mod glob {
+    use crate::constants::*;
+    fn f() { let _: Bun$0; } // complete("explicit use can shadow the same glob constant").auto_import().matching("Bundled")
+}
+fn Widget() {}
+fn Record() {}
+fn draw(yes: bool, no: u32) {
+    let _: Wid$0; // complete("constructor conflicts with function").auto_import().matching("Widget")
+    let _: Rec$0; // complete("record and function can share a name").auto_import().matching("Record")
+    yes.draw_w$0; // complete("only the brush type is unknown").auto_import().matching("draw_with")
+    no.draw_w$0; // complete("receiver is not a canvas").auto_import().matching("draw_with")
+    yes.draw_i$0; // complete("receiver determines a paintable item").auto_import().matching("draw_item")
+    no.draw_i$0; // complete("receiver determines an unpaintable item").auto_import().matching("draw_item")
+    yes.draw_f$0; // complete("the other source is chosen by the caller").auto_import().matching("draw_from")
+}
+"#,
+        expect![[r#"
+            <none> // explicit constant would be imported twice
+            st Bundled // explicit use can shadow the same glob constant
+            <none> // constructor conflicts with function
+            st Record // record and function can share a name
+            tm draw_with // only the brush type is unknown
+            <none> // receiver is not a canvas
+            tm draw_item // receiver determines a paintable item
+            <none> // receiver determines an unpaintable item
+            tm draw_from // the other source is chosen by the caller
+        "#]],
+    );
+}
+
+#[test]
 fn completes_body_local_imported_items() {
     check_analysis(
         r#"
