@@ -19,7 +19,8 @@ use gen_lsp_types::{
     Location, Position, Range, TextEdit, Tooltip, Uri, WorkspaceEdit,
 };
 use rg_lsp_proto::{
-    AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
+    AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionCandidate,
+    CompletionClientCapabilities,
     DocumentPositionSnapshot, DocumentRevision, DocumentSnapshot, EditorDocumentSnapshot,
     EditorSnapshot, EngineConfig, EngineResult, EngineService, FoldingClientCapabilities,
     OpenDocumentSession, OpenDocumentsRevision, QueryError, QueryScope, QueryValue, SaveProposal,
@@ -591,6 +592,68 @@ impl LspEngineFixture {
             None => writeln!(rendered, "none").expect("snapshot should be writable"),
         }
         expect.assert_eq(&render_responses([(title, rendered)]));
+    }
+
+    pub(super) async fn check_auto_import(
+        &self,
+        marker: &str,
+        label: &str,
+        expected_edit: &str,
+    ) -> CompletionCandidate {
+        let markers = QueryMarkers::Saved;
+        let input = self.position_snapshot(
+            self.marker_path(markers, marker),
+            self.marker_position(markers, marker),
+        );
+        // The optional search can exhaust its deadline if the test runner is busy. Retry
+        // discovery here so the assertion checks the resolved edit independently of scheduling.
+        let mut candidate = None;
+        for _ in 0..3 {
+            let list = self
+                .service
+                .clone()
+                .completion(
+                    context::current(),
+                    input.clone(),
+                    CompletionClientCapabilities {
+                        resolve_additional_text_edits: true,
+                        snippet_support: true,
+                    },
+                )
+                .await
+                .expect("completion list")
+                .into_value();
+            assert!(list.is_incomplete);
+            candidate = list
+                .items
+                .into_iter()
+                .find(|candidate| candidate.item.label == label);
+            if candidate.is_some() {
+                break;
+            }
+        }
+        let candidate =
+            candidate.unwrap_or_else(|| panic!("missing auto-import completion {label}"));
+        let import = candidate.import.clone().expect("auto-import payload");
+        assert!(candidate.item.additional_text_edits.is_none());
+
+        let edit = self
+            .service
+            .clone()
+            .resolve_completion_import(context::current(), input.clone(), import, None)
+            .await
+            .expect("resolve completion import")
+            .into_value()
+            .expect("import edit");
+        Self::assert_completion_edits_fit_source(
+            input.document().text(),
+            &[CompletionItem {
+                additional_text_edits: Some(vec![edit.clone()]),
+                ..candidate.item.clone()
+            }],
+        );
+        assert_eq!(edit.new_text.trim(), expected_edit);
+        candidate
     }
 
     pub(super) async fn check_dirty_completion_error(

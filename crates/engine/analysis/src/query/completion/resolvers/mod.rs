@@ -170,6 +170,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         // at `H` needs a new search once the user reaches `Ha`.
         let is_incomplete = self.query.client_capabilities.auto_import
             && match &site {
+                CompletionSite::Dot(_) => true,
                 CompletionSite::Unqualified(site) => site.context().supports_auto_import(),
                 _ => false,
             };

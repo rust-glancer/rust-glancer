@@ -139,6 +139,15 @@ impl FunctionRef {
     pub fn new(store: ItemStoreRef, id: FunctionId) -> Self {
         Self { store, id }
     }
+
+    /// Find the owner of a function declared in a trait's member store. A method from an
+    /// `impl Trait for T` belongs to the impl's store.
+    pub fn declaring_trait(self) -> Option<TraitDefRef> {
+        match self.store.id {
+            ItemStoreId::Trait(id) => Some(TraitDefRef::new(self.store.origin, id)),
+            ItemStoreId::Scope | ItemStoreId::Impl(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]

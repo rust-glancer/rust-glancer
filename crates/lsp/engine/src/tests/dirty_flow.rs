@@ -4,6 +4,76 @@ use rg_lsp_proto::QueryError;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
+async fn completes_applicable_extension_methods_across_crates() {
+    // These names sort before the applicable methods and would otherwise fill the shortlist.
+    let decoys = (0..17)
+        .map(|i| {
+            format!(
+                "pub trait Decoy{i} {{ fn render_a{i}(&self) {{}} }}\n            impl Decoy{i} for bool {{}}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n            ");
+    let fixture = LspEngineFixture::initialized(&format!(
+        r#"
+        //- /Cargo.toml
+        [workspace]
+        members = ["app", "catalog"]
+        resolver = "3"
+
+        //- /catalog/Cargo.toml
+        [package]
+        name = "catalog"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /catalog/src/lib.rs
+        pub trait RemoteExt {{ fn render_remote(&self) {{}} }}
+        impl RemoteExt for u32 {{}}
+        pub trait CatalogExt {{ fn render_catalog(&self) {{}} }}
+        impl CatalogExt for u32 {{}}
+
+        //- /app/Cargo.toml
+        [package]
+        name = "app"
+        version = "0.1.0"
+        edition = "2024"
+
+        [dependencies]
+        catalog = {{ path = "../catalog" }}
+
+        //- /app/src/lib.rs
+        mod consumer;
+        mod decoys {{
+            {decoys}
+        }}
+        mod render {{
+            pub trait LocalExt {{ fn render_local(&self) {{}} }}
+            impl<T> LocalExt for T {{}}
+        }}
+        pub use render::LocalExt as LocalRenderer;
+        pub use catalog::RemoteExt as RemoteRenderer;
+
+        //- /app/src/consumer.rs
+        fn demo(value: &u32) {{
+            value.render_$method$;
+        }}
+        "#,
+    ))
+    .await;
+
+    fixture.did_open_saved("app/src/consumer.rs", 1).await;
+    for (label, edit) in [
+        ("render_local", "use crate::LocalRenderer as _;"),
+        ("render_remote", "use crate::RemoteRenderer as _;"),
+        ("render_catalog", "use catalog::CatalogExt as _;"),
+    ] {
+        fixture.check_auto_import("method", label, edit).await;
+    }
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn unsaved_global_declarations_support_semantic_queries() {
     let fixture = LspEngineFixture::initialized(
         r#"

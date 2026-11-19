@@ -2,7 +2,11 @@
 //!
 //! For `let _: HashM`, search the visible modules for matching names and keep the best
 //! path found for each declaration. An import code action uses the same walk with the full name.
+//!
+//! For a method, the receiver check has already identified the trait. Look for a path to
+//! that trait even if a re-export gave it a different name.
 
+mod by_definition;
 mod walk;
 
 use std::{
@@ -16,6 +20,7 @@ use rg_def_map::{
 use rg_ir_model::{DefId, ModuleRef, Path, PathRoot};
 use rg_text::Name;
 
+pub(crate) use self::by_definition::DefinitionImportSearch;
 use self::walk::{ImportableModuleWalk, ModuleRoute};
 use crate::{
     IndexedViewDb,

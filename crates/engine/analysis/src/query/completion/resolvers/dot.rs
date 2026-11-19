@@ -5,21 +5,27 @@
 //! transformations. This module combines the three families and removes duplicate member targets.
 
 use anyhow::Context as _;
-use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView};
+use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView, ty::locals::BodyView};
 
 use super::postfix::PostfixCompletionResolver;
 use crate::{
     Analysis,
-    model::{CompletionEdit, CompletionItem, CompletionTarget},
-    query::completion::{
-        CompletionContext,
-        candidates::CompletionCandidateSource,
-        render::{
-            CallCompletionKind, CompletionSortPolicy, FieldCompletionRenderer,
-            FunctionCompletionRenderer, FunctionCompletionRequest,
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionImport, CompletionItem, CompletionKind,
+        CompletionTarget,
+    },
+    query::{
+        completion::{
+            CompletionContext,
+            candidates::CompletionCandidateSource,
+            render::{
+                CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
+                FieldCompletionRenderer, FunctionCompletionRenderer, FunctionCompletionRequest,
+            },
+            site::DotCompletionSite,
+            syntax::CompletionSyntaxContext,
         },
-        site::DotCompletionSite,
-        syntax::CompletionSyntaxContext,
+        import::ImportContext,
     },
 };
 
@@ -120,6 +126,73 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                 .completions(&site, syntax_context)
                 .context("collect postfix completions")?,
         );
+
+        if self.query.client_capabilities.auto_import
+            && let Some(prefix) = self
+                .query
+                .source_text
+                .get(edit.replace.start as usize..self.query.offset as usize)
+                .map(|prefix| prefix.strip_prefix("r#").unwrap_or(prefix))
+            && let Some(deadline) = self.query.auto_import_deadline(prefix)
+        {
+            let body = BodyView::new(self.analysis.view_db());
+            let receiver = site.source().receiver();
+            if let Some(ty) = body.expr_ty(receiver.body_ir(), receiver.expr_id())?
+                && let Some(import_context) =
+                    ImportContext::for_dot_site(self.analysis.view_db(), site.source())?
+            {
+                let extensions = members.extension_method_candidates(
+                    site.source().scope(),
+                    import_context.module(),
+                    &ty,
+                    prefix,
+                    deadline,
+                    |name| {
+                        completions.iter().any(|item| {
+                            matches!(
+                                item.kind,
+                                CompletionKind::InherentMethod | CompletionKind::TraitMethod
+                            ) && item.label.strip_prefix("r#").unwrap_or(&item.label) == name
+                        })
+                    },
+                )?;
+                if !extensions.is_empty() {
+                    // The existing rows keep their label order within the first sort bucket.
+                    for item in &mut completions {
+                        item.sort_text.insert_str(0, "00-member|");
+                    }
+                }
+                for (function, path) in extensions {
+                    let Some(function) = members.function(function)? else {
+                        continue;
+                    };
+                    let mut item = function_renderer
+                        .completion(FunctionCompletionRequest {
+                            function,
+                            label_override: None,
+                            kind: CompletionKind::TraitMethod,
+                            applicability: CompletionApplicability::Known,
+                            edit,
+                            call_completion: CallCompletionKind::MethodCall,
+                            sort_policy: CompletionSortPolicy::General,
+                            sort_priority: Some(CompletionSortPriority::AutoImport {
+                                path_len: path.component_count(),
+                            }),
+                        })
+                        .item;
+                    let rendered_path = syntax.path(&path);
+                    item.detail = Some(format!(
+                        "{} (use {rendered_path} as _)",
+                        item.detail.as_deref().unwrap_or_default(),
+                    ));
+                    item.import = Some(CompletionImport {
+                        path,
+                        anonymous: true,
+                    });
+                    completions.push(item);
+                }
+            }
+        }
 
         // Keep snapshot output and editor ordering stable across equivalent resolution paths.
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
