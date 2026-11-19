@@ -45,7 +45,7 @@ fn cloned_generated_sources_count_their_shared_payload_once() {
 }
 
 #[test]
-fn prefers_the_reported_build_directory_then_the_newest_unit() {
+fn ranks_candidates_from_both_layouts_by_build_directory_then_recency() {
     let fixture = CrateFixture::from_fixture_spec(
         r#"
 //- /Cargo.toml
@@ -71,12 +71,18 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
         .expect("fixture crate root should canonicalize");
 
     let older_out = cargo_build_dir.join("debug/build/passive-artifact-fixture-old/out");
-    let selected_out = cargo_build_dir.join("debug/build/passive-artifact-fixture-selected/out");
+    let selected_run =
+        cargo_build_dir.join("debug/build/passive-artifact-fixture/2222222222222222/run");
+    let selected_out = selected_run.with_file_name("out");
+    let selected_compile_out =
+        cargo_build_dir.join("debug/build/passive-artifact-fixture/4444444444444444/out");
     let fallback_out = target_dir.join("debug/build/passive-artifact-fixture-fallback/out");
     let deps_dir = cargo_build_dir.join("debug/deps");
     let fallback_deps_dir = target_dir.join("debug/deps");
     fs::create_dir_all(&older_out).expect("older output directory should be created");
     fs::create_dir_all(&selected_out).expect("selected output directory should be created");
+    fs::create_dir_all(&selected_run).expect("selected run directory should be created");
+    fs::create_dir_all(&selected_compile_out).expect("selected compiler output directory");
     fs::create_dir_all(&fallback_out).expect("fallback output directory should be created");
     fs::create_dir_all(&deps_dir).expect("dep-info directory should be created");
     fs::create_dir_all(&fallback_deps_dir).expect("fallback dep-info directory should be created");
@@ -88,10 +94,7 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
         .parent()
         .expect("older output directory should have a unit")
         .join("output");
-    let selected_build_output = selected_out
-        .parent()
-        .expect("selected output directory should have a unit")
-        .join("output");
+    let selected_build_output = selected_run.join("stdout");
     let fallback_build_output = fallback_out
         .parent()
         .expect("fallback output directory should have a unit")
@@ -120,7 +123,7 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
     .expect("fallback build output should be written");
 
     let older_dep_info = deps_dir.join("passive_artifact_fixture-1111111111111111.d");
-    let selected_dep_info = deps_dir.join("passive_artifact_fixture-2222222222222222.d");
+    let selected_dep_info = selected_compile_out.join("passive_artifact_fixture.d");
     let fallback_dep_info = fallback_deps_dir.join("passive_artifact_fixture-3333333333333333.d");
     write_dep_info(&older_dep_info, &crate_root, &older_generated);
     write_dep_info(&selected_dep_info, &crate_root, &selected_generated);

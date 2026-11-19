@@ -5,14 +5,14 @@
 //! rustc unit. A dep-info rule can contain both the package target root and a generated input:
 //!
 //! ```text
-//! target/debug/deps/demo-abc.d:
-//!     /workspace/demo/src/lib.rs
-//!     /workspace/target/debug/build/demo-def/out/bindings.rs
+//! target/debug/build/demo/<compile-hash>/out/demo.d:
+//!     demo/src/lib.rs
+//!     /workspace/target/debug/build/demo/<run-hash>/out/bindings.rs
 //! ```
 //!
 //! The exact target root attributes that historical unit to a package. A dependency path below a
-//! Cargo `build/<unit>/out` directory proves that rustc actually read the generated file. Retained
-//! build-script stdout beside that directory then supplies useful `cargo::rustc-cfg` and
+//! build script's output directory proves that rustc actually read the generated file. Retained
+//! build-script stdout for that run then supplies useful `cargo::rustc-cfg` and
 //! `cargo::rustc-env` values. Together they are enough to index common source such as
 //! `include!(concat!(env!("OUT_DIR"), "/bindings.rs"))` without executing anything.
 //!
@@ -25,11 +25,14 @@
 
 mod dep_info;
 mod instructions;
+mod layout;
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    fs,
-    path::{Path, PathBuf},
+    cell::Cell,
+    cmp::Reverse,
+    collections::{BTreeMap, HashMap, HashSet},
+    fs, iter,
+    path::{Component, Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -37,9 +40,9 @@ use std::{
 use rg_cfg_eval::CfgOptions;
 use rg_std::{ExpectedUnique, MemoryRecorder, MemorySize, NativeOsString, UniqueVec};
 
+use self::{instructions::BuildScriptInstructions, layout::BuildScriptRun};
 use crate::Package;
 
-const MAX_DEPS_DIRECTORIES: usize = 128;
 const MAX_DIRECTORY_ENTRIES: usize = 100_000;
 const MAX_BUILD_OUTPUT_CANDIDATES_PER_TARGET_NAME: usize = 64;
 const MAX_GENERATED_FILES_PER_BUILD_OUTPUT: usize = 1_024;
@@ -49,7 +52,7 @@ const MAX_GENERATED_FILES_PER_BUILD_OUTPUT: usize = 1_024;
 #[memsize(leaf)]
 pub struct CargoBuildOutputScanStats {
     target_directories: usize,
-    deps_directories: usize,
+    dep_info_directories: usize,
     dep_info_files: usize,
     build_script_packages: usize,
     matched_rustc_units: usize,
@@ -61,12 +64,13 @@ pub struct CargoBuildOutputScanStats {
 }
 
 impl CargoBuildOutputScanStats {
+    /// Counts candidate roots, including a separate Cargo build directory when configured.
     pub fn target_directories(self) -> usize {
         self.target_directories
     }
 
-    pub fn deps_directories(self) -> usize {
-        self.deps_directories
+    pub fn dep_info_directories(self) -> usize {
+        self.dep_info_directories
     }
 
     pub fn dep_info_files(self) -> usize {
@@ -174,7 +178,7 @@ impl CargoGeneratedSources {
         let suffix = suffix.strip_prefix(Path::new("/")).unwrap_or(suffix);
         if suffix
             .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
+            .any(|component| matches!(component, Component::ParentDir))
         {
             return None;
         }
@@ -217,11 +221,9 @@ struct CargoCompileEnvVar {
 
 /// Finds and applies one best passive build-output candidate per normalized package.
 ///
-/// Discovery is bounded and best-effort. It scans likely `deps` directories, attributes dep-info
-/// files by exact target root, extracts generated inputs under Cargo build output directories, and
-/// enriches each candidate with retained build-script cfg/environment instructions. Applying the
-/// selected candidate extends the package cfg facts and retains its generated files and compile
-/// environment for later `include!` resolution.
+/// Discovery uses rustc dep-info to match a target to its generated inputs, then reads the
+/// build-script instructions for those inputs. The selected run supplies cfg values and the
+/// compile-time environment for `include!` resolution.
 pub(crate) struct CargoBuildOutputDiscovery;
 
 impl CargoBuildOutputDiscovery {
@@ -232,75 +234,80 @@ impl CargoBuildOutputDiscovery {
         packages: &mut [Package],
     ) -> CargoBuildOutputScanStats {
         let started = Instant::now();
-        let mut stats = CargoBuildOutputScanStats {
-            build_script_packages: packages
-                .iter()
-                .filter(|package| {
-                    package
-                        .targets
-                        .iter()
-                        .any(|target| target.kind.is_custom_build())
-                })
-                .count(),
-            ..Default::default()
-        };
-        let target_directories =
-            Self::target_directories(workspace_root, cargo_build_dir, cargo_target_dir);
-        stats.target_directories = target_directories.len();
-        let deps_directories = target_directories
-            .iter()
-            .flat_map(|root| Self::deps_directories(root))
-            .map(|path| fs::canonicalize(&path).unwrap_or(path))
-            .collect::<UniqueVec<_>>()
-            .into_vec()
-            .into_iter()
-            .take(MAX_DEPS_DIRECTORIES)
-            .map(|path| {
-                let target_directory_rank = target_directories
-                    .iter()
-                    .position(|root| path.starts_with(root))
-                    .expect("discovered deps directory should belong to one scan root");
-                DepsDirectory {
-                    path,
-                    target_directory_rank,
-                }
-            })
-            .collect::<Vec<_>>();
-        stats.deps_directories = deps_directories.len();
-        if deps_directories.is_empty() {
-            stats.scan_duration = started.elapsed();
-            return stats;
-        }
+        let mut stats = CargoBuildOutputScanStats::default();
+        let reported_build_dir = cargo_build_dir.unwrap_or(cargo_target_dir);
+        let scan_roots = Self::scan_roots(workspace_root, cargo_build_dir, cargo_target_dir);
+        stats.target_directories = scan_roots.len();
 
         // Rustc output filenames identify a Cargo target only by normalized name. Keep every
         // possible owner here; the exact target root inside dep-info makes later attribution
         // reliable.
-        let package_target_roots = Self::package_target_roots(packages);
-        let dep_info_files =
-            Self::matching_dep_info_files(&deps_directories, &package_target_roots);
+        let mut package_names = HashSet::new();
+        let mut package_target_roots = HashMap::<String, Vec<PackageTargetRoot<'_>>>::new();
+        for (package_slot, package) in packages.iter().enumerate() {
+            if !package
+                .targets
+                .iter()
+                .any(|target| target.kind.is_custom_build())
+            {
+                continue;
+            }
+            stats.build_script_packages += 1;
+            package_names.insert(package.name.as_str());
+            for target in package
+                .targets
+                .iter()
+                .filter(|target| !target.kind.is_custom_build())
+            {
+                package_target_roots
+                    .entry(target.name.replace('-', "_"))
+                    .or_default()
+                    .push(PackageTargetRoot {
+                        package_slot,
+                        target_root: &target.src_path,
+                    });
+            }
+        }
+        if package_target_roots.is_empty() || scan_roots.is_empty() {
+            stats.scan_duration = started.elapsed();
+            return stats;
+        }
+
+        let dep_info_files = Self::matching_dep_info_files(
+            &scan_roots,
+            &package_names,
+            &package_target_roots,
+            &mut stats,
+        );
         stats.dep_info_files = dep_info_files.values().map(Vec::len).sum();
         let mut build_output_candidates = vec![Vec::new(); packages.len()];
 
-        for (artifact_name, files) in dep_info_files {
-            let Some(target_roots) = package_target_roots.get(&artifact_name) else {
+        for (artifact_name, files) in &dep_info_files {
+            let Some(target_roots) = package_target_roots.get(artifact_name) else {
                 continue;
             };
 
-            for file in files
-                .into_iter()
-                .take(MAX_BUILD_OUTPUT_CANDIDATES_PER_TARGET_NAME)
-            {
+            for file in files {
                 let Some(rustc_input_paths) = dep_info::rustc_input_paths(&file.path) else {
                     continue;
                 };
+                // Cargo spells local target roots relative to the workspace. Use that base for
+                // its reported build directory and checkout-local fallbacks. If checkouts share
+                // the reported directory, matching an entrypoint is only best-effort evidence.
+                let scan_root = &scan_roots[file.root_rank];
+                let allows_relative_paths =
+                    scan_root == reported_build_dir || scan_root.starts_with(workspace_root);
                 let rustc_input_paths = rustc_input_paths
                     .into_iter()
-                    // Rustc normally writes absolute dependency paths. Resolving an unfamiliar
-                    // relative spelling against the LSP process directory could attribute an
-                    // unrelated file by accident, so leave it unsupported until Cargo supplies a
-                    // trustworthy base for it.
-                    .filter(|path| path.is_absolute())
-                    .filter_map(|path| fs::canonicalize(path).ok())
+                    .filter_map(|path| {
+                        if path.is_absolute() {
+                            fs::canonicalize(path).ok()
+                        } else if allows_relative_paths {
+                            fs::canonicalize(workspace_root.join(path)).ok()
+                        } else {
+                            None
+                        }
+                    })
                     .collect::<Vec<_>>();
                 // A name match is only a cheap scan filter. The rustc unit belongs to a package
                 // only when its dependency list contains that package's exact target entrypoint.
@@ -309,7 +316,7 @@ impl CargoBuildOutputDiscovery {
                     .filter(|target| {
                         rustc_input_paths
                             .iter()
-                            .any(|path| path == &target.target_root)
+                            .any(|path| path == target.target_root)
                     })
                     .map(|target| target.package_slot)
                     .collect::<UniqueVec<_>>();
@@ -320,42 +327,32 @@ impl CargoBuildOutputDiscovery {
 
                 // One rustc unit should consume one build-script output directory. Grouping keeps
                 // an unfamiliar mixed record deterministic instead of combining unrelated roots.
-                let mut generated_by_out_dir = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
+                let mut generated_by_run = BTreeMap::<BuildScriptRun, Vec<PathBuf>>::new();
                 for input_path in rustc_input_paths {
-                    let Some(out_dir) =
-                        Self::build_script_out_dir(&input_path, target_directories.as_slice())
-                    else {
+                    let Some(run) = BuildScriptRun::for_input(&input_path, &scan_roots) else {
                         continue;
                     };
-                    let out_dir = fs::canonicalize(&out_dir).unwrap_or(out_dir);
-                    let generated_files = generated_by_out_dir.entry(out_dir).or_default();
+                    let generated_files = generated_by_run.entry(run).or_default();
                     if generated_files.len() < MAX_GENERATED_FILES_PER_BUILD_OUTPUT {
                         generated_files.push(input_path);
                     }
                 }
 
-                for (out_dir, mut generated_files) in generated_by_out_dir {
+                for (run, mut generated_files) in generated_by_run {
                     generated_files.sort();
                     generated_files.dedup();
-                    if generated_files.is_empty() {
-                        continue;
-                    }
 
                     // Dep-info is the source allow-list. Retained build-script output adds cfg and
                     // environment, but it is never trusted to invent a generated file by itself.
-                    let instructions = instructions::BuildScriptInstructions::read(&out_dir);
-                    let cfg_options = instructions.cfg_options.clone();
-                    let generated_sources = CargoGeneratedSources::new(
-                        out_dir.clone(),
-                        instructions.compile_env_with_out_dir(&out_dir),
-                        generated_files,
-                    );
+                    let (cfg_options, compile_env) =
+                        BuildScriptInstructions::read(&run.stdout_path)
+                            .into_cfg_and_env(&run.out_dir);
+                    let generated_sources =
+                        CargoGeneratedSources::new(run.out_dir, compile_env, generated_files);
                     let candidate = BuildOutputCandidate {
                         generated_sources,
                         cfg_options,
-                        modified: file.modified,
-                        dep_info_path: file.path.clone(),
-                        target_directory_rank: file.target_directory_rank,
+                        dep_info: file,
                     };
                     stats.build_output_candidates += 1;
                     for &package_slot in &matching_packages {
@@ -371,18 +368,12 @@ impl CargoBuildOutputDiscovery {
         // tie-breaker. This does not recreate Cargo's active feature set; it chooses one useful,
         // internally consistent source snapshot.
         for (package, mut candidates) in packages.iter_mut().zip(build_output_candidates) {
-            candidates.sort_by(|left, right| {
-                left.target_directory_rank
-                    .cmp(&right.target_directory_rank)
-                    .then_with(|| right.modified.cmp(&left.modified))
-                    .then_with(|| left.dep_info_path.cmp(&right.dep_info_path))
-            });
-            let Some(selected_out_dir) = candidates
-                .first()
-                .map(|candidate| candidate.generated_sources.out_dir().to_path_buf())
-            else {
+            candidates
+                .sort_by(|left, right| left.dep_info.priority().cmp(&right.dep_info.priority()));
+            let Some(selected) = candidates.first() else {
                 continue;
             };
+            let selected_out_dir = selected.generated_sources.out_dir();
 
             // A library and its binaries are separate rustc units, but they reuse the package's
             // build-script output. Combine their dep-info allow-lists when they point at the
@@ -400,20 +391,15 @@ impl CargoBuildOutputDiscovery {
                 }
             }
 
-            let mut selected = candidates
-                .into_iter()
-                .next()
-                .expect("a selected output directory should have one candidate");
-            selected.generated_sources = CargoGeneratedSources::new(
-                selected.generated_sources.0.out_dir.clone(),
+            let generated_sources = CargoGeneratedSources::new(
+                selected_out_dir.to_path_buf(),
                 selected.generated_sources.0.compile_env.clone(),
                 generated_files.into_vec(),
             );
 
             stats.selected_packages += 1;
-            stats.generated_files += selected.generated_sources.generated_files().len();
-            stats.generated_bytes += selected
-                .generated_sources
+            stats.generated_files += generated_sources.generated_files().len();
+            stats.generated_bytes += generated_sources
                 .generated_files()
                 .iter()
                 .filter_map(|path| fs::metadata(path).ok())
@@ -428,202 +414,151 @@ impl CargoBuildOutputDiscovery {
                     .cfg_options
                     .insert_key_value(key_value.key(), key_value.value());
             }
-            package.cargo_generated_sources = Some(selected.generated_sources);
+            package.cargo_generated_sources = Some(generated_sources);
         }
 
         stats.scan_duration = started.elapsed();
         stats
     }
 
-    fn target_directories(
+    fn scan_roots(
         workspace_root: &Path,
         cargo_build_dir: Option<&Path>,
         cargo_target_dir: &Path,
-    ) -> UniqueVec<PathBuf> {
-        let mut target_directories = UniqueVec::with_capacity(3);
+    ) -> Vec<PathBuf> {
+        let mut roots = UniqueVec::with_capacity(3);
         for root in cargo_build_dir.into_iter().map(Path::to_path_buf).chain([
             cargo_target_dir.to_path_buf(),
             workspace_root.join("target"),
         ]) {
             let root = fs::canonicalize(&root).unwrap_or(root);
             if root.is_dir() {
-                target_directories.push(root);
+                roots.push(root);
             }
         }
-        target_directories
-    }
-
-    /// Finds `profile/deps` and `target-triple/profile/deps` without descending into artifact
-    /// trees. Cargo's build-directory layout is private, so unfamiliar shapes are simply ignored.
-    fn deps_directories(target_directory: &Path) -> Vec<PathBuf> {
-        let mut directories = Vec::new();
-        let Ok(first_level) = fs::read_dir(target_directory) else {
-            return directories;
-        };
-
-        for first in first_level.flatten().take(MAX_DIRECTORY_ENTRIES) {
-            let Ok(file_type) = first.file_type() else {
-                continue;
-            };
-            if !file_type.is_dir() {
-                continue;
-            }
-            let first_path = first.path();
-            let deps = first_path.join("deps");
-            if deps.is_dir() {
-                directories.push(deps);
-            }
-
-            let Ok(second_level) = fs::read_dir(&first_path) else {
-                continue;
-            };
-            for second in second_level.flatten().take(MAX_DIRECTORY_ENTRIES) {
-                let Ok(file_type) = second.file_type() else {
-                    continue;
-                };
-                if !file_type.is_dir() {
-                    continue;
-                }
-                let deps = second.path().join("deps");
-                if deps.is_dir() {
-                    directories.push(deps);
-                }
-                if directories.len() >= MAX_DEPS_DIRECTORIES {
-                    return directories;
-                }
-            }
-        }
-        directories.sort();
-        directories.dedup();
-        directories
-    }
-
-    fn package_target_roots(packages: &[Package]) -> HashMap<String, Vec<PackageTargetRoot>> {
-        let mut target_roots = HashMap::<String, Vec<PackageTargetRoot>>::new();
-        for (package_slot, package) in packages.iter().enumerate() {
-            if !package
-                .targets
-                .iter()
-                .any(|target| target.kind.is_custom_build())
-            {
-                continue;
-            }
-            for target in &package.targets {
-                if target.kind.is_custom_build() {
-                    continue;
-                }
-                target_roots
-                    .entry(Self::rustc_artifact_name(&target.name))
-                    .or_default()
-                    .push(PackageTargetRoot {
-                        package_slot,
-                        target_root: target.src_path.clone(),
-                    });
-            }
-        }
-        target_roots
+        roots.into_vec()
     }
 
     fn matching_dep_info_files(
-        deps_directories: &[DepsDirectory],
-        target_roots: &HashMap<String, Vec<PackageTargetRoot>>,
+        scan_roots: &[PathBuf],
+        package_names: &HashSet<&str>,
+        target_roots: &HashMap<String, Vec<PackageTargetRoot<'_>>>,
+        stats: &mut CargoBuildOutputScanStats,
     ) -> HashMap<String, Vec<DepInfoFile>> {
         let mut files = HashMap::<String, Vec<DepInfoFile>>::new();
-        for deps_directory in deps_directories {
-            let Ok(entries) = fs::read_dir(&deps_directory.path) else {
-                continue;
-            };
-            for entry in entries.flatten().take(MAX_DIRECTORY_ENTRIES) {
-                let path = entry.path();
-                if path.extension().and_then(|extension| extension.to_str()) != Some("d") {
-                    continue;
-                }
-                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                    continue;
+        let scan = DirectoryScan {
+            remaining_entries: Cell::new(MAX_DIRECTORY_ENTRIES),
+        };
+        let mut seen_directories = HashSet::new();
+        for (root_rank, root) in scan_roots.iter().enumerate() {
+            layout::visit_dep_info_directories(root, package_names, &scan, |directory| {
+                let Ok(directory) = directory.canonicalize() else {
+                    return;
                 };
-                let artifact_name = stem
-                    .rsplit_once('-')
-                    .filter(|(_, suffix)| {
-                        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
-                    })
-                    .map(|(name, _)| name)
-                    .unwrap_or(stem);
-                if !target_roots.contains_key(artifact_name) {
-                    continue;
+                // The metadata build directory can also be nested under a fallback root.
+                if !directory.starts_with(root) || !seen_directories.insert(directory.clone()) {
+                    return;
                 }
-                let modified = entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .ok()
-                    .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_nanos())
-                    .unwrap_or_default();
-                files
-                    .entry(artifact_name.to_string())
-                    .or_default()
-                    .push(DepInfoFile {
-                        path,
-                        modified,
-                        target_directory_rank: deps_directory.target_directory_rank,
-                    });
-            }
+                stats.dep_info_directories += 1;
+
+                for entry in scan.entries(&directory) {
+                    let path = entry.path();
+                    if path.extension().is_none_or(|extension| extension != "d") {
+                        continue;
+                    }
+                    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                        continue;
+                    };
+                    let artifact_name = stem
+                        .rsplit_once('-')
+                        .filter(|(_, suffix)| {
+                            !suffix.is_empty()
+                                && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        })
+                        .map(|(name, _)| name)
+                        .unwrap_or(stem);
+                    if !target_roots.contains_key(artifact_name)
+                        || !entry.file_type().is_ok_and(|kind| kind.is_file())
+                    {
+                        continue;
+                    }
+                    let modified = entry
+                        .metadata()
+                        .and_then(|metadata| metadata.modified())
+                        .ok()
+                        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_nanos())
+                        .unwrap_or_default();
+                    files
+                        .entry(artifact_name.to_string())
+                        .or_default()
+                        .push(DepInfoFile {
+                            path,
+                            modified,
+                            root_rank,
+                        });
+                }
+            });
         }
 
         for files in files.values_mut() {
-            files.sort_by(|left, right| {
-                left.target_directory_rank
-                    .cmp(&right.target_directory_rank)
-                    .then_with(|| right.modified.cmp(&left.modified))
-                    .then_with(|| left.path.cmp(&right.path))
-            });
+            files.sort_by(|left, right| left.priority().cmp(&right.priority()));
             files.truncate(MAX_BUILD_OUTPUT_CANDIDATES_PER_TARGET_NAME);
         }
         files
     }
-
-    fn rustc_artifact_name(name: &str) -> String {
-        name.replace('-', "_")
-    }
-
-    fn build_script_out_dir(source_path: &Path, target_directories: &[PathBuf]) -> Option<PathBuf> {
-        if !target_directories
-            .iter()
-            .any(|root| source_path.starts_with(root))
-        {
-            return None;
-        }
-
-        source_path.ancestors().find_map(|ancestor| {
-            (ancestor.file_name()?.to_str()? == "out"
-                && ancestor.parent()?.parent()?.file_name()?.to_str()? == "build")
-                .then(|| ancestor.to_path_buf())
-        })
-    }
 }
 
-#[derive(Debug, Clone)]
-struct BuildOutputCandidate {
+#[derive(Clone)]
+struct BuildOutputCandidate<'a> {
     generated_sources: CargoGeneratedSources,
     cfg_options: CfgOptions,
-    modified: u128,
-    dep_info_path: PathBuf,
-    target_directory_rank: usize,
+    dep_info: &'a DepInfoFile,
 }
 
-struct DepsDirectory {
-    path: PathBuf,
-    target_directory_rank: usize,
+/// Nested directory walks share one entry budget across both layouts and all scan roots.
+struct DirectoryScan {
+    remaining_entries: Cell<usize>,
 }
 
-struct PackageTargetRoot {
+impl DirectoryScan {
+    fn entries(&self, path: &Path) -> impl Iterator<Item = fs::DirEntry> {
+        let mut entries = if self.remaining_entries.get() > 0 {
+            fs::read_dir(path).ok()
+        } else {
+            None
+        };
+        iter::from_fn(move || {
+            let remaining = self.remaining_entries.get().checked_sub(1)?;
+            let entry = entries.as_mut()?.next()?;
+            self.remaining_entries.set(remaining);
+            Some(entry)
+        })
+        .flatten()
+    }
+
+    fn directories(&self, path: &Path) -> impl Iterator<Item = PathBuf> {
+        self.entries(path)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.path())
+    }
+}
+
+struct PackageTargetRoot<'a> {
     package_slot: usize,
-    target_root: PathBuf,
+    target_root: &'a Path,
 }
 
 struct DepInfoFile {
     path: PathBuf,
     modified: u128,
-    target_directory_rank: usize,
+    root_rank: usize,
+}
+
+impl DepInfoFile {
+    fn priority(&self) -> (usize, Reverse<u128>, &Path) {
+        (self.root_rank, Reverse(self.modified), &self.path)
+    }
 }
 
 #[cfg(test)]
