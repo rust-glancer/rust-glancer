@@ -16,8 +16,9 @@ use super::ProjectSnapshot;
 
 /// Analysis-ready context for one filesystem path.
 ///
-/// A shared module can belong to several crates. Editor queries use the first owner in
-/// package/target order, preferring written module owners before discovering include owners.
+/// A shared module can belong to several crates. Editor queries prefer a module owner in the
+/// file's own Cargo package, then other module owners, before discovering include owners.
+/// Within each group, package/target order selects one interpretation.
 /// Exhaustive operations use every owning crate instead of this editor selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
@@ -50,9 +51,10 @@ impl<'a> ProjectSnapshot<'a> {
     ) -> anyhow::Result<Option<FileContext>> {
         let db = self.query_context();
         let file = FileId::for_path(&db.interner(), source_path)?;
+        let preferred = self.state.workspace().source_package(source_path);
         let module_crate = match self.saved_sources {
-            Some(sources) => sources.first_module_crate(file),
-            None => *first_module_crate(db, file)?,
+            Some(sources) => sources.first_module_crate(file, preferred),
+            None => *first_module_crate(db, file, preferred)?,
         };
         if let Some(crate_ref) = module_crate {
             return Ok(Some(FileContext { crate_ref, file }));
@@ -98,12 +100,24 @@ impl<'a> ProjectSnapshot<'a> {
     }
 }
 
-/// Select the first target whose active module declarations contain `file`. An editor can add
-/// `mod shared;` to a library while the binary still owns `shared.rs`. Reading declarations in
-/// order makes that edit invalidate the binary's selection. Later targets cannot affect it.
+/// Start with the package containing the file so a private edit doesn't force declaration
+/// rebuilds in dependent crates just to route the request. Check its live targets in order:
+/// adding `mod shared;` to a library can give it priority over the binary. Files reached
+/// through an external `#[path]` can still find an owner in the rest of the workspace.
 #[ajika::query(returns(ref))]
-fn first_module_crate(db: &QueryContext<'_>, file: FileId) -> ajika::Result<Option<CrateRef>> {
-    for &krate in WorkspaceInput::at(()).targets(db)?.iter() {
+fn first_module_crate(
+    db: &QueryContext<'_>,
+    file: FileId,
+    preferred: Option<PackageSlot>,
+) -> ajika::Result<Option<CrateRef>> {
+    let targets = WorkspaceInput::at(()).targets(db)?;
+    let local = targets
+        .iter()
+        .filter(|krate| Some(krate.package) == preferred);
+    let other = targets
+        .iter()
+        .filter(|krate| Some(krate.package) != preferred);
+    for &krate in local.chain(other) {
         let metadata = target_declarations(db, krate)?.metadata.value_ref(db)?;
         if metadata.sources.modules.binary_search(&file).is_ok() {
             return Ok(Some(krate));

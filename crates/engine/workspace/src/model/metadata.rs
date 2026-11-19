@@ -252,6 +252,29 @@ impl WorkspaceMetadata {
         &self.packages
     }
 
+    /// Choose the candidate package for a canonical source path. Cargo attributes generated
+    /// files to the package that produced them. For ordinary files the closest manifest wins,
+    /// including when one package is nested inside another. The target's declarations still
+    /// decide whether it actually owns the file.
+    pub fn source_package(&self, source_path: &Path) -> Option<PackageSlot> {
+        for (slot, package) in self.packages.iter().enumerate() {
+            if let Some(sources) = &package.cargo_generated_sources
+                && sources
+                    .generated_files()
+                    .iter()
+                    .any(|file| file == source_path)
+            {
+                return Some(PackageSlot(slot));
+            }
+        }
+        self.packages
+            .iter()
+            .enumerate()
+            .filter(|(_, package)| source_path.starts_with(package.root_dir()))
+            .max_by_key(|(_, package)| package.root_dir().components().count())
+            .map(|(slot, _)| PackageSlot(slot))
+    }
+
     /// All analyzed targets in package order, with the same identities used by workspace inputs.
     pub fn targets(&self) -> impl Iterator<Item = (CrateRef, &CargoTarget)> {
         (0..self.packages.len()).flat_map(move |slot| self.targets_for_package(PackageSlot(slot)))

@@ -145,31 +145,15 @@ impl Project {
                 .interner(),
             source_path,
         )?;
-        let packages = self.workspace().packages();
-        if let Some(krate) = self.state.sources.first_source_crate(file) {
-            return Ok(Some(packages[krate.package.0].edition));
-        }
-
-        let package = packages
-            .iter()
-            .find(|package| {
-                package
-                    .cargo_generated_sources
-                    .as_ref()
-                    .is_some_and(|sources| {
-                        sources
-                            .generated_files()
-                            .iter()
-                            .any(|file| file == source_path)
-                    })
-            })
-            .or_else(|| {
-                packages
-                    .iter()
-                    .filter(|package| source_path.starts_with(package.root_dir()))
-                    .max_by_key(|package| package.root_dir().components().count())
-            });
-        Ok(package.map(|package| package.edition))
+        let workspace = self.workspace();
+        let preferred = workspace.source_package(source_path);
+        let package = self
+            .state
+            .sources
+            .first_source_crate(file, preferred)
+            .map(|krate| krate.package)
+            .or(preferred);
+        Ok(package.map(|slot| workspace.packages()[slot.0].edition))
     }
 
     pub fn stats(&self) -> ProjectStats {

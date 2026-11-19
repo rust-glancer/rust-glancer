@@ -109,6 +109,52 @@ pub fn read() { let result: crate::Value = 1; let _ = result; }
 }
 
 #[test]
+fn shared_module_prefers_its_own_package_and_falls_back_to_an_external_owner() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /consumer/src/lib.rs crate:consumer root:consumer edition:2015
+#[path = "../../model/src/shared.rs"]
+mod shared;
+type Value = u8;
+
+//- /model/src/lib.rs crate:model root:model edition:2024
+mod shared;
+type Value = u16;
+
+//- /model/src/shared.rs
+pub fn read() { let result: crate::Value = 1; let _ = result; }
+"#,
+    );
+    let project = fixture.build_project();
+    let shared = fixture
+        .path("model/src/shared.rs")
+        .canonicalize()
+        .expect("fixture source");
+    assert_eq!(
+        project.source_edition(&shared).expect("source edition"),
+        Some(RustEdition::Edition2024)
+    );
+    let edited_root = |text: &str| {
+        CapturedSource::new(fixture.path("model/src/lib.rs"), text).expect("editor source")
+    };
+    for (documents, expected) in [
+        (vec![], UnsignedIntTy::U16),
+        (
+            vec![edited_root("mod shared; type Value = u32;")],
+            UnsignedIntTy::U32,
+        ),
+        (vec![edited_root("type Value = u32;")], UnsignedIntTy::U8),
+    ] {
+        let ty = project
+            .with_editor_snapshot(&documents, CancellationToken::new(), |snapshot| {
+                result_type(snapshot, &shared)
+            })
+            .expect("shared module interpretation");
+        assert_eq!(ty, PrimitiveTy::UnsignedInt(expected));
+    }
+}
+
+#[test]
 fn editor_declarations_reach_other_files_and_survive_request_boundaries() {
     let fixture = ProjectSourceFixture::build(FIXTURE);
     let project = fixture.build_project();
