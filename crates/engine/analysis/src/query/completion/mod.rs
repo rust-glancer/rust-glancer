@@ -16,6 +16,7 @@
 //! This keeps source-edit planning out of the search that runs while the user types.
 
 mod candidates;
+mod expected_type;
 mod pattern;
 mod render;
 mod resolvers;
@@ -33,7 +34,9 @@ use rg_ir_view::{
     ty::locals::BodyView,
 };
 
-use self::{candidates::CompletionCandidateSource, site::CompletionSite};
+use self::{
+    candidates::CompletionCandidateSource, expected_type::ExpectedTypeRanking, site::CompletionSite,
+};
 pub(crate) use self::{
     resolvers::CompletionResolver,
     site::{CompletionSiteDetector, PathCompletionSite},
@@ -171,6 +174,7 @@ pub(crate) struct CompletionContext<'a> {
     pub(crate) source_text: &'a str,
     pub(crate) client_capabilities: CompletionClientCapabilities,
     pub(crate) auto_import_budget: Duration,
+    expected_type: Option<&'a ExpectedTypeRanking>,
 }
 
 impl CompletionContext<'_> {

@@ -86,7 +86,8 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             completions.push(completion);
         }
 
-        let function_renderer = FunctionCompletionRenderer::new(self.query, syntax);
+        let function_renderer =
+            FunctionCompletionRenderer::new(self.analysis.view_db(), self.query, syntax);
         for method in completion_candidates
             .method_candidates_for_dot(&site)
             .context("collect dot method candidates")?
@@ -107,7 +108,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                 call_completion: CallCompletionKind::MethodCall,
                 sort_policy: CompletionSortPolicy::General,
                 sort_priority: None,
-            });
+            })?;
             if !completion.has_self_receiver
                 || completions
                     .iter()
@@ -178,7 +179,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                             sort_priority: Some(CompletionSortPriority::AutoImport {
                                 path_len: path.component_count(),
                             }),
-                        })
+                        })?
                         .item;
                     let rendered_path = syntax.path(&path);
                     item.detail = Some(format!(

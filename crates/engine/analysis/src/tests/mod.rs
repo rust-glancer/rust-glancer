@@ -47,7 +47,8 @@
 //!
 //! Completion queries can use `.matching("prefix")` to keep only relevant candidates or
 //! `.members()` to focus on fields and methods, excluding postfix suggestions. Both filter the
-//! full query's results. Use `complete_verbose` when details or edits matter.
+//! full query's results. Snapshots show suggestions in the order given by their sort keys.
+//! Use `complete_verbose` to include details, edits, and the sort keys themselves.
 //! Use `.in_lib("package")` or `.in_bin("package")`
 //! to select a target in a workspace fixture. `check_analysis_with_fake_sysroot` adds the shared
 //! small standard-library fixture when the test needs it.

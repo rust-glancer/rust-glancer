@@ -6,8 +6,10 @@
 //! second generated argument list.
 
 use rg_ir_view::{
+    IndexedViewDb,
     display::{signature::SignatureRenderer, syntax::SyntaxRenderer},
     member::MemberFunction,
+    ty::TyView,
 };
 
 use super::{
@@ -21,15 +23,6 @@ use crate::{
     },
     query::completion::CompletionContext,
 };
-
-/// Signature metadata and insertion text for one function completion.
-struct FunctionCompletionMetadata {
-    label: String,
-    detail: Option<String>,
-    documentation: Option<String>,
-    insert_text: CompletionInsertText,
-    has_self_receiver: bool,
-}
 
 /// Rendered function completion plus receiver information for method-only sites.
 pub(crate) struct FunctionCompletion {
@@ -50,96 +43,88 @@ pub(crate) struct FunctionCompletionRequest<'label, 'member> {
 }
 
 /// Applies shared display, documentation, and call-snippet policy to function candidates.
-pub(crate) struct FunctionCompletionRenderer<'source> {
+pub(crate) struct FunctionCompletionRenderer<'a, 'db, 'source> {
+    db: &'a IndexedViewDb<'db>,
     query: CompletionContext<'source>,
     syntax: SyntaxRenderer,
 }
 
-impl<'source> FunctionCompletionRenderer<'source> {
-    pub(crate) fn new(query: CompletionContext<'source>, syntax: SyntaxRenderer) -> Self {
-        Self { query, syntax }
+impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
+    pub(crate) fn new(
+        db: &'a IndexedViewDb<'db>,
+        query: CompletionContext<'source>,
+        syntax: SyntaxRenderer,
+    ) -> Self {
+        Self { db, query, syntax }
     }
 
     /// Builds display and snippet metadata for a resolved function declaration.
     pub(crate) fn completion(
         &self,
         request: FunctionCompletionRequest<'_, '_>,
-    ) -> FunctionCompletion {
-        let metadata = self.metadata(
-            request.function,
-            request.label_override,
-            request.call_completion,
-            request.edit,
-        );
-        let target = CompletionTarget::Function(request.function.function_ref());
-        let sort_text = request.sort_policy.sort_text(
-            request.sort_priority,
-            &metadata.label,
-            request.kind,
-            request.applicability,
-            target,
-        );
+    ) -> anyhow::Result<FunctionCompletion> {
+        let function = request.function;
+        let label = request.label_override.unwrap_or_else(|| function.name());
+        let label = self.syntax.identifier(label).to_string();
+        let inserts_call = request.call_completion.inserts_call_syntax()
+            && self.query.client_capabilities.snippet_support
+            && !self.call_parens_already_present(request.edit);
+        let insert_text = if inserts_call {
+            let skip_self = matches!(request.call_completion, CallCompletionKind::MethodCall);
+            CompletionInsertText::Snippet(Self::call_snippet(&label, function, skip_self))
+        } else {
+            CompletionInsertText::Plain
+        };
 
-        FunctionCompletion {
-            has_self_receiver: metadata.has_self_receiver,
-            item: CompletionItem {
-                label: metadata.label,
-                filter_text: None,
-                kind: request.kind,
+        let target = CompletionTarget::Function(function.function_ref());
+        let mut item = CompletionItem {
+            sort_text: request.sort_policy.sort_text(
+                request.sort_priority,
+                &label,
+                request.kind,
+                request.applicability,
                 target,
-                applicability: request.applicability,
-                detail: metadata.detail,
-                documentation: metadata.documentation,
-                sort_text,
-                insert_text: metadata.insert_text,
-                edit: Some(request.edit),
-                import: None,
-            },
-        }
-    }
-
-    fn metadata(
-        &self,
-        function: MemberFunction<'_>,
-        label_override: Option<&str>,
-        call_completion: CallCompletionKind,
-        edit: CompletionEdit,
-    ) -> FunctionCompletionMetadata {
-        let label = label_override
-            .unwrap_or_else(|| function.name())
-            .to_string();
-        let label = self.syntax.identifier(&label).to_string();
-
-        FunctionCompletionMetadata {
-            label: label.clone(),
+            ),
+            label,
+            filter_text: None,
+            kind: request.kind,
+            target,
+            applicability: request.applicability,
             detail: Some(
                 SignatureRenderer::new(self.syntax.edition()).member_function_signature(function),
             ),
             documentation: function.docs_text(),
-            insert_text: self.insert_text(&label, function, call_completion, edit),
-            has_self_receiver: function.has_self_receiver(),
-        }
-    }
-
-    fn insert_text(
-        &self,
-        label: &str,
-        function: MemberFunction<'_>,
-        call_completion: CallCompletionKind,
-        edit: CompletionEdit,
-    ) -> CompletionInsertText {
-        if !call_completion.inserts_call_syntax()
-            || !self.query.client_capabilities.snippet_support
-            || self.call_parens_already_present(edit)
+            insert_text,
+            edit: Some(request.edit),
+            import: None,
+        };
+        if let Some(expected) = self.query.expected_type
+            && !matches!(
+                request.sort_priority,
+                Some(CompletionSortPriority::AutoImport { .. })
+            )
         {
-            return CompletionInsertText::Plain;
+            expected.rank_function(
+                TyView::new(self.db),
+                function.function_ref(),
+                inserts_call,
+                &mut item,
+            )?;
         }
-
-        let skip_self = matches!(call_completion, CallCompletionKind::MethodCall);
-        CompletionInsertText::Snippet(Self::call_snippet(label, function, skip_self))
+        Ok(FunctionCompletion {
+            has_self_receiver: function.has_self_receiver(),
+            item,
+        })
     }
 
     fn call_parens_already_present(&self, edit: CompletionEdit) -> bool {
+        if self
+            .query
+            .expected_type
+            .is_some_and(|expected| expected.is_call())
+        {
+            return true;
+        }
         let Ok(end) = usize::try_from(edit.replace.end) else {
             return false;
         };

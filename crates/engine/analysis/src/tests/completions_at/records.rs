@@ -119,8 +119,8 @@ pub fn use_it(id: u8, user: User, users: Users) {
             fd name
 
             // record update base completions
-            vr user
             vr users
+            vr user
 
             // record pattern prefix completions
             fd active
@@ -182,9 +182,9 @@ pub fn use_it(user_value: u8) {
 "#,
         expect![[r#"
             // record field value completions
+            vr user_value
             st User
             fn use_it
-            vr user_value
         "#]],
     );
 }

@@ -182,9 +182,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        MemberView::new(self.db)
-            .enum_variant_candidates_for_ty(&expected_ty)
-            .context("collect expected enum variants")
+        let Some(owner) = expected_ty.unique_nominal_type_def().into_option() else {
+            return Ok(Vec::new());
+        };
+        MemberView::new(self.db).enum_variant_candidates(owner)
     }
 
     /// Project a completion target back to its nominal type identity when it names one.

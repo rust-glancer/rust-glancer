@@ -11,7 +11,7 @@ use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FileId, FunctionRef,
     GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, Span,
-    identity::{DeclarationRef, LexicalScopeRef},
+    identity::{DeclarationRef, ExprRef, LexicalScopeRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, SourceSelection};
 use rg_std::ExpectedUnique;
@@ -111,6 +111,7 @@ impl ResolvedCallArg {
 pub struct ResolvedCall<T> {
     file_id: FileId,
     target: T,
+    expr: ExprRef,
     param_offset: usize,
     args: Vec<ResolvedCallArg>,
 }
@@ -122,6 +123,10 @@ impl<T> ResolvedCall<T> {
 
     pub fn target(&self) -> &T {
         &self.target
+    }
+
+    pub(super) fn expr(&self) -> ExprRef {
+        self.expr
     }
 
     pub fn param_offset(&self) -> usize {
@@ -627,6 +632,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 calls.push(ResolvedCall {
                     file_id,
                     target,
+                    expr: ExprRef::new(body_ref, ExprId(expr_idx)),
                     param_offset,
                     args: Self::resolved_call_args(body, args),
                 });

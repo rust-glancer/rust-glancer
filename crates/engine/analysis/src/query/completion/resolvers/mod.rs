@@ -36,6 +36,7 @@ use self::{
 };
 use super::{
     CompletionContext, CompletionQuery,
+    expected_type::ExpectedTypeRanking,
     site::{
         CompletionSite, CompletionSiteDetector, ItemListCompletionKind, NameCompletionContext,
         SpecializedCompletionContext, SyntaxCompletionContext,
@@ -76,6 +77,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 source_text,
                 client_capabilities: query.client_capabilities,
                 auto_import_budget: query.auto_import_budget,
+                expected_type: None,
             },
         }
     }
@@ -175,7 +177,12 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 CompletionSite::Unqualified(site) => site.context().supports_auto_import(),
                 _ => false,
             };
-        let items = match site {
+        let ranking = ExpectedTypeRanking::at(self.analysis, self.query, syntax_context, &site)?;
+        let query = CompletionContext {
+            expected_type: ranking.as_ref(),
+            ..self.query
+        };
+        let mut items = match site {
             CompletionSite::AssociatedTypeBinding(site) => {
                 AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)
                     .completions(site)
@@ -205,7 +212,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 Ok(completions)
             }
             CompletionSite::Path(site) => {
-                PathCompletionResolver::new(self.analysis, self.query).completions(site)
+                PathCompletionResolver::new(self.analysis, query).completions(site)
             }
             CompletionSite::TraitImpl(site) => {
                 let mut completions = TraitImplCompletionResolver::new(self.analysis, self.query)
@@ -229,7 +236,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 let path_root_edit = CompletionEdit {
                     replace: site.replace_span(),
                 };
-                let mut completions = UnqualifiedCompletionResolver::new(self.analysis, self.query)
+                let mut completions = UnqualifiedCompletionResolver::new(self.analysis, query)
                     .completions(site)
                     .context("collect unqualified completions")?;
                 if context == NameCompletionContext::Type
@@ -285,6 +292,9 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .completions(site)
             }
         }?;
+        if let Some(ranking) = ranking {
+            ranking.rank(self.analysis, &mut items)?;
+        }
         Ok(CompletionResult {
             items,
             is_incomplete,

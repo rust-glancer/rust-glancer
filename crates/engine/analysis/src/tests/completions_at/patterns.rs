@@ -53,9 +53,9 @@ pub fn use_it(items: Items) {
 "#,
         expect![[r#"
             // for pattern binding completions
-            st Items
             vr item
             vr items
+            st Items
             fn use_it
         "#]],
     );
@@ -175,38 +175,38 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             ev Stop // record variant constructor
 
             // if let pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
             // while let pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
             // let pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
@@ -220,14 +220,14 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             md nested
 
             // closure parameter pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
@@ -235,14 +235,14 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             st RecordMarker // record struct constructor
 
             // function parameter pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
         "#]],
@@ -295,8 +295,8 @@ pub fn inspect(event: Event) {
 "#,
         expect![[r#"
             // pattern invocation macro
-            en Event
             ev Only
+            en Event
             ma pattern_macro
         "#]],
     );

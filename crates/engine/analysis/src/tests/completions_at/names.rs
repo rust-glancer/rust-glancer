@@ -20,9 +20,9 @@ pub fn use_it(input_user: User) {
 "#,
         expect![[r#"
             // unqualified value completions
-            st User
-            vr input_user
             vr local_user
+            vr input_user
+            st User
             fn make_user
             fn use_it
         "#]],
@@ -187,50 +187,50 @@ pub fn incomplete(value: Wrapper<Fi$0 // complete("incomplete function generic a
 "#,
         expect![[r#"
             // struct field generic arg
+            tp T
             st Array
             st Fixture
             st Holder
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // struct field type param
+            tp T
             st Array
             st Fixture
             st Holder
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // trait method generic arg
+            tp Self
+            tp T
+            tp U
             st Array
             st Fixture
             st Holder
-            tp Self
-            tt Service
-            tp T
-            tp U
             st Wrapper
+            tt Service
 
             // trait method Self
-            st Array
-            st Fixture
-            st Holder
             tp Self
-            tt Service
             tp T
             tp U
-            st Wrapper
-
-            // impl method generic arg
             st Array
             st Fixture
             st Holder
-            ct N
-            tp Self
-            tt Service
-            tp T
             st Wrapper
+            tt Service
+
+            // impl method generic arg
+            tp Self
+            tp T
+            ct N
+            st Array
+            st Fixture
+            st Holder
+            st Wrapper
+            tt Service
 
             // qualified return type
             st Array
@@ -240,37 +240,37 @@ pub fn incomplete(value: Wrapper<Fi$0 // complete("incomplete function generic a
             st Wrapper
 
             // function generic arg
+            tp T
+            ct N
             st Array
             st Fixture
             st Holder
-            ct N
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // function type param
+            tp T
             st Array
             st Fixture
             st Holder
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // function const arg
+            tp T
+            ct N
             st Array
             st Fixture
             st Holder
-            ct N
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // incomplete function generic arg
             st Array
             st Fixture
             st Holder
-            tt Service
             st Wrapper
+            tt Service
         "#]],
     );
 }
@@ -304,13 +304,13 @@ pub fn use_it<T, const N: usize>() {
 "#,
         expect![[r#"
             // body type parameter
-            st Array
             tp T
+            st Array
 
             // body const generic argument
-            st Array
-            ct N
             tp T
+            ct N
+            st Array
         "#]],
     );
 }
@@ -424,20 +424,20 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // body-local type item completions
-            st GlobalId
             en LocalAction
             ta LocalAlias
             un LocalBits
-            tt LocalNamed
             st LocalUnit
+            tt LocalNamed
+            st GlobalId
 
             // body-local value item completions
-            st GlobalId
             st LocalUnit
             vr _typed
             sc local_current
             ct local_default
             fn local_helper
+            st GlobalId
             fn use_it
         "#]],
     );

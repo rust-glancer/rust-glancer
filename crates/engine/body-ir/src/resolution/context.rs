@@ -5,7 +5,7 @@
 //! still exposing only read-only access to the active body.
 
 use rg_def_map::{DefMapQuery, DefMapSource};
-use rg_ir_model::{BodyRef, Path, ScopeId};
+use rg_ir_model::{BodyRef, ExprId, Path, ScopeId};
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, SemanticItemSource, TypePathResolution};
 use rg_source::ReadError;
@@ -17,7 +17,10 @@ use rg_ty::{
     signature::SemanticSignatureQuery,
 };
 
-use super::cache::{BodyLocalItemCache, BodyResolutionCaches, BodyTraitLookupCache};
+use super::{
+    cache::{BodyLocalItemCache, BodyResolutionCaches, BodyTraitLookupCache},
+    infer::InferenceContext,
+};
 use crate::{
     BodyData,
     resolution::query::{
@@ -150,6 +153,16 @@ where
     /// Lower source-shaped type syntax with the generic and lexical scope of this body.
     pub fn resolve_type_ref(&self, scope: ScopeId, type_ref: &TypeRef) -> Result<Ty, ReadError> {
         self.type_refs(scope).resolve(type_ref)
+    }
+
+    /// Re-infer this body for the request with the argument's value omitted. The slot
+    /// stays in the call so the receiver, sibling arguments, and surrounding code can
+    /// still constrain its type.
+    pub fn infer_call_argument_ty(&self, argument: ExprId) -> anyhow::Result<Ty> {
+        if self.body().expr(argument).is_none() {
+            return Ok(Ty::Unknown);
+        }
+        InferenceContext::infer_argument_ty(self.clone(), argument)
     }
 
     pub fn value_paths(&self) -> BodyValuePathQuery<'a, D, I> {

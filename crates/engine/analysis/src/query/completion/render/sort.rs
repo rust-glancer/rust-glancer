@@ -25,6 +25,15 @@ pub(crate) enum CompletionSortPolicy {
 }
 
 impl CompletionSortPolicy {
+    /// Put a known expression type match before the normal sort buckets. Its full key
+    /// still breaks ties with other matches, including according to lexical proximity.
+    pub(crate) fn promote_expected_type(sort_text: &mut String) {
+        const PREFIX: &str = "!expected|";
+        if !sort_text.starts_with(PREFIX) {
+            sort_text.insert_str(0, PREFIX);
+        }
+    }
+
     /// Builds the lexicographic string consumed by LSP clients.
     pub(crate) fn sort_text(
         self,

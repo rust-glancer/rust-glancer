@@ -13,7 +13,7 @@ mod method;
 use anyhow::Context as _;
 use rg_ir_model::{
     ConstRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef, ItemOwner,
-    TraitApplicability, TypeAliasRef, TypeDefId, identity::DeclarationRef,
+    TraitApplicability, TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
 pub use rg_semantic_ir::AssociatedItemFilter;
@@ -21,7 +21,7 @@ use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemStoreQuery};
 use rg_syntax::{Edition, LexedStr, SyntaxKind};
 use rg_ty::lookup::MemberMethodOrigin as TyMemberMethodOrigin;
 
-use crate::{IndexedViewDb, SymbolKind, item::path::PathView, ty::IndexedType};
+use crate::{IndexedViewDb, SymbolKind, item::path::PathView};
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -416,29 +416,26 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }))
     }
 
-    /// Return variants of an enum represented by an already-inferred type.
-    pub fn enum_variant_candidates_for_ty(
+    /// Return the variants of an indexed enum.
+    pub fn enum_variant_candidates(
         &self,
-        ty: &IndexedType,
+        owner: TypeDefRef,
     ) -> anyhow::Result<Vec<EnumVariantRef>> {
-        let mut variants = Vec::new();
-        for owner in ty.nominal_type_defs() {
-            rg_std::check_cancel!(self.db, "completion candidate");
-            let TypeDefId::Enum(enum_id) = owner.id else {
-                continue;
-            };
-            let Some(data) = ItemStoreQuery::new(self.db)
-                .enum_data_for_type_def(owner)
-                .context("read inferred enum candidate data")?
-            else {
-                continue;
-            };
-            variants.extend((0..data.variants.len()).map(|index| EnumVariantRef {
+        let TypeDefId::Enum(enum_id) = owner.id else {
+            return Ok(Vec::new());
+        };
+        let Some(data) = ItemStoreQuery::new(self.db)
+            .enum_data_for_type_def(owner)
+            .context("read inferred enum candidate data")?
+        else {
+            return Ok(Vec::new());
+        };
+        Ok((0..data.variants.len())
+            .map(|index| EnumVariantRef {
                 origin: owner.origin,
                 enum_id,
                 index,
-            }));
-        }
-        Ok(variants)
+            })
+            .collect())
     }
 }

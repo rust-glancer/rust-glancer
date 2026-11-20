@@ -736,6 +736,8 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 ) {
                     completions.retain(|completion| completion.kind == CompletionKind::Keyword);
                 }
+                // Snapshot the server's ranking after applying the fixture's filter.
+                completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 if matches!(
                     query.kind,
                     AnalysisQueryKind::CompletionsAtVerbose
@@ -1034,15 +1036,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
         }
     }
 
-    fn render_completions(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
-        completions.sort_by_key(|completion| {
-            (
-                completion.label.clone(),
-                completion.kind,
-                completion.applicability,
-            )
-        });
-
+    fn render_completions(&self, completions: Vec<CompletionItem>, dump: &mut String) {
         if completions.is_empty() {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;
@@ -1109,12 +1103,10 @@ impl AnalysisQuerySnapshot<'_, '_> {
 
     fn render_completions_verbose(
         &self,
-        mut completions: Vec<CompletionItem>,
+        completions: Vec<CompletionItem>,
         query: CompletionQuery<'_>,
         dump: &mut String,
     ) {
-        completions.sort_by_key(|completion| completion.sort_text.clone());
-
         if completions.is_empty() {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;

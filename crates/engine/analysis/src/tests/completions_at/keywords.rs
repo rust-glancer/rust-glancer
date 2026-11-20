@@ -32,70 +32,70 @@ extern "C" {
 "#,
         expect![[r#"
             // source-file items
+            kw pub
+            kw unsafe
             kw async
-            kw const
-            kw enum
             kw extern
             kw fn
+            kw const
+            kw type
+            kw static
+            kw struct
+            kw enum
+            kw trait
+            kw union
             kw impl
             kw impl for
             kw mod
-            kw pub
-            kw static
-            kw struct
-            kw trait
-            kw type
-            kw union
-            kw unsafe
             kw use
 
             // module items
+            kw pub
+            kw unsafe
             kw async
-            kw const
-            kw enum
             kw extern
             kw fn
+            kw const
+            kw type
+            kw static
+            kw struct
+            kw enum
+            kw trait
+            kw union
             kw impl
             kw impl for
             kw mod
-            kw pub
-            kw static
-            kw struct
-            kw trait
-            kw type
-            kw union
-            kw unsafe
             kw use
 
             // inherent impl items
-            kw async
-            kw const
-            kw extern
-            kw fn
             kw pub
             kw unsafe
+            kw async
+            kw extern
+            kw fn
+            kw const
 
             // trait items
+            kw unsafe
             kw async
-            kw const
             kw extern
             kw fn
+            kw const
             kw type
-            kw unsafe
 
             // trait impl items
+            kw unsafe
             kw async
-            kw const
             kw extern
             kw fn
+            kw const
             kw type
-            kw unsafe
 
             // extern block items
-            kw fn
             kw pub
-            kw static
             kw unsafe
+            kw fn
+            kw static
         "#]],
     );
 }

@@ -67,111 +67,111 @@ pub fn body(param: u8) {
             st Wrapper
             fn body
             fn consume
+            fn signature
             kw crate
             kw self
-            fn signature
             kw super
 
             // empty type path
-            st ModuleType
             tp T
+            st ModuleType
             st Wrapper
             pt bool
             pt char
-            kw crate
-            kw dyn
             pt f128
             pt f16
             pt f32
             pt f64
-            kw fn
-            kw for
             pt i128
             pt i16
             pt i32
             pt i64
             pt i8
             pt isize
-            kw self
             pt str
-            kw super
             pt u128
             pt u16
             pt u32
             pt u64
             pt u8
             pt usize
+            kw crate
+            kw dyn
+            kw fn
+            kw self
+            kw for
+            kw super
 
             // empty expression path
-            ct MODULE_VALUE
             st ModuleType
-            st Wrapper
-            kw async
             vr before
+            vr param
+            ct MODULE_VALUE
+            st Wrapper
             fn body
             fn consume
-            kw crate
-            kw false
-            kw if
-            kw loop
-            kw match
-            kw move
-            vr param
-            kw return
-            kw self
             fn signature
+            kw crate
+            kw if
+            kw match
+            kw self
+            kw loop
             kw super
+            kw return
             kw true
+            kw false
+            kw async
+            kw move
 
             // empty argument path
+            vr before
+            vr param
             ct MODULE_VALUE
             st ModuleType
             st Wrapper
-            kw async
-            vr before
             fn body
             fn consume
-            kw crate
-            kw false
-            kw if
-            kw loop
-            kw match
-            kw move
-            vr param
-            kw return
-            kw self
             fn signature
+            kw crate
+            kw if
+            kw match
+            kw self
+            kw loop
             kw super
+            kw return
             kw true
+            kw false
+            kw async
+            kw move
 
             // empty generic argument path
             st ModuleType
             st Wrapper
             pt bool
             pt char
-            kw crate
-            kw dyn
             pt f128
             pt f16
             pt f32
             pt f64
-            kw fn
-            kw for
             pt i128
             pt i16
             pt i32
             pt i64
             pt i8
             pt isize
-            kw self
             pt str
-            kw super
             pt u128
             pt u16
             pt u32
             pt u64
             pt u8
             pt usize
+            kw crate
+            kw dyn
+            kw fn
+            kw self
+            kw for
+            kw super
         "#]],
     );
 }

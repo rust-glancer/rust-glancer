@@ -12,6 +12,7 @@
 
 mod apostrophe;
 mod attribute;
+mod expected_type;
 mod item;
 mod path;
 mod string;
@@ -28,6 +29,7 @@ use rg_syntax::{
     ast,
 };
 
+pub(super) use self::expected_type::{ExpectedTypeSite, ValueExpression};
 use crate::query::completion::site::{
     CompletionSiteSyntax, EmptyPathCompletionContext, ItemListCompletionKind,
     ModuleNameCompletionSyntax, PatternCompletionKind, SpecializedCompletionContext,

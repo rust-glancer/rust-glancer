@@ -13,8 +13,8 @@ use rg_body_ir::{
 };
 use rg_def_map::NamespaceSet;
 use rg_ir_model::{
-    BodyRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ModuleId, ModuleRef, Path, ScopeId,
-    TraitDefRef,
+    BodyRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, ModuleId, ModuleRef, Path,
+    ScopeId, TraitDefRef,
     identity::{DeclarationRef, ExprRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
@@ -23,7 +23,7 @@ use rg_text::Name;
 use rg_ty::{
     Ty,
     lookup::{AssociatedItemCandidateRef, ItemPathQuery, MemberMethodCandidateRef},
-    signature::SemanticSignatureQuery,
+    signature::{CallableSignature, SemanticSignatureQuery},
 };
 
 use crate::IndexedViewDb;
@@ -219,6 +219,46 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         .value_paths()
         .resolve_nonlocal_path_ty(scope, path)
         .context("resolve nonlocal body value type")
+    }
+
+    /// Ask Body IR for the parameter type with the active argument treated as an empty slot.
+    pub(crate) fn call_argument_ty(
+        &self,
+        body_ref: BodyRef,
+        argument: ExprId,
+    ) -> anyhow::Result<Option<Ty>> {
+        let Some((body, lookup)) = self.body_with_lookup(body_ref)? else {
+            return Ok(None);
+        };
+        let context = BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &lookup,
+            self.db.cancellation().clone(),
+        );
+        Ok(Some(context.infer_call_argument_ty(argument)?))
+    }
+
+    /// Lower a body-local function's signature where its local types are in scope.
+    pub(crate) fn function_signature(
+        &self,
+        body_ref: BodyRef,
+        function: FunctionRef,
+    ) -> anyhow::Result<Option<CallableSignature>> {
+        let Some((body, lookup)) = self.body_with_lookup(body_ref)? else {
+            return Ok(None);
+        };
+        let context = BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &lookup,
+            self.db.cancellation().clone(),
+        );
+        Ok(SemanticSignatureQuery::with_resolver(self.db, self.db, &context).function(function)?)
     }
 
     /// Lower a body-local field with access to the surrounding module where it was declared.

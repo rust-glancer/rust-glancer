@@ -41,6 +41,12 @@ where
         #[cfg(test)]
         self.before_expression();
         rg_std::check_cancel!(self.context, "expression resolution");
+        // Completion can ask what this slot expects while ignoring the value already there.
+        // Leave the slot available so the call's other inputs can still constrain it.
+        if self.argument_hole == Some(expr) {
+            self.coerce_expr_ty(expr, expected);
+            return Ok(());
+        }
         // Keep generated or expanded syntax from consuming an unbounded inference stack.
         // An interrupted subtree stays unknown while the rest of the body can keep its results.
         if self.depth == 256 {

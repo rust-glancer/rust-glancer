@@ -87,8 +87,8 @@ pub fn inspect<T: api::Render>(value: T) {
             fn render_base @ 3:12-3:23 // supertrait declaration
 
             // completed bound methods
-            tm render
             tm render_base
+            tm render
         "#]],
     );
 }
@@ -129,8 +129,8 @@ where
             u32 // method through generic Deref chain
 
             // generic Deref members
-            fd value
             im value_len
+            fd value
         "#]],
     );
 }

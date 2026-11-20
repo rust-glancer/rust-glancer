@@ -243,9 +243,9 @@ pub fn use_it() {
             md local
 
             // body-local imported value completions
+            vr _typed
             st User
             ct VALUE
-            vr _typed
             md local
             fn use_it
         "#]],
@@ -272,8 +272,8 @@ fn main() {
             fn main
 
             // unqualified value root completions
-            md analysis_unqualified_roots
             fn main
+            md analysis_unqualified_roots
         "#]],
     );
 }
@@ -324,24 +324,24 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // unqualified prelude completions
+            en Option
+            en Result
+            st String
+            st Vec
             tt Clone
             tt Copy
             tt Default
             tt Eq
-            tt Fn
             tt FnMut
             tt FnOnce
+            tt Fn
             tt IntoIterator
             tt Iterator
-            en Option
             tt Ord
             tt PartialEq
             tt PartialOrd
-            en Result
             tt Send
-            st String
             tt Sync
-            st Vec
             md alloc
             md core
             md std
