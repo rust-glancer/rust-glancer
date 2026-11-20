@@ -5,7 +5,6 @@ import argparse
 import gzip
 import hashlib
 import os
-import re
 import tarfile
 import tempfile
 from pathlib import Path
@@ -13,7 +12,6 @@ from typing import BinaryIO, Dict, Optional, Tuple
 
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
-STABLE_SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 TARGET_EXECUTABLES = {
     "aarch64-apple-darwin": "rust-glancer",
     "aarch64-unknown-linux-gnu": "rust-glancer",
@@ -25,12 +23,10 @@ TARGET_EXECUTABLES = {
 
 def main() -> None:
     arguments = parse_arguments()
-    if STABLE_SEMVER.fullmatch(arguments.version) is None:
-        raise SystemExit(f"Unsupported release version: {arguments.version!r}")
     if arguments.target not in TARGET_EXECUTABLES:
         raise SystemExit(f"Unsupported release target: {arguments.target!r}")
 
-    archive_name = f"rust-glancer-{arguments.version}-{arguments.target}.tar.gz"
+    archive_name = f"rust-glancer-{arguments.target}.tar.gz"
     output = arguments.out or WORKSPACE_ROOT / "dist" / archive_name
     executable_name = TARGET_EXECUTABLES[arguments.target]
     sources = {
@@ -91,7 +87,6 @@ def parse_arguments() -> argparse.Namespace:
         description="Package a standalone Rust Glancer release archive."
     )
     parser.add_argument("--target", required=True, help="Rust target triple")
-    parser.add_argument("--version", required=True, help="stable release version")
     parser.add_argument(
         "--profile",
         choices=("release", "dist"),
@@ -101,7 +96,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--out",
         type=Path,
-        help="output path; defaults to dist/<canonical archive name>",
+        help="output path (defaults to dist/rust-glancer-<target>.tar.gz)",
     )
     return parser.parse_args()
 

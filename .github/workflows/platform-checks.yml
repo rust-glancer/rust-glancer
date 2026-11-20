@@ -92,7 +92,8 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             python=python
           fi
-          "$python" .github/scripts/package_server_archive.py --target "$RUST_TARGET" --version 0.0.0
+          "$python" .github/scripts/package_server_archive.py --target "$RUST_TARGET"
+          test -f "dist/rust-glancer-$RUST_TARGET.tar.gz"
 
   compare-lsp-windows:
     name: compare-lsp (windows)

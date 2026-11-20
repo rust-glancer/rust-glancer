@@ -23,7 +23,6 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       sha: ${{ steps.release.outputs.sha }}
       tag_name: ${{ steps.release.outputs.tag_name }}
-      version: ${{ steps.release.outputs.version }}
     steps:
       - name: Maintain release pull request and GitHub release
         id: release
@@ -99,7 +98,6 @@ jobs:
           ${{ matrix.python }} .github/scripts/package_server_archive.py
           --target "${{ matrix.rust_target }}"
           --profile dist
-          --version "${{ needs.release_please.outputs.version }}"
       - name: Package VSIX
         run: >-
           npm run package:vsix --
@@ -107,15 +105,15 @@ jobs:
           --target "${{ matrix.rust_target }}"
           --profile dist
           --vscode-target "${{ matrix.vscode_target }}"
-          --out "../../dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix"
         working-directory: editors/code
+      # Keep filenames stable so downstream registries can update just the GitHub release tag.
       - name: Upload release assets
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-assets-${{ matrix.vscode_target }}
           path: |
-            dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix
-            dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.rust_target }}.tar.gz
+            dist/rust-glancer-${{ matrix.vscode_target }}.vsix
+            dist/rust-glancer-${{ matrix.rust_target }}.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -152,7 +150,6 @@ jobs:
         run: python3 .github/scripts/check_release_versions.py
       - name: Publish platform packages to the VS Code Marketplace
         env:
-          RELEASE_VERSION: ${{ needs.release_please.outputs.version }}
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           if [[ -z "$VSCE_PAT" ]]; then
@@ -161,11 +158,11 @@ jobs:
           fi
 
           packages=(
-            "../../dist/rust-glancer-${RELEASE_VERSION}-linux-x64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-linux-arm64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-x64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-arm64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-win32-x64.vsix"
+            "../../dist/rust-glancer-linux-x64.vsix"
+            "../../dist/rust-glancer-linux-arm64.vsix"
+            "../../dist/rust-glancer-darwin-x64.vsix"
+            "../../dist/rust-glancer-darwin-arm64.vsix"
+            "../../dist/rust-glancer-win32-x64.vsix"
           )
 
           for package in "${packages[@]}"; do
@@ -180,7 +177,6 @@ jobs:
       - name: Publish platform packages to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-          RELEASE_VERSION: ${{ needs.release_please.outputs.version }}
         run: |
           if [[ -z "$OVSX_PAT" ]]; then
             echo "The OVSX_PAT repository secret is not configured." >&2
@@ -188,11 +184,11 @@ jobs:
           fi
 
           packages=(
-            "../../dist/rust-glancer-${RELEASE_VERSION}-linux-x64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-linux-arm64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-x64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-arm64.vsix"
-            "../../dist/rust-glancer-${RELEASE_VERSION}-win32-x64.vsix"
+            "../../dist/rust-glancer-linux-x64.vsix"
+            "../../dist/rust-glancer-linux-arm64.vsix"
+            "../../dist/rust-glancer-darwin-x64.vsix"
+            "../../dist/rust-glancer-darwin-arm64.vsix"
+            "../../dist/rust-glancer-win32-x64.vsix"
           )
 
           ./node_modules/.bin/ovsx publish --skip-duplicate --packagePath "${packages[@]}"
