@@ -158,8 +158,6 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 documentation: definition.documentation().map(ToString::to_string),
                 function,
                 macro_kind: None,
-                import_path: None,
-                import_path_len: None,
             });
         }
         Ok(definitions)

@@ -13,6 +13,7 @@ use rg_def_map::{
 };
 use rg_ir_model::{
     CrateRef, DefMapRef, FileId, ItemStoreId, ItemStoreRef, LocalDefRef, SemanticItemRef,
+    TraitDefRef,
 };
 use rg_item_tree::{ItemKind, ItemTrees};
 use rg_source::{QueryContext, ReadError};
@@ -86,6 +87,7 @@ pub struct TargetDeclarations {
     lookup_keys: LookupKeys,
     body_owners: Vec<BodyOwnerData>,
     symbol_names: SymbolNameIndex,
+    trait_function_names: Vec<(Name, TraitDefRef)>,
     source_ownership: SourceOwnershipIndex,
 }
 
@@ -146,6 +148,24 @@ pub fn target_declarations(
     let scope_lang_items = items.lang_items().clone();
     let member_inputs = AssociatedItemInputs::publish(db, &items, built.member_inputs)?;
     let (lookup_keys, shards) = lookup.into_parts();
+    // Prefix completion needs only written trait-function names. Give it an independent
+    // sorted output so a broad prefix does not acquire all the exact-lookup shards.
+    let mut trait_function_names = shards
+        .iter()
+        .flat_map(|shard| {
+            shard.traits_by_item_name.iter().flat_map(|(name, owners)| {
+                owners
+                    .functions
+                    .iter()
+                    .map(move |&owner| (name.clone(), owner))
+            })
+        })
+        .collect::<Vec<_>>();
+    trait_function_names.sort_unstable_by(|(left, left_trait), (right, right_trait)| {
+        left.as_str()
+            .cmp(right.as_str())
+            .then(left_trait.id.0.cmp(&right_trait.id.0))
+    });
     let lookup_shards = shards
         .into_iter()
         .enumerate()
@@ -172,6 +192,7 @@ pub fn target_declarations(
         lookup_keys,
         body_owners,
         symbol_names,
+        trait_function_names,
         source_ownership,
     )
 }
@@ -549,6 +570,18 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
             Ok([written, generated])
         })?;
         Ok(tables.into_iter().flatten().collect())
+    }
+
+    fn visible_crates(&self, krate: CrateRef) -> Result<&[CrateRef], ReadError> {
+        Ok(self
+            .acquire(krate, |result| &result.visible_crates)?
+            .map_or(&[], UniqueVec::as_slice))
+    }
+
+    fn trait_function_names(&self, krate: CrateRef) -> Result<&[(Name, TraitDefRef)], ReadError> {
+        Ok(self
+            .acquire(krate, |result| &result.trait_function_names)?
+            .map_or(&[], Vec::as_slice))
     }
 
     fn crates(&self) -> Vec<CrateRef> {

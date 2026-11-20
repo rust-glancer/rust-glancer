@@ -1,16 +1,15 @@
 //! Completion rows and source edits before protocol conversion.
 
 use rg_ir_model::{
-    EnumVariantFieldRef, EnumVariantRef, FieldRef, FunctionRef, GenericParamRef, ImplRef,
+    EnumVariantFieldRef, EnumVariantRef, FieldRef, FunctionRef, GenericParamRef, ImplRef, Path,
     PrimitiveTy, SemanticItemKind, Span, TraitApplicability, identity::DeclarationRef,
 };
 
 /// One completion row produced from a frozen analysis snapshot.
 ///
-/// `target` retains semantic identity for navigation and stable ordering, while `insert_text`,
-/// `edit`, and `additional_edits` describe what accepting the row does to source. Keeping those
-/// concerns separate lets a displayed label such as `required` replace a larger prefix such as
-/// `fn re`.
+/// `target` retains semantic identity for navigation and stable ordering. The primary edit lets
+/// a label such as `required` replace a larger prefix such as `fn re`. If the item needs an
+/// import, resolve plans that edit against the editor buffer it uses for that request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionItem {
     /// Name shown as the completion row's primary label.
@@ -35,8 +34,27 @@ pub struct CompletionItem {
     pub insert_text: CompletionInsertText,
     /// Primary source range replaced when the row is accepted.
     pub edit: Option<CompletionEdit>,
-    /// Non-overlapping source edits applied together with the primary completion replacement.
-    pub additional_edits: Vec<CompletionAdditionalEdit>,
+    /// Import to plan when the editor resolves this item.
+    pub import: Option<CompletionImport>,
+}
+
+/// Candidates and whether typing more can reveal additional import candidates.
+#[derive(Debug, Default)]
+pub struct CompletionResult {
+    pub items: Vec<CompletionItem>,
+    /// Ask the editor to request a fresh list as the prefix changes. Typing `Ha` after `H`
+    /// can start an auto-import search and add rows the editor could not get by filtering.
+    pub is_incomplete: bool,
+}
+
+/// The path to import if the user selects this row.
+///
+/// For a method such as `widget.render()`, the path names the trait. An anonymous import
+/// such as `use api::Render as _;` makes the method available without adding a short name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionImport {
+    pub path: Path,
+    pub anonymous: bool,
 }
 
 /// Text inserted when accepting a completion.
@@ -57,7 +75,7 @@ pub struct CompletionEdit {
     pub replace: Span,
 }
 
-/// One plain-text source edit attached to a completion acceptance.
+/// The import edit returned when resolving a completion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionAdditionalEdit {
     /// Source range changed separately from the primary completion edit.

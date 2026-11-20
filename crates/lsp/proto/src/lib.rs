@@ -25,7 +25,10 @@ pub use self::{
         CodeActionClientCapabilities, CodeActionRequestContext, CodeActionRequestKinds,
         CodeActionRequestTrigger,
     },
-    completion::CompletionClientCapabilities,
+    completion::{
+        CompletionCandidate, CompletionClientCapabilities, CompletionImport,
+        CompletionImportCandidate, CompletionImportData, CompletionImportSite, CompletionResult,
+    },
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
         DiagnosticsConfig, EngineConfig, InlayHintsConfig, SysrootDiscovery,

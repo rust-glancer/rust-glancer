@@ -365,6 +365,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
     pub fn generic_scope_names(
         &self,
         owner: GenericDefRef,
+        exact_name: Option<&str>,
     ) -> anyhow::Result<Vec<GenericScopeName>> {
         let generics = GenericsQuery::new(self.db)
             .generics(owner)
@@ -374,32 +375,33 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
 
         for param in generics.iter().rev() {
             let (label, kind) = match param.source() {
-                GenericParamSource::Type(data) => {
-                    (data.name.to_string(), GenericScopeNameKind::Type)
-                }
+                GenericParamSource::Type(data) => (data.name.as_str(), GenericScopeNameKind::Type),
                 GenericParamSource::Const(data) => {
-                    (data.name.to_string(), GenericScopeNameKind::Const)
+                    (data.name.as_str(), GenericScopeNameKind::Const)
                 }
-                GenericParamSource::TraitSelf => ("Self".to_string(), GenericScopeNameKind::Type),
+                GenericParamSource::TraitSelf => ("Self", GenericScopeNameKind::Type),
                 GenericParamSource::Lifetime(_) | GenericParamSource::ArgumentImplTrait(_) => {
                     continue;
                 }
             };
-            if !seen.push((label.clone(), kind)) {
+            if exact_name.is_some_and(|name| name != label) || !seen.push((label, kind)) {
                 continue;
             }
             names.push(GenericScopeName {
-                label,
+                label: label.to_owned(),
                 kind,
                 target: GenericScopeNameTarget::Param(param.param()),
             });
         }
 
+        if exact_name.is_some_and(|name| name != "Self") {
+            return Ok(names);
+        }
         let context = ItemStoreQuery::new(self.db)
             .type_path_context_for_generic_def(owner)
             .context("read generic scope type-path context")?;
         if let Some(impl_ref) = context.and_then(|context| context.impl_ref())
-            && seen.push(("Self".to_string(), GenericScopeNameKind::Type))
+            && seen.push(("Self", GenericScopeNameKind::Type))
         {
             names.push(GenericScopeName {
                 label: "Self".to_string(),

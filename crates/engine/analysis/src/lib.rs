@@ -25,11 +25,11 @@ use rg_workspace::WorkspaceMetadata;
 pub use self::{
     model::{
         CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit,
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget, DocumentSymbol, DocumentationLink, Fold, FoldKind,
-        Highlight, HighlightKind, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
-        InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
-        ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
+        CompletionApplicability, CompletionEdit, CompletionImport, CompletionInsertText,
+        CompletionItem, CompletionKind, CompletionResult, CompletionTarget, DocumentSymbol,
+        DocumentationLink, Fold, FoldKind, Highlight, HighlightKind, HoverBlock, HoverInfo,
+        InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget,
+        NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
         SyntheticCompletionTarget, WorkspaceSymbol,
     },
     query::{
@@ -364,10 +364,7 @@ impl<'a> Analysis<'a> {
     ///
     /// Missing source text comes from this analysis snapshot. The caller can also supply its
     /// captured text or reuse speculative syntax already prepared for the request.
-    pub fn completions_at(
-        &self,
-        query: CompletionQuery<'_>,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
+    pub fn completions_at(&self, query: CompletionQuery<'_>) -> anyhow::Result<CompletionResult> {
         self.run_query("completions_at", || {
             let snapshot_text;
             let source_text = match query.source_text {
@@ -378,6 +375,36 @@ impl<'a> Analysis<'a> {
                 }
             };
             query::completion::CompletionResolver::new(self, query, source_text).completions_at()
+        })
+    }
+
+    /// Plan the source edit for a selected auto-import completion.
+    ///
+    /// For an older item, recheck the selected name or method against the current scope.
+    pub fn resolve_completion_import(
+        &self,
+        query: CompletionQuery<'_>,
+        import: &CompletionImport,
+        selected: Option<(&str, CompletionKind)>,
+        expected_inline_module: Option<&[String]>,
+    ) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
+        self.run_query("resolve_completion_import", || {
+            let snapshot_text;
+            let source = match query.source_text {
+                Some(text) => text,
+                None => {
+                    snapshot_text = self.sources.text(query.file_id)?;
+                    &snapshot_text
+                }
+            };
+            query::completion::resolve_import(
+                self,
+                query,
+                source,
+                import,
+                selected,
+                expected_inline_module,
+            )
         })
     }
 

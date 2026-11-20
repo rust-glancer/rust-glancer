@@ -7,14 +7,15 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ScopeId, TraitApplicability, TraitDefRef};
+use rg_item_tree::{ParamKind, SelfParamKind};
 use rg_semantic_ir::{FunctionData, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{
     lookup::MemberMethodCandidateRef,
     solver::{
-        DefId, ImplSelection, InferenceSubstitution, InferenceTable, Outcome, TraitApplication, Ty,
-        TyShape,
+        DefId, ImplSelection, InferenceSubstitution, InferenceTable, Outcome, SolverInterner,
+        TraitApplication, Ty, TyShape,
     },
 };
 
@@ -201,45 +202,77 @@ where
                 if !accepts(data) {
                     continue;
                 }
-                let trial = table.probe();
-                let cx = trial.interner();
-                // Parameter metadata is part of checking this candidate. Missing slots must
-                // not become a different trait application, and cannot affect the next trial.
-                let callbacks = cx.track_callbacks();
-                let owner = DefId::Trait(trait_ref);
-                let mut subst = qualification.map_or_else(
-                    || trial.fresh_substitution(owner),
-                    |application| {
-                        InferenceSubstitution::from_args(
-                            trial.params(owner).iter().copied(),
-                            application.args,
-                        )
-                    },
-                );
-                if let Some(self_param) = trial.params(owner).first() {
-                    subst.insert(*self_param, receiver.into());
-                }
-                let args = subst.args_for(cx, trial.params(owner).iter().copied());
-                if callbacks.failure().is_some() {
-                    continue;
-                }
-                let outcome = trial.prove([TraitApplication {
-                    def: trait_ref,
-                    args,
-                }
-                .clause(cx)]);
-                if outcome == Outcome::NoSolution {
-                    continue;
-                }
-                candidates.push(MemberCandidate {
+                candidates.extend(Self::trait_function_candidate(
+                    trait_ref,
                     function,
-                    trait_ref: Some(trait_ref),
-                    subst,
-                    table: trial,
-                    outcome,
-                });
+                    receiver,
+                    qualification,
+                    table,
+                ));
             }
         }
         Ok(candidates)
+    }
+
+    /// Work out the receiver parameter after substituting the selected Self type.
+    pub(crate) fn method_receiver_type<'s>(
+        cx: SolverInterner<'s>,
+        function: FunctionRef,
+        data: &FunctionData,
+        subst: &InferenceSubstitution<'s>,
+        self_ty: Ty<'s>,
+    ) -> Option<Ty<'s>> {
+        match data.signature.params().first()?.kind {
+            ParamKind::SelfParam(SelfParamKind::Value) => Some(self_ty),
+            ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
+                Some(cx.reference(mutability, self_ty))
+            }
+            ParamKind::SelfParam(SelfParamKind::Explicit) => {
+                let signature = cx.function_signature(function)?;
+                Some(subst.apply(cx, *signature.params.first()?))
+            }
+            ParamKind::Normal => None,
+        }
+    }
+
+    /// Try one trait declaration in its own inference table. Extension lookup uses this same
+    /// proof after selecting an importable candidate by name.
+    pub(crate) fn trait_function_candidate<'s>(
+        trait_ref: TraitDefRef,
+        function: FunctionRef,
+        receiver: Ty<'s>,
+        qualification: Option<TraitApplication<'s>>,
+        table: &InferenceTable<'s>,
+    ) -> Option<MemberCandidate<'s>> {
+        let trial = table.probe();
+        let cx = trial.interner();
+        let callbacks = cx.track_callbacks();
+        let owner = DefId::Trait(trait_ref);
+        let params = trial.params(owner);
+        let mut subst = qualification.map_or_else(
+            || trial.fresh_substitution(owner),
+            |application| {
+                InferenceSubstitution::from_args(params.iter().copied(), application.args)
+            },
+        );
+        if let Some(self_param) = params.first() {
+            subst.insert(*self_param, receiver.into());
+        }
+        let args = subst.args_for(cx, params.iter().copied());
+        if callbacks.failure().is_some() {
+            return None;
+        }
+        let outcome = trial.prove([TraitApplication {
+            def: trait_ref,
+            args,
+        }
+        .clause(cx)]);
+        (outcome != Outcome::NoSolution).then_some(MemberCandidate {
+            function,
+            trait_ref: Some(trait_ref),
+            subst,
+            table: trial,
+            outcome,
+        })
     }
 }

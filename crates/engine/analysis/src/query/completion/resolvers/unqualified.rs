@@ -13,7 +13,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context as _;
-use rg_ir_model::EnumVariantRef;
+use rg_ir_model::{EnumVariantRef, Path};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::details::{DeclarationDetailsContext, DeclarationDetailsView},
@@ -24,35 +24,24 @@ use rg_ir_view::{
 use crate::{
     Analysis,
     model::{
-        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+        CompletionApplicability, CompletionEdit, CompletionImport, CompletionInsertText,
         CompletionItem, CompletionKind, CompletionTarget,
     },
-    query::{
-        completion::{
-            CompletionContext,
-            candidates::{
-                CompletionCandidateSource, DefinitionCompletionCandidate,
-                GenericScopeCompletionCandidate, LexicalCompletionCandidate,
-            },
-            pattern::{PatternCandidateRole, PatternCompletionPolicy},
-            render::{
-                CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
-                DefinitionCompletionRenderer, DefinitionCompletionRequest,
-                FunctionCompletionRenderer, FunctionCompletionRequest,
-                PrimitiveTypeCompletionRenderer,
-            },
-            site::{NameCompletionContext, PatternCompletionKind, UnqualifiedCompletionSite},
-            syntax::CompletionSyntaxContext,
+    query::completion::{
+        CompletionContext,
+        candidates::{
+            CompletionCandidateSource, DefinitionCompletionCandidate,
+            GenericScopeCompletionCandidate, LexicalCompletionCandidate,
         },
-        import::{ImportEditPlan, ImportEditPlanner},
+        pattern::{PatternCandidateRole, PatternCompletionPolicy},
+        render::{
+            CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
+            DefinitionCompletionRenderer, DefinitionCompletionRequest, FunctionCompletionRenderer,
+            FunctionCompletionRequest, PrimitiveTypeCompletionRenderer,
+        },
+        site::{NameCompletionContext, PatternCompletionKind, UnqualifiedCompletionSite},
     },
 };
-
-// TODO(#160): Expose import discovery as an explicit code action before returning it to ordinary
-// completion. The synchronous module walk starts at a two-character prefix and adds hundreds of
-// milliseconds to each request in a large workspace. Restore completion integration only after
-// that lookup has a suitable latency boundary and has been profiled against the idle-memory goal.
-const ENABLE_AUTO_IMPORT_COMPLETIONS: bool = false;
 
 /// Combines unqualified candidate families while preserving namespace-aware shadowing.
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
@@ -73,7 +62,6 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     pub(super) fn completions(
         &self,
         site: UnqualifiedCompletionSite,
-        syntax_context: Option<&CompletionSyntaxContext<'_>>,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let context = site.context();
         let filter = UnqualifiedCompletionFilter::from(context);
@@ -106,13 +94,6 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let module_candidates = completion_candidates
             .module_candidates_for_unqualified(&site)
             .context("collect module completion candidates")?;
-        let auto_import_candidates = if ENABLE_AUTO_IMPORT_COMPLETIONS {
-            completion_candidates
-                .auto_import_candidates_for_unqualified(&site)
-                .context("collect auto-import completion candidates")?
-        } else {
-            Vec::new()
-        };
         let expected_variants = completion_candidates
             .expected_enum_variants_for_unqualified_pattern(&site)
             .context("collect expected enum variant candidates")?;
@@ -152,7 +133,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         // Signature generics follow lexical names but precede module/prelude candidates. This also
         // supplies inherited owner parameters and impl `Self` for declaration-owned sites.
         for candidate in completion_candidates
-            .generic_scope_candidates_for_unqualified(&site)
+            .generic_scope_candidates_for_unqualified(&site, None)
             .context("collect generic scope completions")?
         {
             rg_std::check_cancel!(self.analysis, "completion candidate");
@@ -173,20 +154,23 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             )
             .context("filter visible expected enum variants")?;
 
-        // Any accepted local/module spelling would make a same-namespace import conflict or add no
-        // value. Keep this set fixed while rendering auto-imports so distinct global declarations
-        // with the same label remain available for path-based disambiguation.
-        let auto_import_occupied = if auto_import_candidates.is_empty() {
-            None
+        let auto_import_candidates = if context.supports_auto_import()
+            && let Some(deadline) = self.query.auto_import_deadline(site.member_prefix())
+        {
+            // Only matching spellings need occupancy checks. Names from different dependencies
+            // can share a label as long as neither conflicts with a name already in scope.
+            completion_candidates.auto_import_candidates_for_unqualified(
+                &site,
+                deadline,
+                |label, namespace| {
+                    hidden.contains(&(label.to_string(), namespace))
+                        || module_candidates.iter().any(|candidate| {
+                            candidate.label() == label && candidate.namespace() == namespace
+                        })
+                },
+            )?
         } else {
-            let mut occupied = hidden.clone();
-            for candidate in &module_candidates {
-                rg_std::check_cancel!(self.analysis, "completion candidate");
-                if filter.accepts_scope_candidate(candidate.namespace(), candidate.kind()) {
-                    occupied.insert((candidate.label().to_string(), candidate.namespace()));
-                }
-            }
-            Some(occupied)
+            Vec::new()
         };
 
         // Module candidates already retain whether they came from the immediate scope, prelude, or
@@ -225,20 +209,14 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         )
         .context("render module completion candidates")?;
 
-        if let Some(auto_import_occupied) = auto_import_occupied
-            && let Some(syntax_context) = syntax_context
-        {
-            let planner = ImportEditPlanner::for_completion(syntax_context, edit);
+        if !auto_import_candidates.is_empty() {
             self.push_auto_import_completions(
                 syntax,
                 auto_import_candidates,
                 filter,
-                &auto_import_occupied,
-                &planner,
                 edit,
                 &mut completions,
-            )
-            .context("render auto-import completion candidates")?;
+            )?;
         }
 
         self.push_expected_variant_completions(
@@ -385,7 +363,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     |policy| policy.constructor_insert_text(&insert, &shape, false),
                 ),
                 edit: Some(edit),
-                additional_edits: Vec::new(),
+                import: None,
             });
         }
         Ok(())
@@ -426,7 +404,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             ),
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
-            additional_edits: Vec::new(),
+            import: None,
         });
     }
 
@@ -505,7 +483,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             ),
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
-            additional_edits: Vec::new(),
+            import: None,
         };
         if let (Some(policy), PatternCandidateRole::Constructor(shape)) =
             (pattern_policy, pattern_role)
@@ -586,37 +564,24 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         Ok(())
     }
 
-    /// Attach one safe source import to each otherwise-eligible out-of-scope declaration.
-    #[allow(clippy::too_many_arguments)]
+    /// Show the selected path while leaving source-edit planning to completion resolve.
     fn push_auto_import_completions(
         &self,
         syntax: SyntaxRenderer,
-        candidates: Vec<DefinitionCompletionCandidate>,
+        candidates: Vec<(DefinitionCompletionCandidate, Path)>,
         filter: UnqualifiedCompletionFilter,
-        occupied: &HashSet<(String, NameNamespace)>,
-        planner: &ImportEditPlanner<'_, '_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create auto-import completion renderer")?;
-        for candidate in candidates {
+        for (candidate, path) in candidates {
             rg_std::check_cancel!(self.analysis, "completion candidate");
-            if !filter.accepts_scope_candidate(candidate.namespace(), candidate.kind())
-                || occupied.contains(&(candidate.label().to_string(), candidate.namespace()))
-            {
+            if !filter.accepts_scope_candidate(candidate.namespace(), candidate.kind()) {
                 continue;
             }
-            let Some(path) = candidate.import_path() else {
-                continue;
-            };
-            let rendered_path = syntax.path(path).to_string();
-            let ImportEditPlan::Edit(additional_edit) = planner.plan(path, &rendered_path) else {
-                continue;
-            };
-            let path_len = candidate
-                .import_path_len()
-                .expect("auto-import candidates should retain path length");
+            let rendered_path = syntax.path(&path);
+            let path_len = path.component_count();
             let Some(mut completion) = renderer
                 .completion(DefinitionCompletionRequest {
                     candidate: &candidate,
@@ -633,9 +598,9 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 Some(detail) => format!("{detail} (use {rendered_path})"),
                 None => format!("use {rendered_path}"),
             });
-            completion.additional_edits.push(CompletionAdditionalEdit {
-                replace: additional_edit.replace,
-                new_text: additional_edit.new_text,
+            completion.import = Some(CompletionImport {
+                path,
+                anonymous: false,
             });
             if completions.iter().any(|existing| {
                 existing.target == completion.target && existing.label == completion.label

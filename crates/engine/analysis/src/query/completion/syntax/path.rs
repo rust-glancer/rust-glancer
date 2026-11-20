@@ -119,7 +119,7 @@ impl CompletionSyntaxContext<'_> {
         if absolute {
             path_text.insert_str(0, "::");
         }
-        Path::from_macro_path_text(&path_text, None)
+        Path::from_text(&path_text, None)
     }
 
     fn collect_ast_path_names(path: &ast::Path, names: &mut Vec<String>) -> Option<()> {
@@ -237,7 +237,7 @@ impl CompletionSyntaxContext<'_> {
 
     /// Return the path before the marker while distinguishing an unqualified marker from failure.
     pub(super) fn marker_path_qualifier(path_text: &str) -> Option<Option<Path>> {
-        let path = Path::from_macro_path_text(path_text, None)?;
+        let path = Path::from_text(path_text, None)?;
         if path.single_name() == Some(Self::MARKER) {
             return Some(None);
         }

@@ -135,7 +135,6 @@ pub fn method_edit(target: MemberTarget) {
 }
 
 #[test]
-#[ignore = "TODO(#160)"]
 fn completes_auto_import_candidates_across_realistic_line_states() {
     check_analysis(
         r#"
@@ -144,16 +143,16 @@ pub struct AutoImportedType;
 
 //- /app/src/lib.rs crate:app root:app deps:catalog
 pub fn auto_import_unfinished() {
-    let _: AutoImportedT$0 // complete("unfinished auto-import candidate").in_lib("app").matching("AutoImportedType")
+    let _: AutoImportedT$0 // complete("unfinished auto-import candidate").in_lib("app").auto_import().matching("AutoImportedType")
 }
 
 pub fn auto_import_edit() {
-    let _: AutoImportedT$0 = todo!(); // complete("edited auto-import candidate").in_lib("app").matching("AutoImportedType")
+    let _: AutoImportedT$0 = todo!(); // complete("edited auto-import candidate").in_lib("app").auto_import().matching("AutoImportedType")
 }
 "#,
         expect![[r#"
-            struct AutoImportedType // unfinished auto-import candidate
-            struct AutoImportedType // edited auto-import candidate
+            st AutoImportedType // unfinished auto-import candidate
+            st AutoImportedType // edited auto-import candidate
         "#]],
     );
 }

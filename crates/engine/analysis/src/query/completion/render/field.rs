@@ -80,7 +80,7 @@ impl FieldCompletionRenderer {
             ),
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
-            additional_edits: Vec::new(),
+            import: None,
         })
     }
 }

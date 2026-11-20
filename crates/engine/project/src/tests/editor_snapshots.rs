@@ -227,7 +227,7 @@ pub fn inspect() { let result = Value.get(); let _ = result; }
                     call,
                 ))?;
                 assert!(
-                    completions.iter().any(|item| item.label == "extra"),
+                    completions.items.iter().any(|item| item.label == "extra"),
                     "{completions:?}"
                 );
                 Ok(())

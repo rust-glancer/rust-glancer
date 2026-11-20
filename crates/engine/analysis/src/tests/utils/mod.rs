@@ -98,6 +98,7 @@ pub(super) struct AnalysisQuery {
     kind: AnalysisQueryKind,
     completion_label_prefix: Option<String>,
     completion_members_only: bool,
+    auto_import: bool,
 }
 
 impl AnalysisQuery {
@@ -204,6 +205,11 @@ impl AnalysisQuery {
         self
     }
 
+    pub(super) fn auto_import(mut self) -> Self {
+        self.auto_import = true;
+        self
+    }
+
     fn new(title: &str, marker: &str, kind: AnalysisQueryKind) -> Self {
         Self {
             title: title.to_string(),
@@ -212,6 +218,7 @@ impl AnalysisQuery {
             kind,
             completion_label_prefix: None,
             completion_members_only: false,
+            auto_import: false,
         }
     }
 }
@@ -708,15 +715,19 @@ impl AnalysisQuerySnapshot<'_, '_> {
             | AnalysisQueryKind::CompletionsAtVerbose
             | AnalysisQueryKind::CompletionKeywordsAt
             | AnalysisQueryKind::CompletionKeywordsAtVerbose => {
-                let completion_query = CompletionQuery::new(target, file_id, offset)
+                let mut completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_client_capabilities(CompletionClientCapabilities {
                         snippet_support: true,
+                        auto_import: query.auto_import,
                     });
+                // The snapshot checks which imports apply, even on a busy test runner.
+                completion_query.auto_import_budget = std::time::Duration::from_secs(30);
                 let mut completions = self
                     .db
                     .analysis()
                     .completions_at(completion_query)
-                    .expect("fixture completion query should resolve");
+                    .expect("fixture completion query should resolve")
+                    .items;
                 Self::filter_completions(query, &mut completions);
                 if matches!(
                     query.kind,
@@ -730,7 +741,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     AnalysisQueryKind::CompletionsAtVerbose
                         | AnalysisQueryKind::CompletionKeywordsAtVerbose
                 ) {
-                    self.render_completions_verbose(completions, &mut dump);
+                    self.render_completions_verbose(completions, completion_query, &mut dump);
                 } else {
                     self.render_completions(completions, &mut dump);
                 }
@@ -1096,7 +1107,12 @@ impl AnalysisQuerySnapshot<'_, '_> {
         }
     }
 
-    fn render_completions_verbose(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
+    fn render_completions_verbose(
+        &self,
+        mut completions: Vec<CompletionItem>,
+        query: CompletionQuery<'_>,
+        dump: &mut String,
+    ) {
         completions.sort_by_key(|completion| completion.sort_text.clone());
 
         if completions.is_empty() {
@@ -1123,7 +1139,13 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(dump, "  replace: {}..{}", span.start, span.end)
                     .expect("string writes should not fail");
             }
-            for edit in &completion.additional_edits {
+            if let Some(import) = &completion.import
+                && let Some(edit) = self
+                    .db
+                    .analysis()
+                    .resolve_completion_import(query, import, None, None)
+                    .expect("fixture import should resolve")
+            {
                 writeln!(
                     dump,
                     "  additional: {}..{} => {:?}",

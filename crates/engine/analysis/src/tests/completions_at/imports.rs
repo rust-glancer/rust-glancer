@@ -48,7 +48,6 @@ fn use_it() {
 }
 
 #[test]
-#[ignore = "TODO(#160)"]
 fn completes_unqualified_names_with_bounded_auto_imports() {
     check_analysis(
         r#"
@@ -97,18 +96,18 @@ pub fn make_widget() {}
 use catalog::collections::BTreeMap;
 
 fn types() {
-    let _: HashM$0; // complete_verbose("coalesced HashMap import").in_lib("app").matching("HashMap")
-    let _: Wid$0; // complete_verbose("ambiguous imports").in_lib("app").matching("Widget")
-    let _: RankedW$0; // complete_verbose("short re-export path").in_lib("app").matching("RankedWidget")
-    let _: PublicW$0; // complete_verbose("public re-export").in_lib("app").matching("PublicWidget")
-    let _: SecretW$0; // complete("hidden re-export").in_lib("app").matching("SecretWidget")
-    let _: HiddenW$0; // complete("hidden declaration").in_lib("app").matching("HiddenWidget")
-    let _: UnstableW$0; // complete("unstable declaration").in_lib("app").matching("UnstableWidget")
-    let _: DisabledW$0; // complete("cfg-disabled declaration").in_lib("app").matching("DisabledWidget")
+    let _: HashM$0; // complete_verbose("coalesced HashMap import").in_lib("app").auto_import().matching("HashMap")
+    let _: Wid$0; // complete_verbose("ambiguous imports").in_lib("app").auto_import().matching("Widget")
+    let _: RankedW$0; // complete_verbose("short re-export path").in_lib("app").auto_import().matching("RankedWidget")
+    let _: PublicW$0; // complete_verbose("public re-export").in_lib("app").auto_import().matching("PublicWidget")
+    let _: SecretW$0; // complete("hidden re-export").in_lib("app").auto_import().matching("SecretWidget")
+    let _: HiddenW$0; // complete("hidden declaration").in_lib("app").auto_import().matching("HiddenWidget")
+    let _: UnstableW$0; // complete("unstable declaration").in_lib("app").auto_import().matching("UnstableWidget")
+    let _: DisabledW$0; // complete("cfg-disabled declaration").in_lib("app").auto_import().matching("DisabledWidget")
 }
 
 fn values() {
-    make_w$0; // complete_verbose("value auto-import").in_lib("app").matching("make_widget")
+    make_w$0; // complete_verbose("value auto-import").in_lib("app").auto_import().matching("make_widget")
 }
 "#,
         expect![[r#"
@@ -153,10 +152,70 @@ fn values() {
             // value auto-import
             fn make_widget
               detail: pub fn make_widget() (use catalog::make_widget)
-              sort: 05-auto-import:0002|make_widget|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), id: FunctionId(0) })
+              sort: 05-auto-import:0002|make_widget|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 229..235
               additional: 35..35 => "\nuse catalog::make_widget;"
               snippet: make_widget()$0
+        "#]],
+    );
+}
+
+#[test]
+fn offers_imports_that_are_usable_at_the_cursor() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:import_bindings
+mod catalog {
+    pub struct Widget;
+    pub struct Record {}
+    pub trait Paint {}
+    pub trait Canvas {}
+    pub trait Source { type Item; }
+    pub trait Draw {
+        fn draw_with<T: Paint>(&self, brush: T) where Self: Canvas {}
+        fn draw_item<T: Paint>(&self) where Self: Source<Item = T> {}
+        fn draw_from<T: Source>(&self, other: T) where Self: Source<Item = T::Item> {}
+    }
+    impl Draw for u32 {}
+    impl Draw for bool {}
+    impl Canvas for bool {}
+    impl Paint for bool {}
+    impl Source for bool { type Item = bool; }
+    impl Source for u32 { type Item = u32; }
+    pub struct Bundled {}
+    pub use crate::constants::Bundled;
+}
+mod constants { pub const Bundled: u32 = 0; }
+mod explicit {
+    use crate::constants::Bundled;
+    fn f() { let _: Bun$0; } // complete("explicit constant would be imported twice").auto_import().matching("Bundled")
+}
+mod glob {
+    use crate::constants::*;
+    fn f() { let _: Bun$0; } // complete("explicit use can shadow the same glob constant").auto_import().matching("Bundled")
+}
+fn Widget() {}
+fn Record() {}
+fn draw(yes: bool, no: u32) {
+    let _: Wid$0; // complete("constructor conflicts with function").auto_import().matching("Widget")
+    let _: Rec$0; // complete("record and function can share a name").auto_import().matching("Record")
+    yes.draw_w$0; // complete("only the brush type is unknown").auto_import().matching("draw_with")
+    no.draw_w$0; // complete("receiver is not a canvas").auto_import().matching("draw_with")
+    yes.draw_i$0; // complete("receiver determines a paintable item").auto_import().matching("draw_item")
+    no.draw_i$0; // complete("receiver determines an unpaintable item").auto_import().matching("draw_item")
+    yes.draw_f$0; // complete("the other source is chosen by the caller").auto_import().matching("draw_from")
+}
+"#,
+        expect![[r#"
+            <none> // explicit constant would be imported twice
+            st Bundled // explicit use can shadow the same glob constant
+            <none> // constructor conflicts with function
+            st Record // record and function can share a name
+            tm draw_with // only the brush type is unknown
+            <none> // receiver is not a canvas
+            tm draw_item // receiver determines a paintable item
+            <none> // receiver determines an unpaintable item
+            tm draw_from // the other source is chosen by the caller
         "#]],
     );
 }

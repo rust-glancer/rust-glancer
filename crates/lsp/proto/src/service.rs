@@ -9,16 +9,17 @@
 use std::path::PathBuf;
 
 use gen_lsp_types::{
-    CodeAction, CompletionItem, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint,
-    Location, PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
+    CodeAction, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint, Location,
+    PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
-    DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
-    EngineError, FoldingClientCapabilities, OpenDocumentsRevision, QueryError, QueryValue,
-    SaveProposal, SavedProjectChanges, ServiceNotification,
+    CodeActionRequestContext, CompletionClientCapabilities, CompletionImport,
+    CompletionImportCandidate, CompletionResult, DocumentPositionSnapshot, DocumentRangeSnapshot,
+    DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig, EngineError,
+    FoldingClientCapabilities, OpenDocumentsRevision, QueryError, QueryValue, SaveProposal,
+    SavedProjectChanges, ServiceNotification,
 };
 
 pub type EngineResult<T> = Result<T, EngineError>;
@@ -95,7 +96,14 @@ pub trait EngineService {
     async fn completion(
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-    ) -> Result<QueryValue<Vec<CompletionItem>>, QueryError>;
+    ) -> Result<QueryValue<CompletionResult>, QueryError>;
+
+    /// Resolve one import at the captured cursor, rechecking its target if the editor changed.
+    async fn resolve_completion_import(
+        input: DocumentPositionSnapshot,
+        import: CompletionImport,
+        candidate: Option<CompletionImportCandidate>,
+    ) -> Result<QueryValue<Option<TextEdit>>, QueryError>;
 
     async fn formatting(
         snapshot: EditorDocumentSnapshot,

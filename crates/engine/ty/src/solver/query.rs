@@ -12,7 +12,8 @@ use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef};
 use rg_item_tree::FunctionQualifiers;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rustc_type_ir::{
-    self as ir, Interner as _, Upcast, inherent::IntoKind as _, lang_items::SolverTraitLangItem,
+    self as ir, Interner as _, TypeVisitableExt as _, Upcast, inherent::IntoKind as _,
+    lang_items::SolverTraitLangItem,
 };
 
 use super::{
@@ -268,6 +269,15 @@ impl<'s> InferenceTable<'s> {
         })
     }
 
+    pub(crate) fn has_trait_assumption(&self, trait_ref: TraitDefRef) -> bool {
+        self.environment().clauses.iter().any(|clause| {
+            matches!(
+                clause.kind().skip_binder(),
+                ir::ClauseKind::Trait(predicate) if predicate.trait_ref.def_id == DefId::Trait(trait_ref)
+            )
+        })
+    }
+
     /// Traits supplied by bounds on this receiver are method candidates even when the trait is
     /// named only in a bound, such as `fn draw<T: api::Render>(value: T)`. The environment already
     /// includes supertraits. Objects carry bounds in their type; opaque and associated types
@@ -317,6 +327,47 @@ impl<'s> InferenceTable<'s> {
         let mut subst = InferenceSubstitution::new();
         subst.fresh_for(self, self.params(owner).iter().copied());
         subst
+    }
+
+    /// Completion knows the receiver but has no call arguments yet. For
+    /// `fn draw<T: Paint>(&self, brush: T) where Self: Canvas`, check `Self: Canvas`
+    /// now and leave `T: Paint` for the call.
+    pub fn method_receiver_bounds_hold(
+        &self,
+        function: FunctionRef,
+        mut subst: InferenceSubstitution<'s>,
+    ) -> bool {
+        let cx = self.interner();
+        let callbacks = cx.track_callbacks();
+        let owner = DefId::Function(function);
+        subst.fresh_for(self, self.params(owner).iter().copied());
+        let mut remaining: Vec<_> = subst.apply(cx, cx.predicates(owner)).iter().collect();
+        if callbacks.failure().is_some() {
+            return false;
+        }
+
+        loop {
+            let before = remaining.len();
+            remaining.retain(|&clause| {
+                let clause = self.resolve(clause);
+                // In `Self: Source<Item = T>`, knowing Self can tell us T. Queue this
+                // equality now so the next pass can check `T: Paint`. In contrast,
+                // `Item = T::Item` still needs the caller to choose T.
+                let known = !clause.has_non_region_infer()
+                    || matches!(clause.kind().skip_binder(), ir::ClauseKind::Projection(eq)
+                        if !eq.projection_term.args.has_non_region_infer() && !eq.term.has_aliases());
+                if known {
+                    self.register(clause);
+                }
+                !known
+            });
+            if self.fulfill() != Outcome::Proven {
+                return false;
+            }
+            if remaining.is_empty() || remaining.len() == before {
+                return true;
+            }
+        }
     }
 
     /// Form a function item and register its requirements with the same substitution.
