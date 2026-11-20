@@ -10,8 +10,8 @@ use std::fmt;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, ModuleRef, Path, PrimitiveTy, ScopeId, SemanticItemRef,
-    TypeDefRef,
+    BodyRef, DefMapRef, EnumVariantRef, FieldRef, ModuleRef, Path, PrimitiveTy, ScopeId,
+    SemanticItemRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
 use rg_item_tree::TypeRef;
@@ -325,6 +325,9 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     /// Resolve the declared type of a field.
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<Ty>> {
+        if let DefMapRef::Body(body_ref) = field.owner.origin {
+            return BodyResolutionView::new(self.db).declared_field_ty(body_ref, field);
+        }
         SemanticSignatureQuery::new(self.db, self.db)
             .field_ty(field)
             .map_err(Into::into)

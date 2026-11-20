@@ -16,6 +16,7 @@ use rg_semantic_ir::{ItemLookupQuery, TypePathResolution};
 use rg_ty::{
     Ty,
     lookup::{AssociatedItemCandidateRef, ItemPathQuery, MemberMethodCandidateRef},
+    signature::SemanticSignatureQuery,
 };
 
 use crate::IndexedViewDb;
@@ -211,6 +212,28 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         .value_paths()
         .resolve_nonlocal_path_ty(scope, path)
         .context("resolve nonlocal body value type")
+    }
+
+    /// Lower a body-local field with access to the surrounding module where it was declared.
+    pub(crate) fn declared_field_ty(
+        &self,
+        body_ref: BodyRef,
+        field: FieldRef,
+    ) -> anyhow::Result<Option<Ty>> {
+        let Some((body, item_lookup_query)) = self.body_with_lookup(body_ref)? else {
+            return Ok(None);
+        };
+        let context = BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &item_lookup_query,
+            self.db.cancellation().clone(),
+        );
+        SemanticSignatureQuery::with_resolver(self.db, self.db, &context)
+            .field_ty(field)
+            .context("lower body-local field type")
     }
 
     /// Return fields using the body's assumptions and declaration overlay during autoderef.

@@ -10,7 +10,7 @@ use rg_ir_view::{
         details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
         initializer::InitializerView,
     },
-    ty::IndexedType,
+    ty::{IndexedType, TyView},
 };
 use rg_std::UniqueVec;
 
@@ -82,9 +82,22 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             let Some(details) = details.details_for_declaration(declaration, &context)? else {
                 continue;
             };
-            let block = self
+            let mut block = self
                 .hover_block(declaration, details)
                 .context("resolve hover documentation")?;
+            if let (SymbolAt::Expr { expr }, DeclarationRef::Field(_)) = (&symbol, declaration) {
+                // On `packet.value`, keep the declaration `value: T` and show what `T` became
+                // for this receiver. Compare labels too, since distinct types can render alike.
+                let types = TyView::new(self.0.view_db());
+                if let Some(inferred) = types.ty_for_expr(*expr)?
+                    && let Some(declared) = types.ty_for_declaration(declaration)?
+                    && inferred != declared
+                    && let Some(label) = type_renderer.render(&inferred)?
+                    && type_renderer.render(&declared)?.as_deref() != Some(label.as_str())
+                {
+                    block.ty = Some(label);
+                }
+            }
             blocks.push(block);
         }
 
