@@ -9,6 +9,7 @@ mod inlay_hints;
 mod navigation;
 mod references;
 mod rename;
+mod signature_help;
 mod symbol;
 mod symbols;
 
@@ -26,6 +27,7 @@ pub use self::{
     navigation::{NavigationTarget, NavigationTargetKind},
     references::ReferenceLocation,
     rename::{RenameEdit, RenameResult, RenameTarget},
+    signature_help::SignatureHelp,
     symbol::SymbolAt,
     symbols::{DocumentSymbol, WorkspaceSymbol},
 };
