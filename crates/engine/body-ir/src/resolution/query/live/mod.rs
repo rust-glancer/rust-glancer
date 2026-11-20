@@ -6,7 +6,7 @@ mod index;
 mod member;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, ScopeId, TypeDefId};
+use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TypeDefId};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_semantic_ir::{Generics, SemanticItemSource};
 use rg_source::ReadError;
@@ -114,34 +114,21 @@ where
             let Some(adt) = receiver.as_adt() else {
                 continue;
             };
-            let Some((field_ref, ty)) = self.declared_field(adt, field, table)? else {
+            let Some(field_ref) = self.context.item_query().field_for_type(adt.def, field)? else {
                 continue;
             };
+            let paths = self.context.item_paths();
+            let lowering = TypeLoweringQuery::new(&paths, &self.context);
+            let ty = lowering
+                .field_ty(table.interner(), field_ref)?
+                .map(|ty| self.instantiate_field(adt, ty, table))
+                .unwrap_or(table.interner().unknown());
             return Ok(Some((
                 BodyResolution::Declarations([field_ref.into()].into_iter().collect()),
                 ty,
             )));
         }
         Ok(None)
-    }
-
-    /// Project a field of the given owner directly, as required for constructor arguments.
-    pub(crate) fn declared_field<'s>(
-        &self,
-        adt: AdtTy<'s>,
-        field: &FieldKey,
-        table: &InferenceTable<'s>,
-    ) -> Result<Option<(FieldRef, Ty<'s>)>, ReadError> {
-        let Some(field_ref) = self.context.item_query().field_for_type(adt.def, field)? else {
-            return Ok(None);
-        };
-        let paths = self.context.item_paths();
-        let lowering = TypeLoweringQuery::new(&paths, &self.context);
-        let ty = lowering
-            .field_ty(table.interner(), field_ref)?
-            .map(|ty| self.instantiate_field(adt, ty, table))
-            .unwrap_or(table.interner().unknown());
-        Ok(Some((field_ref, ty)))
     }
 
     fn instantiate_field<'s>(

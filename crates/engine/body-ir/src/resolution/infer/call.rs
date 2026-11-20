@@ -34,7 +34,7 @@ impl<'s> PreparedCall<'s> {
     ) -> Option<Self> {
         let signature = item.signature(cx)?;
         Some(Self {
-            selected: Some(item),
+            selected: item.def.function().map(|_| item),
             params: signature.params,
             output: signature.call_return,
             receiver,

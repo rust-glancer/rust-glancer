@@ -60,7 +60,7 @@ impl<'s> InferenceState<'s> {
     }
 
     pub(crate) fn selected_call_function(&self, call: ExprId) -> Option<rg_ir_model::FunctionRef> {
-        self.selected_calls[call.0].map(|item| item.def)
+        self.selected_calls[call.0].and_then(|item| item.def.function())
     }
 
     pub(super) fn set_selected_call(&mut self, call: ExprId, selected: FnDefTy<'s>) {
@@ -224,7 +224,7 @@ impl<'s> InferenceState<'s> {
                 let item = selected?;
                 Some((
                     ExprId(index),
-                    CallFacts::new(item.def, table.finalize_args(item.args)),
+                    CallFacts::new(item.def.function()?, table.finalize_args(item.args)),
                 ))
             })
             .collect();
