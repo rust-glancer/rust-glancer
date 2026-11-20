@@ -92,7 +92,8 @@ where
     fn infer_expr_inner(&mut self, expr: ExprId, expected: &Ty<'s>) -> anyhow::Result<()> {
         // Syntax belongs to the immutable body, independently of the mutable inference state.
         let body = self.body;
-        match body.expr_unchecked(expr).kind {
+        let data = body.expr_unchecked(expr);
+        match data.kind {
             ExprKind::Block {
                 ref kind,
                 ref label,
@@ -741,16 +742,32 @@ where
                 }
             }
             ExprKind::Path { ref path } => {
-                let (resolution, ty) = self
+                let path_result = self
                     .context
                     .value_paths()
-                    .resolve_body_path_expr(expr, path, self.cx)
+                    .resolve_body_path_expr(expr, path, self.inference.table())
                     .context("resolve body path")?;
-                if let BodyResolution::Binding(binding) = resolution {
-                    self.inference.set_expr_resolution(expr, resolution);
+                if let BodyResolution::Binding(binding) = path_result.resolution {
+                    self.inference
+                        .set_expr_resolution(expr, path_result.resolution);
                     self.inference.set_expr_from_binding(expr, binding);
                 } else {
-                    self.inference.set_expr_facts(expr, resolution, ty);
+                    let ty = if let Some(target) = path_result.function {
+                        self.instantiate_function_target(
+                            target,
+                            data.scope,
+                            path.last_segment_angle_args().unwrap_or(&[]),
+                        )
+                        .context("instantiate function path")?
+                        .map_or_else(
+                            || self.cx.unknown(),
+                            |item| self.cx.fn_def(item.def, item.args),
+                        )
+                    } else {
+                        path_result.ty
+                    };
+                    self.inference
+                        .set_expr_facts(expr, path_result.resolution, ty);
                 }
             }
 

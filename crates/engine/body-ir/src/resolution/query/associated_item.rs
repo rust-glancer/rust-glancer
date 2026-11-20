@@ -17,7 +17,10 @@ use rg_ty::{
     trait_selection::{TraitSelection, TraitSelectionQuery},
 };
 
-use super::{BodyReceiverImplMatches, live::FunctionLookup, traits::BodyQualifiedTraitSelection};
+use super::{
+    BodyReceiverImplMatches, LiveCallTarget, live::FunctionLookup,
+    traits::BodyQualifiedTraitSelection, value_path::LiveValuePath,
+};
 use crate::{
     BodyAssociatedPathPrefix, BodyPath, body::facts::BodyResolution,
     resolution::BodyResolutionContext,
@@ -193,50 +196,98 @@ where
     }
 
     /// Resolve an associated value path that may use rich body syntax.
-    pub(crate) fn resolve_body_path(
+    pub(crate) fn resolve_body_path<'s>(
         &self,
         scope: ScopeId,
         path: &BodyPath,
-    ) -> Result<Option<(BodyResolution, Ty)>, ReadError> {
+        table: &solver::InferenceTable<'s>,
+    ) -> Result<Option<LiveValuePath<'s>>, ReadError> {
         let Some((prefix, last_segment)) = path.split_associated_item_prefix_name() else {
             return Ok(None);
         };
 
-        match prefix {
+        let (value, fallback) = match &prefix {
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
-                let prefix_ty = self.context.type_refs(scope).resolve(&prefix_ty_ref)?;
-                self.resolve_for_type(scope, &prefix_ty, last_segment)
-            }
-            BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
-                let Some(selection) = self
-                    .context
-                    .traits()
-                    .qualified_selection(scope, &self_ty, &trait_ref)?
-                else {
-                    return Ok(None);
-                };
-                let consts = self.qualified_trait_const_candidates(&selection, last_segment)?;
-                if !consts.is_empty() {
-                    return Ok(Some(Self::const_resolution(consts)));
-                }
-
-                let application = selection.application();
-                let Some(receiver) = application.self_ty() else {
-                    return Ok(None);
-                };
-                let functions = self.associated_function_candidates(
+                let prefix_ty = self.context.type_refs(scope).resolve(prefix_ty_ref)?;
+                let receiver = self.context.impls().matches_for_receiver_with_const_name(
                     scope,
-                    receiver,
-                    Some(application),
+                    &prefix_ty,
                     last_segment,
                 )?;
-                Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
+                (
+                    self.resolve_const_or_variant(&receiver, last_segment)?,
+                    Some((receiver.receiver_ty().clone(), None)),
+                )
             }
+            BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
+                if let Some(selection) = self
+                    .context
+                    .traits()
+                    .qualified_selection(scope, self_ty, trait_ref)?
+                {
+                    let consts = self.qualified_trait_const_candidates(&selection, last_segment)?;
+                    let application = selection.application();
+                    (
+                        (!consts.is_empty()).then(|| Self::const_resolution(consts)),
+                        application
+                            .self_ty()
+                            .map(|receiver| (receiver.clone(), Some(application.clone()))),
+                    )
+                } else {
+                    (None, None)
+                }
+            }
+        };
+        let cx = table.interner();
+        if let Some((resolution, ty)) = value {
+            return Ok(Some(LiveValuePath {
+                resolution,
+                ty: cx.lower_ty(
+                    &ty,
+                    cx.params(self.context.body().owner().generic_def().into()),
+                ),
+                function: None,
+            }));
         }
+
+        // Use the same candidates for navigation and inference. Their trials already know
+        // how the path fixes the impl or trait's generic arguments.
+        let live = self.context.live();
+        let targets = live.associated_function_targets(scope, &prefix, last_segment, table)?;
+        let (resolution, targets) = if targets.is_empty() {
+            let Some((receiver, qualification)) = fallback else {
+                return Ok(None);
+            };
+            let functions = self.associated_function_candidates(
+                scope,
+                &receiver,
+                qualification.as_ref(),
+                last_segment,
+            )?;
+            if functions.is_empty() {
+                return Ok(None);
+            }
+            let (resolution, _) = Self::function_resolution(functions);
+            let targets = live.declared_function_targets(&resolution)?;
+            (resolution, targets)
+        } else {
+            let resolution = BodyResolution::Declarations(
+                targets
+                    .iter()
+                    .map(|target| target.function.into())
+                    .collect(),
+            );
+            (resolution, targets)
+        };
+        Ok(Some(LiveValuePath {
+            resolution,
+            ty: cx.unknown(),
+            function: LiveCallTarget::unique_usable(targets),
+        }))
     }
 
     /// Resolve an associated value path after its type prefix has already been typed.
-    pub(crate) fn resolve_for_type(
+    fn resolve_for_type(
         &self,
         scope: ScopeId,
         prefix_ty: &Ty,
@@ -247,7 +298,24 @@ where
             prefix_ty,
             last_segment,
         )?;
+        if let Some(value) = self.resolve_const_or_variant(&const_receiver, last_segment)? {
+            return Ok(Some(value));
+        }
 
+        let functions = self.associated_function_candidates(
+            scope,
+            const_receiver.receiver_ty(),
+            None,
+            last_segment,
+        )?;
+        Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
+    }
+
+    fn resolve_const_or_variant(
+        &self,
+        const_receiver: &BodyReceiverImplMatches,
+        last_segment: &str,
+    ) -> Result<Option<(BodyResolution, Ty)>, ReadError> {
         // First treat the final segment as an enum variant. Variants are not ordinary associated
         // functions in either Semantic IR or Body IR, but value paths use the same syntax for
         // `Action::Start` and `Widget::new`, so they need an explicit pass.
@@ -265,7 +333,7 @@ where
         }
 
         if let Some(candidate) =
-            self.inherent_associated_const_candidate(&const_receiver, last_segment)?
+            self.inherent_associated_const_candidate(const_receiver, last_segment)?
         {
             return Ok(Some(Self::const_resolution([candidate])));
         }
@@ -281,18 +349,7 @@ where
             None,
         )?;
 
-        if !trait_consts.is_empty() {
-            return Ok(Some(Self::const_resolution(trait_consts)));
-        }
-
-        let functions = self.associated_function_candidates(
-            scope,
-            const_receiver.receiver_ty(),
-            None,
-            last_segment,
-        )?;
-
-        Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
+        Ok((!trait_consts.is_empty()).then(|| Self::const_resolution(trait_consts)))
     }
 
     /// Collect variant declarations and their resulting enum type.

@@ -12,6 +12,25 @@ use super::utils::{
 };
 
 #[test]
+fn projects_function_items_through_iterator_map() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:callable_adapters
+fn identity<T>(value: T) -> T { value }
+
+pub fn demo(values: &[&str]) {
+    let lengths = values.iter().map(|value| *value).map(str::len).collect::<Vec<_>>()$0; // ty("associated function item").in_lib("callable_adapters")
+    let same = values.iter().map(identity).collect::<Vec<_>>()$0; // ty("generic function item").in_lib("callable_adapters")
+}
+"#,
+        expect![[r#"
+            nominal struct alloc[lib]::crate::vec::Vec<usize, nominal struct alloc[lib]::crate::vec::Global> // associated function item
+            nominal struct alloc[lib]::crate::vec::Vec<&&str, nominal struct alloc[lib]::crate::vec::Global> // generic function item
+        "#]],
+    );
+}
+
+#[test]
 fn infers_future_outputs_from_async_closures_and_diverging_blocks() {
     check_analysis_with_fake_sysroot(
         r#"

@@ -813,12 +813,12 @@ pub fn use_it(user: User) {
                 initializer
                   expr e4 call => nominal struct body_rich_path_fixture[lib]::crate::User @ 27:26-27:57
                     callee
-                      expr e3 path <User as Factory<User>>::make -> fn trait body_rich_path_fixture[lib]::crate::Factory::make => <unknown> @ 27:26-27:55
+                      expr e3 path <User as Factory<User>>::make -> fn trait body_rich_path_fixture[lib]::crate::Factory::make => function item fn trait body_rich_path_fixture[lib]::crate::Factory::make<nominal struct body_rich_path_fixture[lib]::crate::User, nominal struct body_rich_path_fixture[lib]::crate::User> @ 27:26-27:55
               stmt s2 let v3 @ 28:5-28:64
                 initializer
                   expr e6 call => nominal struct body_rich_path_fixture[lib]::crate::Project @ 28:29-28:63
                     callee
-                      expr e5 path <User as Factory<Project>>::make -> fn trait body_rich_path_fixture[lib]::crate::Factory::make => <unknown> @ 28:29-28:61
+                      expr e5 path <User as Factory<Project>>::make -> fn trait body_rich_path_fixture[lib]::crate::Factory::make => function item fn trait body_rich_path_fixture[lib]::crate::Factory::make<nominal struct body_rich_path_fixture[lib]::crate::User, nominal struct body_rich_path_fixture[lib]::crate::Project> @ 28:29-28:61
 
 
             fn impl Factory<User> for User::make @ 14:5-16:6
@@ -1219,7 +1219,7 @@ pub fn use_it() {
                 initializer
                   expr e1 call => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 14:18-14:34
                     callee
-                      expr e0 path Widget::create -> fn impl Widget::create => <unknown> @ 14:18-14:32
+                      expr e0 path Widget::create -> fn impl Widget::create => function item fn impl Widget::create @ 14:18-14:32
               stmt s1 let v1 @ 15:5-15:44
                 initializer
                   expr e4 call => nominal enum body_associated_path_fixture[lib]::crate::Action @ 15:18-15:43
@@ -1281,7 +1281,7 @@ pub fn use_it(bytes: [u8; 4]) {
                 initializer
                   expr e3 call => u32 @ 11:17-11:42
                     callee
-                      expr e1 path u32::from_be_bytes -> fn impl u32::from_be_bytes => <unknown> @ 11:17-11:35
+                      expr e1 path u32::from_be_bytes -> fn impl u32::from_be_bytes => function item fn impl u32::from_be_bytes @ 11:17-11:35
                     arg
                       expr e2 path bytes -> local v0 => [u8; 4] @ 11:36-11:41
 

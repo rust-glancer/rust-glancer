@@ -560,7 +560,7 @@ pub fn use_it(id: GlobalId) {
                 initializer
                   expr e3 call => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 21:16-21:32
                     callee
-                      expr e2 path GlobalId::make -> fn trait fn body_local_trait_impl_fixture[lib]::crate::use_it::Named::make => <unknown> @ 21:16-21:30
+                      expr e2 path GlobalId::make -> fn trait fn body_local_trait_impl_fixture[lib]::crate::use_it::Named::make => function item fn trait fn body_local_trait_impl_fixture[lib]::crate::use_it::Named::make<nominal struct body_local_trait_impl_fixture[lib]::crate::GlobalId> @ 21:16-21:30
 
 
             fn impl Named for GlobalId::label @ 11:9-13:10
@@ -1197,7 +1197,7 @@ pub fn make() {
                 initializer
                   expr e2 call => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 21:16-21:28
                     callee
-                      expr e1 path User::make -> fn impl User::make => <unknown> @ 21:16-21:26
+                      expr e1 path User::make -> fn impl User::make => function item fn impl User::make @ 21:16-21:26
               stmt s6 let v2: User::Id @ 22:5-22:36
                 initializer
                   expr e3 path GlobalId -> struct body_local_assoc_body_fixture[lib]::crate::GlobalId => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 22:27-22:35

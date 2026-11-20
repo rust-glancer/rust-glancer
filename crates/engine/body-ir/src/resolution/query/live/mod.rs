@@ -18,7 +18,7 @@ use rg_ty::{
     },
 };
 
-pub(crate) use self::member::FunctionLookup;
+pub(crate) use self::{call::LiveCallTarget, member::FunctionLookup};
 use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Looks up declarations without turning the body's live types into saved types along the way.

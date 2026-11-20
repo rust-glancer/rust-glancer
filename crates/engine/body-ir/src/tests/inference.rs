@@ -54,11 +54,11 @@ pub fn use_it(user: User) {
                 initializer
                   expr e3 call => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 7:21-7:34
                     callee
-                      expr e0 path id -> fn body_assignment_inference_fixture[lib]::crate::id => function item fn body_assignment_inference_fixture[lib]::crate::id<<unknown>> @ 7:21-7:23
+                      expr e0 path id -> fn body_assignment_inference_fixture[lib]::crate::id => function item fn body_assignment_inference_fixture[lib]::crate::id<nominal struct body_assignment_inference_fixture[lib]::crate::User> @ 7:21-7:23
                     arg
                       expr e2 call => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 7:24-7:33
                         callee
-                          expr e1 path missing -> fn body_assignment_inference_fixture[lib]::crate::missing => function item fn body_assignment_inference_fixture[lib]::crate::missing<<unknown>> @ 7:24-7:31
+                          expr e1 path missing -> fn body_assignment_inference_fixture[lib]::crate::missing => function item fn body_assignment_inference_fixture[lib]::crate::missing<nominal struct body_assignment_inference_fixture[lib]::crate::User> @ 7:24-7:31
               stmt s1 expr; @ 8:5-8:18
                 expr e6 assign = => () @ 8:5-8:17
                   target
@@ -119,7 +119,7 @@ pub fn use_it(user: User) {
                 initializer
                   expr e2 call => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 10:23-10:37
                     callee
-                      expr e0 path identity -> fn body_solved_binding_member_fixture[lib]::crate::identity => function item fn body_solved_binding_member_fixture[lib]::crate::identity<<unknown>> @ 10:23-10:31
+                      expr e0 path identity -> fn body_solved_binding_member_fixture[lib]::crate::identity => function item fn body_solved_binding_member_fixture[lib]::crate::identity<nominal struct body_solved_binding_member_fixture[lib]::crate::User> @ 10:23-10:31
                     arg
                       expr e1 path user -> local v0 => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 10:32-10:36
               stmt s1 expr; @ 11:5-11:17
@@ -211,7 +211,7 @@ pub fn use_it() {
                 initializer
                   expr e1 call => nominal struct body_late_receiver_refinement[lib]::crate::Pair<u8, u8> @ 18:16-18:27
                     callee
-                      expr e0 path make_pair -> fn body_late_receiver_refinement[lib]::crate::make_pair => function item fn body_late_receiver_refinement[lib]::crate::make_pair<<unknown>> @ 18:16-18:25
+                      expr e0 path make_pair -> fn body_late_receiver_refinement[lib]::crate::make_pair => function item fn body_late_receiver_refinement[lib]::crate::make_pair<u8> @ 18:16-18:25
               stmt s1 let v1 @ 19:5-19:29
                 initializer
                   expr e3 method_call same -> fn impl Pair<T, T>::same => nominal struct body_late_receiver_refinement[lib]::crate::Found @ 19:17-19:28
@@ -331,7 +331,7 @@ pub fn use_it(user: User) {
                 initializer
                   expr e2 call => nominal struct body_static_assoc_fn_impl_generic_inference[lib]::crate::Vec<nominal struct body_static_assoc_fn_impl_generic_inference[lib]::crate::User> @ 12:21-12:41
                     callee
-                      expr e0 path Vec::singleton -> fn impl Vec<T>::singleton => <unknown> @ 12:21-12:35
+                      expr e0 path Vec::singleton -> fn impl Vec<T>::singleton => function item fn impl Vec<T>::singleton<nominal struct body_static_assoc_fn_impl_generic_inference[lib]::crate::User> @ 12:21-12:35
                     arg
                       expr e1 path user -> local v0 => nominal struct body_static_assoc_fn_impl_generic_inference[lib]::crate::User @ 12:36-12:40
               stmt s1 expr; @ 13:5-13:15
@@ -611,7 +611,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
               tail
                 expr e1 call => param B @ 18:9-18:18
                   callee
-                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing<<unknown>> @ 18:9-18:16
+                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing<param B> @ 18:9-18:16
 
 
             fn impl NotIterator<T>::collect @ 27:5-29:6
@@ -625,7 +625,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
               tail
                 expr e1 call => param B @ 28:9-28:18
                   callee
-                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing<<unknown>> @ 28:9-28:16
+                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing<param B> @ 28:9-28:16
         "#]],
     );
 }
@@ -874,7 +874,7 @@ pub fn use_it() {
                 initializer
                   expr e1 call => u8 @ 10:17-10:23
                     callee
-                      expr e0 path call -> fn body_cyclic_dyn_candidate_fixture[lib]::crate::call => function item fn body_cyclic_dyn_candidate_fixture[lib]::crate::call<<unknown>> @ 10:17-10:21
+                      expr e0 path call -> fn body_cyclic_dyn_candidate_fixture[lib]::crate::call => function item fn body_cyclic_dyn_candidate_fixture[lib]::crate::call<u8> @ 10:17-10:21
         "#]],
     );
 }

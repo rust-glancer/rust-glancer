@@ -201,10 +201,9 @@ where
                 BodyResolution::Declarations([DeclarationRef::from(function)].into_iter().collect())
             } else if let Some(receiver) = receiver {
                 let receiver_ty = self.inference.root_resolved_expr_ty(receiver);
-                let targets = self.context.live().call_targets(
+                let targets = self.context.live().method_targets(
                     call,
-                    None,
-                    Some(receiver_ty),
+                    receiver_ty,
                     self.inference.table(),
                 )?;
                 if targets.is_empty() {

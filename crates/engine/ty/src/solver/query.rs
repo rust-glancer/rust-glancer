@@ -16,7 +16,7 @@ use rustc_type_ir::{
 };
 
 use super::{
-    AliasTy, Clause, DefId, GenericArgs, InferVarKind, InferenceSubstitution,
+    AliasTy, Clause, DefId, FnDefTy, GenericArgs, InferVarKind, InferenceSubstitution,
     InferenceTable, List, Outcome, ProjectionTy, SolverInterner, Ty, TyShape,
     declarations::LangItem,
 };
@@ -78,6 +78,25 @@ impl<'s> CallableSignature<'s> {
                 .map(|ty| Box::new(cx.raise_ty(ty).unwrap_or(StoredTy::Unknown))),
             qualifiers: self.qualifiers,
         }
+    }
+}
+
+impl<'s> FnDefTy<'s> {
+    /// Use the arguments fixed when this function item was formed. A later `f(...)` can
+    /// refine those variables, and another use of the same binding sees that refinement.
+    pub fn signature(self, cx: SolverInterner<'s>) -> Option<CallableSignature<'s>> {
+        let signature = cx.function_signature(self.def)?;
+        let params = cx.params(DefId::Function(self.def));
+        if params.is_empty() {
+            return Some(signature);
+        }
+        let subst = InferenceSubstitution::from_args(params.iter().copied(), self.args);
+        Some(CallableSignature {
+            params: subst.apply(cx, signature.params),
+            call_return: subst.apply(cx, signature.call_return),
+            async_output: signature.async_output.map(|ty| subst.apply(cx, ty)),
+            qualifiers: signature.qualifiers,
+        })
     }
 }
 
@@ -300,31 +319,31 @@ impl<'s> InferenceTable<'s> {
         subst
     }
 
-    /// Instantiate the signature and register the function's requirements for this call.
+    /// Form a function item and register its requirements with the same substitution.
     ///
     /// For `fn copy<T: Clone>(value: T) -> T` with `T = ?T`, the parameter, return type, and queued
     /// `?T: Clone` goal all share that variable. Learning the argument type then gives the bound
     /// the same evidence without rebuilding the signature.
-    pub fn instantiate_function(
+    pub fn instantiate_function_item(
         &self,
         function: FunctionRef,
         subst: &InferenceSubstitution<'s>,
-    ) -> Option<CallableSignature<'s>> {
+    ) -> Option<FnDefTy<'s>> {
         let cx = self.interner();
         let callbacks = cx.track_callbacks();
-        let signature = cx.function_signature(function)?;
-        let clauses = subst.apply(cx, cx.predicates(DefId::Function(function)));
+        cx.function_signature(function)?;
+        let owner = DefId::Function(function);
+        let args = subst.args_for(cx, cx.params(owner).iter().copied());
+        let clauses = subst.apply(cx, cx.predicates(owner));
         if callbacks.failure().is_some() {
             return None;
         }
         for clause in clauses {
             self.register(clause);
         }
-        Some(CallableSignature {
-            params: subst.apply(cx, signature.params),
-            call_return: subst.apply(cx, signature.call_return),
-            async_output: signature.async_output.map(|ty| subst.apply(cx, ty)),
-            qualifiers: signature.qualifiers,
+        Some(FnDefTy {
+            def: function,
+            args,
         })
     }
 

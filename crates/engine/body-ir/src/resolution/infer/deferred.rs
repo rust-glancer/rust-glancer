@@ -538,18 +538,17 @@ where
             }
             DeferredKind::Call { call } => {
                 let body = self.body;
-                let (receiver, args) = match &body.expr_unchecked(*call).kind {
-                    ExprKind::Call { args, .. } => (None, args.as_slice()),
-                    ExprKind::MethodCall { receiver, args, .. } => (*receiver, args.as_slice()),
+                let args = match &body.expr_unchecked(*call).kind {
+                    ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => args,
                     _ => unreachable!("pending call owns a call expression"),
                 };
                 let Some(prepared) = self
-                    .prepare_call(*call, receiver)
+                    .prepare_call(*call)
                     .context("select pending call signature")?
                 else {
                     return Ok(false);
                 };
-                self.finish_call(prepared, args);
+                self.finish_call(*call, prepared, args);
                 Ok(true)
             }
             DeferredKind::Pattern {
