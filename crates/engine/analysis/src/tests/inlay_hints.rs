@@ -621,6 +621,31 @@ pub fn obvious(user: User, model: Model, local_user_id: u32) {
 }
 
 #[test]
+fn shows_parameter_hints_for_modified_raw_and_unicode_bindings() {
+    check_inlay_hints(
+        r#"
+//- /src/lib.rs crate:parameter_binding_names
+pub fn configure(mut retries: u32, r#type: u32, 길이: u32) { retries += 1; }
+pub fn measure(長: u32) {}
+
+pub fn use_it(retries: u32, r#type: u32, 길이: u32) {
+    configure(3, 4, 5);
+    configure(retries, r#type, 길이);
+    measure(6);
+}
+"#,
+        InlayHintsQuery::new("parameter binding names", "/src/lib.rs"),
+        expect![[r#"
+            // parameter binding names
+            `retries:` @ 5:15-5:16
+            `r#type:` @ 5:18-5:19
+            `길이:` @ 5:21-5:22
+            `長:` @ 7:13-7:14
+        "#]],
+    );
+}
+
+#[test]
 fn infers_fields_and_methods_through_generic_deref_steps() {
     check_inlay_hints(
         r#"

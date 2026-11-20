@@ -7,7 +7,7 @@
 
 use rg_ir_view::{
     display::{signature::SignatureRenderer, syntax::SyntaxRenderer},
-    member::{FunctionParameterView, MemberFunction},
+    member::MemberFunction,
 };
 
 use super::{
@@ -162,7 +162,9 @@ impl<'source> FunctionCompletionRenderer<'source> {
             if idx > 0 {
                 snippet.push_str(", ");
             }
-            let placeholder = Self::param_placeholder(param, idx + 1);
+            let placeholder = param
+                .simple_binding_name()
+                .map_or_else(|| format!("arg{}", idx + 1), str::to_owned);
             snippet.push_str(&format!(
                 "${{{}:{}}}",
                 idx + 1,
@@ -173,43 +175,5 @@ impl<'source> FunctionCompletionRenderer<'source> {
         snippet.push(')');
         snippet.push_str("$0");
         snippet
-    }
-
-    fn param_placeholder(param: FunctionParameterView<'_>, idx: usize) -> String {
-        let pat = param.pattern().trim();
-        Self::simple_binding_name(pat)
-            .map(ToString::to_string)
-            .unwrap_or_else(|| format!("arg{idx}"))
-    }
-
-    fn simple_binding_name(mut pat: &str) -> Option<&str> {
-        loop {
-            if let Some(stripped) = pat.strip_prefix("mut ") {
-                pat = stripped.trim_start();
-            } else if let Some(stripped) = pat.strip_prefix("ref ") {
-                pat = stripped.trim_start();
-            } else {
-                break;
-            }
-        }
-
-        if pat != "_" && Self::is_ident_like(pat) {
-            Some(pat)
-        } else {
-            None
-        }
-    }
-
-    fn is_ident_like(value: &str) -> bool {
-        let value = value.strip_prefix("r#").unwrap_or(value);
-        let mut chars = value.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        if !(first == '_' || first.is_ascii_alphabetic()) {
-            return false;
-        }
-
-        chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
     }
 }

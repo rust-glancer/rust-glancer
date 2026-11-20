@@ -18,6 +18,7 @@ use rg_ir_model::{
 use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
 pub use rg_semantic_ir::AssociatedItemFilter;
 use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemStoreQuery};
+use rg_syntax::{Edition, LexedStr, SyntaxKind};
 use rg_ty::lookup::MemberMethodOrigin as TyMemberMethodOrigin;
 
 use crate::{IndexedViewDb, SymbolKind, item::path::PathView, ty::IndexedType};
@@ -178,9 +179,8 @@ impl<'a> MemberFunction<'a> {
 
 /// Borrowed parameter facts needed by editor features.
 ///
-/// Item lowering retains complete patterns and type syntax. Completion and inlay hints only need
-/// the written pattern plus whether the parameter is a receiver, so the full item-tree node stays
-/// behind this projection.
+/// Item lowering retains complete patterns and type syntax. Completion and inlay hints can ask
+/// this view for the name of a simple binding or whether a parameter is a receiver.
 #[derive(Debug, Clone, Copy)]
 pub struct FunctionParameterView<'a> {
     param: &'a ParamItem,
@@ -191,8 +191,25 @@ impl<'a> FunctionParameterView<'a> {
         Self { param }
     }
 
-    pub fn pattern(self) -> &'a str {
-        self.param.pat.as_str()
+    /// Return the written name of a simple parameter binding.
+    pub fn simple_binding_name(self) -> Option<&'a str> {
+        let mut name = self.param.pat.trim();
+        while let Some(binding) = name
+            .strip_prefix("mut ")
+            .or_else(|| name.strip_prefix("ref "))
+        {
+            name = binding.trim_start();
+        }
+        if self.is_receiver() && name == "self" {
+            return Some(name);
+        }
+        // The declaration was already parsed in its own edition. An older lexer edition keeps
+        // names such as `gen` valid here even when a newer crate is calling the function.
+        matches!(
+            LexedStr::single_token(Edition::Edition2015, name),
+            Some((SyntaxKind::IDENT, None))
+        )
+        .then_some(name)
     }
 
     pub fn is_receiver(self) -> bool {
