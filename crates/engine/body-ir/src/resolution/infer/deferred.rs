@@ -280,8 +280,8 @@ where
         }
 
         !self.deferred.iter().any(|operation| match &operation.kind {
-            DeferredKind::Call { call } => self.inference.call_result_is_pending(*call, &ty),
-            DeferredKind::Field { expr }
+            DeferredKind::Call { call: expr }
+            | DeferredKind::Field { expr }
             | DeferredKind::Index { expr }
             | DeferredKind::Operator { expr } => self.inference.root_resolved_expr_ty(*expr) == ty,
             DeferredKind::BranchResult { result, .. } | DeferredKind::BlockTail { result, .. } => {
@@ -417,19 +417,26 @@ where
 
     /// Snapshot the types this operation depends on, expanding solved variables for comparison.
     /// Tuples here group dependencies into a key; they are not types of source expressions.
-    fn deferred_input(&self, kind: &DeferredKind<'s>) -> Ty<'s> {
+    pub(super) fn deferred_input(&self, kind: &DeferredKind<'s>) -> Ty<'s> {
         let expr_ty = |expr| self.inference.expr_ty(expr);
         let input = match kind {
-            DeferredKind::Call { call } => {
-                let receiver = match self.body.expr_unchecked(*call).kind {
-                    ExprKind::Call { .. } => None,
-                    ExprKind::MethodCall { receiver, .. } => receiver,
-                    _ => unreachable!("pending call owns a call expression"),
-                };
-                // Only unselected calls wait here, and receiver evidence can change their
-                // lookup. Selected calls' predicates and projections are retried by the solver.
-                receiver.map(expr_ty).unwrap_or(self.cx.unknown())
-            }
+            DeferredKind::Call { call } => match &self.body.expr_unchecked(*call).kind {
+                // Multiple callable bounds of the same arity can need argument evidence.
+                ExprKind::Call {
+                    callee: Some(callee),
+                    args,
+                } => self.cx.tuple(
+                    std::iter::once(*callee)
+                        .chain(args.iter().copied())
+                        .map(expr_ty)
+                        .collect::<Vec<_>>(),
+                ),
+                ExprKind::MethodCall { receiver, .. } => {
+                    receiver.map(expr_ty).unwrap_or(self.cx.unknown())
+                }
+                ExprKind::Call { callee: None, .. } => self.cx.unknown(),
+                _ => unreachable!("pending call owns a call expression"),
+            },
             DeferredKind::Field { expr } => match self.body.expr_unchecked(*expr).kind {
                 ExprKind::Field { base, .. } => base.map(expr_ty).unwrap_or(self.cx.unknown()),
                 _ => unreachable!("pending field owns a field expression"),

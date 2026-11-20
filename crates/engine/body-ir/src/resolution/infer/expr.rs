@@ -7,7 +7,9 @@
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
-use rg_ir_model::{BuiltinMacroExprKind, ExprId, FieldKey, StmtId, identity::DeclarationRef};
+use rg_ir_model::{
+    BuiltinMacroExprKind, ExprId, FieldKey, SemanticItemRef, StmtId, identity::DeclarationRef,
+};
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
 use rg_ty::{
@@ -17,8 +19,8 @@ use rg_ty::{
 
 use super::{BodyInference, ReturnTarget, deferred::DeferredKind};
 use crate::body::{
-    ExprAssignOp, ExprBlockKind, ExprKind, ExprRangeKind, ExprWrapperKind, LabelData, StmtKind,
-    facts::BodyResolution,
+    BodyPathSegmentKind, ExprAssignOp, ExprBlockKind, ExprKind, ExprRangeKind, ExprWrapperKind,
+    LabelData, StmtKind, facts::BodyResolution,
 };
 
 // These targets live only while walking a body. A break searches from the innermost target;
@@ -173,20 +175,54 @@ where
             ExprKind::Call { callee, ref args } => {
                 self.infer_optional(callee, &self.cx.unknown())
                     .context("infer optional expression")?;
+                let mut constructor = None;
+                let mut variant = None;
                 if let Some(callee) = callee {
-                    let callee_ty = self.inference.root_resolved_expr_ty(callee);
-                    if matches!((callee_ty).shape(), TyShape::Adt(_)) {
-                        self.inference.set_expr_ty(expr, callee_ty);
+                    let ty = self.inference.root_resolved_expr_ty(callee);
+                    if let BodyResolution::Declarations(declarations) =
+                        self.inference.expr_resolution(callee)
+                    {
+                        match declarations.as_one() {
+                            Some(DeclarationRef::EnumVariant(target)) => {
+                                constructor = Some(ty);
+                                variant = Some(*target);
+                            }
+                            Some(DeclarationRef::Item(SemanticItemRef::TypeDef(_))) => {
+                                constructor = Some(ty)
+                            }
+                            _ => {}
+                        }
+                    }
+                    if constructor.is_none()
+                        && let Some(adt) = ty.as_adt()
+                    {
+                        // The value path gives `Self` its nominal type without recording a
+                        // written reference to the struct. Recognize that constructor here.
+                        let mut inner = callee;
+                        while let ExprKind::Wrapper {
+                            kind: ExprWrapperKind::Paren,
+                            inner: Some(expr),
+                        } = body.expr_unchecked(inner).kind
+                        {
+                            inner = expr;
+                        }
+                        if let ExprKind::Path { ref path } = body.expr_unchecked(inner).kind
+                            && !path.is_absolute()
+                            && let [segment] = path.segments()
+                            && matches!(segment.kind(), BodyPathSegmentKind::SelfType)
+                            && self
+                                .context
+                                .item_query()
+                                .type_def_has_value_constructor(adt.def)
+                                .context("resolve Self constructor")?
+                        {
+                            constructor = Some(ty);
+                        }
                     }
                 }
-                let variant =
-                    callee.and_then(|callee| match self.inference.expr_resolution(callee) {
-                        BodyResolution::Declarations(declarations) => match declarations.as_one() {
-                            Some(DeclarationRef::EnumVariant(variant)) => Some(*variant),
-                            _ => None,
-                        },
-                        _ => None,
-                    });
+                if let Some(ty) = constructor {
+                    self.inference.set_expr_ty(expr, ty);
+                }
                 if let Some(variant) = variant {
                     // A tuple variant gets argument expectations from its enum's fields. Give
                     // omitted enum arguments live slots first, so `Some(value)` and an expected
@@ -213,8 +249,14 @@ where
                         self.infer_expr(*arg, &expected)
                             .context("infer variant argument")?;
                     }
+                } else if constructor.is_some() {
+                    // TODO: Use tuple struct fields as argument expectations, as for variants.
+                    for arg in args {
+                        self.infer_expr(*arg, &self.cx.unknown())
+                            .context("infer tuple struct argument")?;
+                    }
                 } else {
-                    self.infer_call(expr, args, None, expected)
+                    self.infer_call(expr, args, expected)
                         .context("infer call")?;
                 }
             }
@@ -224,7 +266,7 @@ where
                 self.infer_optional(receiver, &self.cx.unknown())
                     .context("infer optional expression")?;
                 self.method_calls.push(expr);
-                self.infer_call(expr, args, receiver, expected)
+                self.infer_call(expr, args, expected)
                     .context("infer call")?;
             }
             ExprKind::Tuple { ref fields } => {

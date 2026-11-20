@@ -12,6 +12,56 @@ use super::utils::{
 };
 
 #[test]
+fn infers_calls_through_callable_values() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:callable_values
+fn identity<T>(value: T) -> T { value }
+
+pub fn demo<F: Fn() -> u32>(pointer: fn(u16) -> bool, generic: F) {
+    let closure = |arg| arg;
+    let from_closure = closure(1u8)$0; // ty("local closure").in_lib("callable_values")
+    let from_pointer = pointer(2$0)$1; // ty("pointer argument").in_lib("callable_values"), ty("pointer result").in_lib("callable_values")
+    let from_bound = generic()$0; // ty("Fn bound result").in_lib("callable_values")
+    let item = identity::<u64>;
+    let from_item = item(3$0)$1; // ty("function item argument").in_lib("callable_values"), ty("function item result").in_lib("callable_values")
+}
+
+pub fn call_mut<F: FnMut(u128) -> char>(mut generic: F) {
+    let from_bound = generic(4$0)$1; // ty("FnMut bound argument").in_lib("callable_values"), ty("FnMut bound result").in_lib("callable_values")
+}
+
+pub fn call_overloaded<F: Fn(u8) -> u32 + Fn(u16) -> u64>(generic: F) {
+    let first = generic(1u8)$0; // ty("first callable bound").in_lib("callable_values")
+    let second = generic(1u16)$0; // ty("second callable bound").in_lib("callable_values")
+}
+
+pub struct Pair(u8);
+
+impl Pair {
+    pub fn new() -> Self {
+        let result = Self(1u8)$0; // ty("Self constructor").in_lib("callable_values")
+        result
+    }
+}
+"#,
+        expect![[r#"
+            u8 // local closure
+            u16 // pointer argument
+            bool // pointer result
+            u32 // Fn bound result
+            u64 // function item argument
+            u64 // function item result
+            u128 // FnMut bound argument
+            char // FnMut bound result
+            u32 // first callable bound
+            u64 // second callable bound
+            nominal struct callable_values[lib]::crate::Pair // Self constructor
+        "#]],
+    );
+}
+
+#[test]
 fn projects_function_items_through_iterator_map() {
     check_analysis_with_fake_sysroot(
         r#"

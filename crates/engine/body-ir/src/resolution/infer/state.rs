@@ -67,10 +67,6 @@ impl<'s> InferenceState<'s> {
         self.selected_calls[call.0] = Some(selected);
     }
 
-    pub(super) fn call_result_is_pending(&self, call: ExprId, ty: &Ty<'s>) -> bool {
-        self.selected_calls[call.0].is_none() && self.root_resolved_expr_ty(call) == *ty
-    }
-
     pub(crate) fn expr_ty(&self, expr: ExprId) -> Ty<'s> {
         self.exprs[expr].ty
     }

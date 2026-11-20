@@ -19,7 +19,7 @@ use crate::{body::ExprKind, resolution::query::LiveCallTarget};
 /// The signature supplies argument expectations. Once checking is done, it and the receiver
 /// information can be dropped; only `selected` is retained until body finalization.
 pub(super) struct PreparedCall<'s> {
-    selected: FnDefTy<'s>,
+    selected: Option<FnDefTy<'s>>,
     params: List<'s, Ty<'s>>,
     output: Ty<'s>,
     // A dot call supplies `self` separately; `Type::method(value, arg)` writes it out.
@@ -34,7 +34,7 @@ impl<'s> PreparedCall<'s> {
     ) -> Option<Self> {
         let signature = item.signature(cx)?;
         Some(Self {
-            selected: item,
+            selected: Some(item),
             params: signature.params,
             output: signature.call_return,
             receiver,
@@ -75,20 +75,14 @@ where
         &mut self,
         call: ExprId,
         args: &[ExprId],
-        receiver: Option<ExprId>,
         expected: &Ty<'s>,
     ) -> anyhow::Result<()> {
         for arg in args {
             self.prepare_closure(*arg);
         }
-        let lookup_input = receiver.map(|expr| {
-            self.inference
-                .table()
-                .canonicalize(&self.inference.expr_ty(expr))
-        });
-        let prepared = self
-            .prepare_call(call)
-            .context("select call signature")?;
+        let pending = DeferredKind::Call { call };
+        let prepared = self.prepare_call(call).context("select call signature")?;
+        let lookup_input = prepared.is_none().then(|| self.deferred_input(&pending));
         self.inference.expr_slot(call);
         // A selected generic signature can use the expectation to infer its type arguments.
         // An unresolved call or root projection may instead turn out to return `!`; its expected
@@ -117,18 +111,11 @@ where
         }
         if let Some(prepared) = prepared {
             self.finish_call(call, prepared, args);
-        } else {
+        } else if let Some(lookup_input) = lookup_input {
             // Only lookup needs a body-level retry. Once a call is selected, its remaining
             // predicates and projections are already in the inference table's goal queue.
-            let pending = DeferredKind::Call { call };
-            let receiver_changed = lookup_input
-                != receiver.map(|expr| {
-                    self.inference
-                        .table()
-                        .canonicalize(&self.inference.expr_ty(expr))
-                });
-            if receiver_changed {
-                // Ordinary argument inference can refine the same local used as this receiver.
+            if lookup_input != self.deferred_input(&pending) {
+                // Ordinary argument inference can refine a local used as receiver or callee.
                 self.run_or_defer(pending)
                     .context("retry call after argument inference")?;
             } else {
@@ -166,12 +153,9 @@ where
         crate::profile::metric::CALL_ATTEMPTS.inc();
         let data = self.body.expr_unchecked(call);
         let prepared = match &data.kind {
-            ExprKind::Call { callee, .. } => callee.and_then(|callee| {
-                let TyShape::FnDef(item) = self.inference.root_resolved_expr_ty(callee).shape() else {
-                    return None;
-                };
-                PreparedCall::from_item(item, None, self.cx)
-            }),
+            ExprKind::Call { callee, args } => {
+                callee.and_then(|callee| self.prepare_value_call(callee, args))
+            }
             ExprKind::MethodCall {
                 receiver: Some(receiver),
                 generic_args,
@@ -199,6 +183,35 @@ where
             return Ok(Some(prepared));
         }
         Ok(None)
+    }
+
+    fn prepare_value_call(&self, callee: ExprId, args: &[ExprId]) -> Option<PreparedCall<'s>> {
+        let table = self.inference.table();
+        let ty = self.inference.root_resolved_expr_ty(callee);
+        for callee in table.autoderef(ty) {
+            let (params, ret) = match callee.shape() {
+                TyShape::FnDef(item) => return PreparedCall::from_item(item, None, self.cx),
+                TyShape::Closure(signature) => (signature.params, signature.ret),
+                TyShape::FnPointer { params, ret } => (params, ret),
+                TyShape::Param(_) | TyShape::Alias(_) | TyShape::Dyn(_) | TyShape::Adt(_) => {
+                    let arguments = args
+                        .iter()
+                        .map(|&arg| self.inference.root_resolved_expr_ty(arg));
+                    let Some(signature) = table.callable_bound_signature(callee, arguments) else {
+                        continue;
+                    };
+                    signature
+                }
+                _ => continue,
+            };
+            return Some(PreparedCall {
+                selected: None,
+                params,
+                output: ret,
+                receiver: None,
+            });
+        }
+        None
     }
 
     /// A generic function item gets a fresh substitution at each use of its path. For example,
@@ -260,6 +273,8 @@ where
             self.inference.table().unify(receiver, param);
         }
         let _ = self.inference.table().fulfill();
-        self.inference.set_selected_call(call, prepared.selected);
+        if let Some(selected) = prepared.selected {
+            self.inference.set_selected_call(call, selected);
+        }
     }
 }
