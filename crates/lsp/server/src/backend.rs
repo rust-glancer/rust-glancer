@@ -14,7 +14,9 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{ClientCapabilities as EngineClientCapabilities, file_uri_to_path};
+use rg_lsp_proto::{
+    ClientCapabilities as EngineClientCapabilities, CompletionImportData, file_uri_to_path,
+};
 use rg_std::NormalizedPathBuf;
 use tokio::sync::OnceCell;
 use tower_lsp_server::{
@@ -489,6 +491,23 @@ impl LanguageServer for Backend {
             .completion_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
         methods::text_document::completion::completion(context, params).await
+    }
+
+    async fn completion_resolve(&self, mut item: CompletionItem) -> Result<CompletionItem> {
+        let Some(data) = item.data.clone() else {
+            return Ok(item);
+        };
+        let import: CompletionImportData = serde_json::from_value(data)
+            .map_err(|_| Error::invalid_params("invalid completion import data"))?;
+        let context = match self.document_context_for(&import.uri).await {
+            Ok(context) => context,
+            Err(error) if error.code == ErrorCode::ContentModified => {
+                item.additional_text_edits = None;
+                return Ok(item);
+            }
+            Err(error) => return Err(error),
+        };
+        methods::text_document::completion::resolve_import(context, item, import).await
     }
 
     #[tracing::instrument(

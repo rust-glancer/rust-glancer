@@ -255,7 +255,12 @@ impl PreparedEngine {
                 CompletionClientCapabilities::default(),
             ))
             .expect("query benchmark completion should succeed");
-        outcome.into_value()
+        outcome
+            .into_value()
+            .items
+            .into_iter()
+            .map(|candidate| candidate.item)
+            .collect()
     }
 
     fn inlay_hints(&self, relative_path: &str, range: Range) -> Vec<InlayHint> {

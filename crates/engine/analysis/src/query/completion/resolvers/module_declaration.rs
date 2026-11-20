@@ -112,7 +112,7 @@ impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
                 ),
                 insert_text: CompletionInsertText::Plain,
                 edit: Some(edit),
-                additional_edits: Vec::new(),
+                import: None,
             });
         }
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));

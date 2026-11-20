@@ -8,9 +8,9 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ExprId, FunctionRef, ItemOwner, Mutability, ScopeId, SemanticItemRef, identity::DeclarationRef,
+    ExprId, FunctionRef, ItemOwner, ScopeId, SemanticItemRef, identity::DeclarationRef,
 };
-use rg_item_tree::{GenericArg as ItemGenericArg, ParamKind, SelfParamKind};
+use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::{
@@ -76,15 +76,8 @@ where
                 // T, &T, &mut T, then the same three forms for the next dereference step.
                 let cx = table.interner();
                 let self_types = table.method_receivers(receiver).collect::<Vec<_>>();
-                let receivers = self_types
-                    .iter()
-                    .flat_map(|&ty| {
-                        [
-                            ty,
-                            cx.reference(Mutability::Shared, ty),
-                            cx.reference(Mutability::Mutable, ty),
-                        ]
-                    })
+                let receivers = table
+                    .method_receiver_adjustments(&self_types)
                     .collect::<Vec<_>>();
                 let items = self.context.item_query();
                 let mut selected = Vec::new();
@@ -103,29 +96,17 @@ where
                         let Some(function) = items.function_data(target.function)? else {
                             continue;
                         };
-                        let Some(param) = function.signature.params().first() else {
+                        // 3. For Self = Widget, `&self` accepts &Widget. A typed receiver
+                        // such as `self: Box<Self>` takes its type from the instantiated
+                        // signature instead.
+                        let Some(parameter_ty) = Self::method_receiver_type(
+                            cx,
+                            target.function,
+                            function,
+                            &target.subst,
+                            self_ty,
+                        ) else {
                             continue;
-                        };
-                        // 3. Work out the type this method actually accepts as its receiver.
-                        // With Self = Widget, &self accepts &Widget. With Self = &Widget,
-                        // the same &self spelling accepts &&Widget. A typed receiver such as
-                        // `self: &Self` gets its type from the signature, with this candidate's
-                        // generic substitutions applied to the types written in that parameter.
-                        let parameter_ty = match param.kind {
-                            ParamKind::SelfParam(SelfParamKind::Value) => self_ty,
-                            ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
-                                cx.reference(mutability, self_ty)
-                            }
-                            ParamKind::SelfParam(SelfParamKind::Explicit) => {
-                                let Some(signature) = cx.function_signature(target.function) else {
-                                    continue;
-                                };
-                                let Some(param) = signature.params.first() else {
-                                    continue;
-                                };
-                                target.subst.apply(cx, *param)
-                            }
-                            ParamKind::Normal => continue,
                         };
                         // 4. Find the earliest receiver adjustment that matches that parameter.
                         // For a value of type &Widget, a parameter of &Widget matches before

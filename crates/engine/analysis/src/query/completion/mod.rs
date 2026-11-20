@@ -10,6 +10,10 @@
 //! overlays valid at that site. The `resolvers` module owns those result-producing flows;
 //! sibling modules provide site detection, syntax classification, candidate lookup, rendering,
 //! and source-edit policy. Examples use `$0` to mark the cursor.
+//!
+//! Auto-import is an overlay for ordinary names and methods. At `let _: HashM$0`, the row
+//! carries the path to `HashMap` so the editor can ask for the `use` edit after selecting it.
+//! This keeps source-edit planning out of the search that runs while the user types.
 
 mod candidates;
 mod pattern;
@@ -18,14 +22,27 @@ mod resolvers;
 mod site;
 mod syntax;
 
-use std::fmt;
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use rg_ir_model::{CrateRef, FileId};
+use rg_ir_view::{
+    display::syntax::SyntaxRenderer, lookup::importable::ImportableNameSearch, member::MemberView,
+    ty::locals::BodyView,
+};
 
+use self::{candidates::CompletionCandidateSource, site::CompletionSite};
 pub(crate) use self::{
     resolvers::CompletionResolver,
     site::{CompletionSiteDetector, PathCompletionSite},
     syntax::CompletionSyntaxContext,
+};
+use crate::{
+    Analysis,
+    model::{CompletionAdditionalEdit, CompletionEdit, CompletionImport, CompletionKind},
+    query::import::{ImportContext, ImportEditPlan, ImportEditPlanner},
 };
 
 /// Parsed and classified editor text used by the selected completion query.
@@ -60,6 +77,11 @@ impl<'source> CompletionSource<'source> {
         self.offset
     }
 
+    /// The file and these inline module names identify the module that will receive the import.
+    pub fn inline_module_path(&self) -> Vec<String> {
+        self.syntax.inline_module_path()
+    }
+
     /// Returns the exact editor buffer used to build the speculative tree.
     pub fn source_text(&self) -> &'source str {
         self.syntax.source()
@@ -71,7 +93,12 @@ impl<'source> CompletionSource<'source> {
 pub struct CompletionClientCapabilities {
     /// Whether insertion text may contain LSP snippet placeholders.
     pub snippet_support: bool,
+    /// Whether the caller can ask for the import edit of a selected completion.
+    pub auto_import: bool,
 }
+
+// Leave time for candidate rendering and protocol conversion after the optional search.
+const AUTO_IMPORT_BUDGET: Duration = Duration::from_millis(4);
 
 /// One source-position completion query plus the editor state needed for request-local syntax.
 ///
@@ -88,8 +115,10 @@ pub struct CompletionQuery<'a> {
     /// Exact buffer for this snapshot. When omitted, completion reads the file from the snapshot.
     pub source_text: Option<&'a str>,
     completion_source: Option<&'a CompletionSource<'a>>,
-    /// Client features that affect insertion text but not semantic eligibility.
+    /// Client features used when building and applying completion items.
     pub client_capabilities: CompletionClientCapabilities,
+    /// Time available for optional imports once an eligible prefix is found.
+    pub auto_import_budget: Duration,
 }
 
 impl<'a> CompletionQuery<'a> {
@@ -101,6 +130,7 @@ impl<'a> CompletionQuery<'a> {
             source_text: None,
             completion_source: None,
             client_capabilities: CompletionClientCapabilities::default(),
+            auto_import_budget: AUTO_IMPORT_BUDGET,
         }
     }
 
@@ -140,4 +170,95 @@ pub(crate) struct CompletionContext<'a> {
     pub(crate) offset: u32,
     pub(crate) source_text: &'a str,
     pub(crate) client_capabilities: CompletionClientCapabilities,
+    pub(crate) auto_import_budget: Duration,
+}
+
+impl CompletionContext<'_> {
+    /// Start the search budget when a resolver reaches an eligible prefix.
+    pub(crate) fn auto_import_deadline(&self, prefix: &str) -> Option<Instant> {
+        (self.client_capabilities.auto_import && ImportableNameSearch::supports_prefix(prefix))
+            .then(|| Instant::now() + self.auto_import_budget)
+    }
+}
+
+/// Check the selected path and plan its `use` in the module containing the current cursor.
+pub(crate) fn resolve_import(
+    analysis: &Analysis<'_>,
+    query: CompletionQuery<'_>,
+    source: &str,
+    import: &CompletionImport,
+    selected: Option<(&str, CompletionKind)>,
+    expected_inline_module: Option<&[String]>,
+) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
+    let Some(syntax) = CompletionSyntaxContext::at(source, query.offset) else {
+        return Ok(None);
+    };
+    // A unique stretch of text may have moved into a sibling module. Never add the
+    // import there on behalf of a completion offered in the original module.
+    if expected_inline_module.is_some_and(|original| syntax.inline_module_path() != original) {
+        return Ok(None);
+    }
+    let db = analysis.view_db();
+    let site = CompletionSiteDetector::new(analysis).site_at(
+        query.crate_ref,
+        query.file_id,
+        query.offset,
+        Some(syntax.site_syntax()),
+    )?;
+    let replace = match site {
+        Some(CompletionSite::Unqualified(site)) if !import.anonymous => {
+            if !CompletionCandidateSource::new(db).can_import_selected_name(
+                &site,
+                &import.path,
+                selected,
+            )? {
+                return Ok(None);
+            }
+            site.replace_span()
+        }
+        Some(CompletionSite::Dot(site)) if import.anonymous => {
+            let Some(context) = ImportContext::for_dot_site(db, site.source())? else {
+                return Ok(None);
+            };
+            let Some(trait_ref) =
+                ImportableNameSearch::new(db).trait_for_import(context.module(), &import.path)?
+            else {
+                return Ok(None);
+            };
+            if let Some((name, kind)) = selected {
+                let receiver = site.source().receiver();
+                let Some(ty) = BodyView::new(db).expr_ty(receiver.body_ir(), receiver.expr_id())?
+                else {
+                    return Ok(None);
+                };
+                if kind != CompletionKind::TraitMethod
+                    || !MemberView::new(db).needs_method_import(
+                        site.source().scope(),
+                        &ty,
+                        trait_ref,
+                        name.strip_prefix("r#").unwrap_or(name),
+                    )?
+                {
+                    return Ok(None);
+                }
+            }
+            site.replace_span()
+        }
+        _ => return Ok(None),
+    };
+
+    let rendered_path = SyntaxRenderer::new(db.crate_edition(query.crate_ref)?)
+        .path(&import.path)
+        .to_string();
+    // Build the edit against this buffer. The row's original replacement span may have moved
+    // or may already contain the completed name.
+    let planner =
+        ImportEditPlanner::for_completion(&syntax, CompletionEdit { replace }, import.anonymous);
+    Ok(match planner.plan(&import.path, &rendered_path) {
+        ImportEditPlan::Edit(edit) => Some(CompletionAdditionalEdit {
+            replace: edit.replace,
+            new_text: edit.new_text,
+        }),
+        ImportEditPlan::AlreadyImported | ImportEditPlan::Unavailable => None,
+    })
 }

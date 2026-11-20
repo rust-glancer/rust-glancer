@@ -182,13 +182,13 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
                 ),
                 insert_text: crate::model::CompletionInsertText::Plain,
                 edit: Some(edit),
-                additional_edits: Vec::new(),
+                import: None,
             });
         }
 
         // Const parameters are value-like captures but live in the declaration's generic scope.
         for candidate in candidates
-            .generic_scope_candidates_for_unqualified(&site)
+            .generic_scope_candidates_for_unqualified(&site, None)
             .context("collect generic format capture candidates")?
         {
             rg_std::check_cancel!(self.analysis, "completion candidate");
@@ -217,7 +217,7 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
                 ),
                 insert_text: crate::model::CompletionInsertText::Plain,
                 edit: Some(edit),
-                additional_edits: Vec::new(),
+                import: None,
             });
         }
 

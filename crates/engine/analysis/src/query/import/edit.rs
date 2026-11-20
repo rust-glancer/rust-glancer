@@ -98,6 +98,7 @@ pub(crate) enum ImportEditPlan {
 pub(crate) struct ImportEditPlanner<'syntax, 'source> {
     syntax: ImportEditSyntax<'syntax, 'source>,
     protected_span: Option<Span>,
+    anonymous: bool,
 }
 
 impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
@@ -105,10 +106,12 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
     pub(crate) fn for_completion(
         syntax: &'syntax CompletionSyntaxContext<'source>,
         primary_edit: CompletionEdit,
+        anonymous: bool,
     ) -> Self {
         Self {
             syntax: ImportEditSyntax::Completion(syntax),
             protected_span: Some(primary_edit.replace),
+            anonymous,
         }
     }
 
@@ -121,6 +124,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
                 offset,
             },
             protected_span: None,
+            anonymous: false,
         }
     }
 
@@ -128,12 +132,11 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
     ///
     /// For `std::collections::HashMap`, this method checks, in order:
     ///
-    /// 1. Is that exact path already imported? Return `AlreadyImported`.
-    /// 2. Does another import already introduce the name `HashMap`? Return `Unavailable` rather
-    ///    than silently changing which item the name means.
-    /// 3. Can a simple import with the same prefix become a group such as
+    /// 1. For code actions, recognize an existing import or a conflicting use in the source.
+    ///    Completion already checked the active bindings in the module.
+    /// 2. Can a simple import with the same prefix become a group such as
     ///    `std::collections::{BTreeMap, HashMap}`? Return that edit.
-    /// 4. Otherwise, can a new private `use std::collections::HashMap;` be inserted in this module?
+    /// 3. Otherwise, can a new private `use std::collections::HashMap;` be inserted in this module?
     pub(crate) fn plan(&self, path: &Path, rendered_path: &str) -> ImportEditPlan {
         let items = self.containing_items();
         let use_items: Vec<ast::Use> = items
@@ -144,29 +147,37 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
             })
             .collect();
 
-        // 1. An exact duplicate needs no source edit. This is different from a conflict because a
-        // qualified-path action may still remove its qualifier and reuse the existing import.
-        if use_items
-            .iter()
-            .any(|use_item| self.already_imports(use_item, path))
-        {
-            return ImportEditPlan::AlreadyImported;
+        // Code actions use the written imports to decide whether a separate edit is needed.
+        // For completion, the semantic check already excluded active duplicates and conflicts.
+        // An inactive `#[cfg(any())] use api::Widget;` can still be present in the syntax tree.
+        if matches!(self.syntax, ImportEditSyntax::Direct { .. }) {
+            if use_items
+                .iter()
+                .any(|item| self.already_imports(item, path))
+            {
+                return ImportEditPlan::AlreadyImported;
+            }
+            let Some(name) = path.segments().last() else {
+                return ImportEditPlan::Unavailable;
+            };
+            if use_items.iter().any(|item| {
+                item.use_tree()
+                    .is_some_and(|tree| Self::use_tree_imports_name(tree, "", name.as_str()))
+            }) {
+                return ImportEditPlan::Unavailable;
+            }
         }
 
-        // 2. A different import with the same final name would make the new import ambiguous or
-        // invalid. Renames count by the name they introduce at this module.
-        let Some(imported_name) = path.segments().last().map(|name| name.as_str()) else {
-            return ImportEditPlan::Unavailable;
+        // An extension method needs the trait in scope without binding its short name.
+        let anonymous_path;
+        let rendered_path = if self.anonymous {
+            anonymous_path = format!("{rendered_path} as _");
+            &anonymous_path
+        } else {
+            rendered_path
         };
-        if use_items.iter().any(|use_item| {
-            use_item
-                .use_tree()
-                .is_some_and(|tree| Self::use_tree_imports_name(tree, "", imported_name))
-        }) {
-            return ImportEditPlan::Unavailable;
-        }
 
-        // 3. Prefer extending a simple, one-line import with the same prefix.
+        // 2. Prefer extending a simple, one-line import with the same prefix.
         for use_item in &use_items {
             let Some(edit) = self.coalesced_edit(use_item, rendered_path) else {
                 continue;
@@ -178,7 +189,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
             };
         }
 
-        // 4. If no existing import is suitable, insert a separate private `use`.
+        // 3. If no existing import is suitable, insert a separate private `use`.
         let Some(edit) = self.insertion_edit(&items, &use_items, rendered_path) else {
             return ImportEditPlan::Unavailable;
         };
@@ -458,6 +469,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
 #[cfg(test)]
 mod tests {
     use rg_ir_model::{Path, Span};
+    use rg_syntax::{Edition, SourceFile};
 
     use super::{CompletionSyntaxContext, ImportEditPlan, ImportEditPlanner};
     use crate::model::CompletionEdit;
@@ -483,7 +495,7 @@ mod tests {
                 .expect("fixture offset should fit");
             let syntax = CompletionSyntaxContext::at(source, offset + 5)
                 .expect("completion syntax should parse");
-            let planner = ImportEditPlanner::for_completion(&syntax, primary(offset));
+            let planner = ImportEditPlanner::for_completion(&syntax, primary(offset), false);
             let ImportEditPlan::Edit(edit) =
                 planner.plan(&hash_map_path(), "std::collections::HashMap")
             else {
@@ -495,8 +507,8 @@ mod tests {
 
     #[test]
     fn keeps_renamed_imports_out_of_coalesced_use_trees() {
-        let missing = Path::from_macro_path_text("crate::models::Missing", None)
-            .expect("fixture path should parse");
+        let missing =
+            Path::from_text("crate::models::Missing", None).expect("fixture path should parse");
         for existing_import in [
             "use crate::models::Existing as Alias;",
             "use crate::models::Existing as _;",
@@ -506,10 +518,8 @@ mod tests {
             let source = format!("{existing_import}\nfn main() {{ let _: Missing; }}");
             let offset = u32::try_from(source.find("Missing").expect("fixture should have cursor"))
                 .expect("fixture offset should fit");
-            let syntax = CompletionSyntaxContext::at(&source, offset + 7)
-                .expect("completion syntax should parse");
-            let planner =
-                ImportEditPlanner::for_source(&source, syntax.speculative_file_tree(), offset);
+            let file = SourceFile::parse(&source, Edition::CURRENT).tree();
+            let planner = ImportEditPlanner::for_source(&source, &file, offset);
             let ImportEditPlan::Edit(edit) = planner.plan(&missing, "crate::models::Missing")
             else {
                 panic!("renamed import should allow a separate import: {existing_import}");
@@ -537,9 +547,8 @@ mod tests {
         let source = "use std::{collections::HashMap};\nfn main() { let _: HashM; }";
         let offset = u32::try_from(source.rfind("HashM").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let syntax = CompletionSyntaxContext::at(source, offset + 5)
-            .expect("completion syntax should parse");
-        let planner = ImportEditPlanner::for_completion(&syntax, primary(offset));
+        let file = SourceFile::parse(source, Edition::CURRENT).tree();
+        let planner = ImportEditPlanner::for_source(source, &file, offset);
         assert!(matches!(
             planner.plan(&hash_map_path(), "std::collections::HashMap"),
             ImportEditPlan::AlreadyImported
@@ -551,11 +560,10 @@ mod tests {
         let source = "use crate::alpha::User;\nfn main() { let _: User; }";
         let offset = u32::try_from(source.rfind("User").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let syntax =
-            CompletionSyntaxContext::at(source, offset + 4).expect("fixture source should parse");
-        let desired = Path::from_macro_path_text("crate::beta::User", None)
-            .expect("fixture path should parse");
-        let planner = ImportEditPlanner::for_source(source, syntax.speculative_file_tree(), offset);
+        let file = SourceFile::parse(source, Edition::CURRENT).tree();
+        let desired =
+            Path::from_text("crate::beta::User", None).expect("fixture path should parse");
+        let planner = ImportEditPlanner::for_source(source, &file, offset);
 
         assert!(matches!(
             planner.plan(&desired, "crate::beta::User"),
@@ -568,9 +576,8 @@ mod tests {
         let source = "#[cfg(any())]\nuse std::collections::BTreeMap;\nfn main() { let _: HashM; }";
         let offset = u32::try_from(source.find("HashM").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let syntax =
-            CompletionSyntaxContext::at(source, offset + 5).expect("fixture source should parse");
-        let planner = ImportEditPlanner::for_source(source, syntax.speculative_file_tree(), offset);
+        let file = SourceFile::parse(source, Edition::CURRENT).tree();
+        let planner = ImportEditPlanner::for_source(source, &file, offset);
 
         let ImportEditPlan::Edit(edit) =
             planner.plan(&hash_map_path(), "std::collections::HashMap")
@@ -597,7 +604,7 @@ mod tests {
             .expect("fixture offset should fit");
         let syntax = CompletionSyntaxContext::at(source, offset + 5)
             .expect("completion syntax should parse");
-        let planner = ImportEditPlanner::for_completion(&syntax, primary(offset));
+        let planner = ImportEditPlanner::for_completion(&syntax, primary(offset), false);
         let ImportEditPlan::Edit(edit) =
             planner.plan(&hash_map_path(), "std::collections::HashMap")
         else {
@@ -630,6 +637,7 @@ mod tests {
                 CompletionEdit {
                     replace: Span { start, end },
                 },
+                false,
             );
             let ImportEditPlan::Edit(edit) =
                 planner.plan(&hash_map_path(), "std::collections::HashMap")
@@ -666,7 +674,6 @@ mod tests {
     }
 
     fn hash_map_path() -> Path {
-        Path::from_macro_path_text("std::collections::HashMap", None)
-            .expect("fixture path should parse")
+        Path::from_text("std::collections::HashMap", None).expect("fixture path should parse")
     }
 }

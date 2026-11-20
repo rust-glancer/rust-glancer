@@ -4,7 +4,9 @@ use std::{
     pin::Pin,
 };
 
-use rg_lsp_proto::{EngineError, OpenDocumentsRevision, QueryError, QueryScope, QueryValue};
+use rg_lsp_proto::{
+    CompletionResult, EngineError, OpenDocumentsRevision, QueryError, QueryScope, QueryValue,
+};
 use tokio::sync::{mpsc, oneshot};
 use tower_lsp_server::gen_lsp_types::{Position, Range, TextDocumentContentChangePartial};
 
@@ -356,7 +358,7 @@ fn observed_job(
             .expect("test should observe every started completion");
         wait.await;
         Ok(QueryValue::new(
-            Vec::new(),
+            CompletionResult::default(),
             QueryScope::Editor {
                 target: None,
                 open_documents_revision: OpenDocumentsRevision::new(1),

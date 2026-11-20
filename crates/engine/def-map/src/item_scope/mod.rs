@@ -18,7 +18,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::storage::{NameBindings, NameBindingsView};
 use self::storage::{NameBindingsBuilder, SlotArena};
-use crate::{NameBinding, Namespace};
+use crate::{NameBinding, Namespace, NamespaceSet};
 
 /// Item names and unnamed trait imports retained for lookup after construction.
 ///
@@ -49,8 +49,81 @@ impl ItemScope {
             .map(|entry| (&entry.name, &entry.bindings))
     }
 
+    /// The matching spellings are contiguous in the frozen name table.
+    pub fn entries_with_prefix<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> impl Iterator<Item = (&'a Name, &'a NameBindings)> {
+        let start = self
+            .entries
+            .partition_point(|entry| entry.name.as_str() < prefix);
+        self.entries[start..]
+            .iter()
+            .take_while(move |entry| entry.name.as_str().starts_with(prefix))
+            .map(|entry| (&entry.name, &entry.bindings))
+    }
+
     pub(crate) fn unnamed_trait_bindings(&self) -> &[NameBinding] {
         &self.unnamed_trait_bindings
+    }
+}
+
+/// The part of a frozen scope that import discovery can read on its own.
+///
+/// For `HashM`, the spelling buckets tell the search which scopes might contain a match.
+/// Module bindings are kept separately because a child module can contain `HashMap` even
+/// when its parent has no matching names.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct ImportableScope {
+    modules: Vec<(Name, NameBinding)>,
+    prefixes: Vec<u16>,
+}
+
+impl ImportableScope {
+    pub(crate) fn new(scope: &ItemScope) -> Self {
+        let mut modules = Vec::new();
+        let mut prefixes = Vec::new();
+        for (name, bindings) in scope.entries() {
+            let mut has_item = false;
+            for namespace in NamespaceSet::TYPES_VALUES.iter() {
+                let Some(binding) = bindings.binding(namespace) else {
+                    continue;
+                };
+                if binding.attribute_import().is_some() && !binding.has_reexport() {
+                    continue;
+                }
+                if matches!(binding.def, DefId::Module(_)) {
+                    modules.push((name.clone(), *binding));
+                } else {
+                    has_item = true;
+                }
+            }
+            if has_item
+                && let Some(prefix) = Self::prefix_key(name.as_str())
+                && prefixes.last() != Some(&prefix)
+            {
+                // Frozen names are already sorted, so equal two-byte prefixes are adjacent.
+                prefixes.push(prefix);
+            }
+        }
+        Self { modules, prefixes }
+    }
+
+    /// Check only the first two bytes. For example, `HashM` and `Handle` both hit the `Ha`
+    /// bucket. A hit still needs an exact prefix and visibility check on the scope.
+    pub fn may_contain(&self, prefix: &str) -> bool {
+        Self::prefix_key(prefix).is_none_or(|key| self.prefixes.binary_search(&key).is_ok())
+    }
+
+    pub fn modules(&self) -> &[(Name, NameBinding)] {
+        &self.modules
+    }
+
+    fn prefix_key(name: &str) -> Option<u16> {
+        name.as_bytes()
+            .first_chunk()
+            .copied()
+            .map(u16::from_be_bytes)
     }
 }
 

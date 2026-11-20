@@ -340,7 +340,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn parse_path(text: &str) -> Path {
-        Path::from_macro_path_text(text, None).expect("fixture path should use valid Rust syntax")
+        Path::from_text(text, None).expect("fixture path should use valid Rust syntax")
     }
 
     fn render_type_def_ref(&self, semantic_ir: &ItemReader<'_>, ty: TypeDefRef) -> String {

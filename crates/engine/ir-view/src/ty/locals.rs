@@ -11,7 +11,7 @@ use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FileId, FunctionRef,
     GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, Span,
-    identity::DeclarationRef,
+    identity::{DeclarationRef, LexicalScopeRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, SourceSelection};
 use rg_ty::Ty;
@@ -270,6 +270,31 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .context("read body binding type")?
             .and_then(|body| body.binding_ty(binding.binding).cloned())
             .map(IndexedType::new))
+    }
+
+    /// A local binding can shadow an imported value only after its declaration.
+    pub fn has_visible_binding(
+        &self,
+        scope: LexicalScopeRef,
+        visible_bindings: usize,
+        name: &str,
+    ) -> anyhow::Result<bool> {
+        let Some(body) = self.db.body_ir.body(scope.body_ir())? else {
+            return Ok(false);
+        };
+        let mut scope_id = Some(scope.scope_id());
+        while let Some(scope) = scope_id.and_then(|id| body.scope(id)) {
+            for &id in scope.bindings.iter().rev() {
+                rg_std::check_cancel!(self.db, "local binding lookup");
+                if id.0 < visible_bindings
+                    && body.binding(id).and_then(|b| b.name.as_deref()) == Some(name)
+                {
+                    return Ok(true);
+                }
+            }
+            scope_id = scope.parent;
+        }
+        Ok(false)
     }
 
     /// Return names visible from a body scope, ordered by lexical distance.

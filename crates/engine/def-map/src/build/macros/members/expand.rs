@@ -216,7 +216,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
         let Some(args) = input.args.as_ref() else {
             return Ok(None);
         };
-        let Some(path) = Path::from_macro_path_text(path_text, member.dollar_crate) else {
+        let Some(path) = Path::from_text(path_text, member.dollar_crate) else {
             return Ok(None);
         };
         // Ordinary written members do not observe macro scopes. Acquire them only after
