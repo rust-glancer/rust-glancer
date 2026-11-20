@@ -2397,6 +2397,37 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn infers_types_from_boolean_conditions_and_operands() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:boolean_expectations
+fn make<T>() -> T { loop {} }
+
+fn check() {
+    let condition = make()$0; // ty("if condition flows back to initializer")
+    if condition {}
+    while make()$0 { break; } // ty("while condition")
+    match () {
+        () if make()$0 => (), // ty("match guard")
+        _ => (),
+    }
+    let _ = make()$0 && make()$1; // ty("and left operand"), ty("and right operand")
+    let _ = make()$0 || make()$1; // ty("or left operand"), ty("or right operand")
+}
+"#,
+        expect![[r#"
+            bool // if condition flows back to initializer
+            bool // while condition
+            bool // match guard
+            bool // and left operand
+            bool // and right operand
+            bool // or left operand
+            bool // or right operand
+        "#]],
+    );
+}
+
+#[test]
 fn infers_payloads_from_scoped_variant_aliases() {
     check_analysis(
         r#"

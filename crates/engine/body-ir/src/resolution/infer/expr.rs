@@ -8,7 +8,8 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    BuiltinMacroExprKind, ExprId, FieldKey, SemanticItemRef, StmtId, identity::DeclarationRef,
+    BuiltinMacroExprKind, ExprBinaryOp, ExprId, FieldKey, SemanticItemRef, StmtId,
+    identity::DeclarationRef,
 };
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
@@ -409,11 +410,18 @@ where
                         .context("register pending inference")?;
                 }
             }
-            ExprKind::Binary { lhs, rhs, .. } => {
-                self.infer_optional(lhs, &self.cx.unknown())
-                    .context("infer optional expression")?;
-                self.infer_optional(rhs, &self.cx.unknown())
-                    .context("infer optional expression")?;
+            ExprKind::Binary { lhs, rhs, op } => {
+                // `a && b` and `a || b` constrain both operands even when their result has no
+                // expected type, as in `let ready = a && b`.
+                let operand_ty = if op.is_some_and(ExprBinaryOp::is_logical) {
+                    self.cx.primitive(PrimitiveTy::Bool)
+                } else {
+                    self.cx.unknown()
+                };
+                self.infer_optional(lhs, &operand_ty)
+                    .context("infer left operand")?;
+                self.infer_optional(rhs, &operand_ty)
+                    .context("infer right operand")?;
                 if lhs.is_some() && rhs.is_some() {
                     self.inference.expr_slot(expr);
                     self.run_or_defer(DeferredKind::Operator { expr })
@@ -455,8 +463,8 @@ where
                         self.infer_pattern(pat, arm.scope, &scrutinee)
                             .context("infer match pattern")?;
                     }
-                    self.infer_optional(arm.guard, &self.cx.unknown())
-                        .context("infer optional expression")?;
+                    self.infer_optional(arm.guard, &self.cx.primitive(PrimitiveTy::Bool))
+                        .context("infer match guard")?;
                     self.infer_optional(arm.expr, expected)
                         .context("infer optional expression")?;
                 }
@@ -468,8 +476,8 @@ where
                 then_branch,
                 else_branch,
             } => {
-                self.infer_optional(condition, &self.cx.unknown())
-                    .context("infer optional expression")?;
+                self.infer_optional(condition, &self.cx.primitive(PrimitiveTy::Bool))
+                    .context("infer if condition")?;
                 let branch_expected = if else_branch.is_some() {
                     expected
                 } else {
@@ -556,8 +564,8 @@ where
                     expected: self.cx.unit(),
                     values: Vec::new(),
                 });
-                self.infer_optional(condition, &self.cx.unknown())
-                    .context("infer optional expression")?;
+                self.infer_optional(condition, &self.cx.primitive(PrimitiveTy::Bool))
+                    .context("infer while condition")?;
                 self.infer_optional(body, &self.cx.unknown())
                     .context("infer optional expression")?;
                 self.break_targets.pop().expect("while retains its target");
