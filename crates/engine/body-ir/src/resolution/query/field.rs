@@ -1,14 +1,14 @@
 //! Field types for owned receivers and pattern bindings.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, TypeDefId};
+use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, PatId, TypeDefId, TypeDefRef};
 use rg_item_tree::FieldList;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, Ty, solver::SemanticDeclarations};
 
-use crate::{BodyPath, resolution::BodyResolutionContext};
+use crate::{BodyPath, PatKind, resolution::BodyResolutionContext};
 
 /// Reads field declarations and substitutes the owner type's arguments into them.
 /// Enum patterns also supply a variant name so the same field position is read from the right
@@ -43,6 +43,77 @@ where
         })?
     }
 
+    /// In `(left, .., right)`, count `left` from the start and `right` from the end.
+    /// Only a suffix needs the arity, so leading fields still work with incomplete type data.
+    pub(crate) fn tuple_pattern_fields<'pat>(
+        &self,
+        fields: &'pat [PatId],
+        arity: impl FnOnce() -> Result<Option<usize>, ReadError>,
+    ) -> Result<impl Iterator<Item = (usize, PatId)> + 'pat, ReadError> {
+        let body = self.context.body();
+        let rest = fields
+            .iter()
+            .position(|pat| {
+                body.pat(*pat)
+                    .is_some_and(|pat| matches!(pat.kind, PatKind::Rest))
+            })
+            .unwrap_or(fields.len());
+        let (prefix, rest_and_suffix) = fields.split_at(rest);
+        let suffix = rest_and_suffix.get(1..).unwrap_or_default();
+        let suffix_start = if suffix.is_empty() {
+            None
+        } else {
+            arity()?
+                .and_then(|arity| arity.checked_sub(suffix.len()))
+                .filter(|start| *start >= prefix.len())
+        };
+        let suffix = suffix_start
+            .into_iter()
+            .flat_map(move |start| (start..).zip(suffix.iter().copied()));
+        Ok(prefix.iter().copied().enumerate().chain(suffix))
+    }
+
+    pub(crate) fn tuple_pattern_arity(
+        &self,
+        path: Option<&BodyPath>,
+        owner: TypeDefRef,
+    ) -> Result<Option<usize>, ReadError> {
+        let items = self.context.item_query();
+        let fields = match owner.id {
+            TypeDefId::Struct(_) => items
+                .semantic_item_view(owner.into())?
+                .and_then(|item| item.struct_data())
+                .map(|data| &data.fields),
+            TypeDefId::Enum(_) => {
+                let Some(variant) = self.pattern_variant(path, owner)? else {
+                    return Ok(None);
+                };
+                items
+                    .enum_variant_data(variant)?
+                    .map(|data| &data.variant.fields)
+            }
+            TypeDefId::Union(_) => None,
+        };
+        Ok(match fields {
+            Some(FieldList::Tuple(fields)) => Some(fields.len()),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn pattern_variant(
+        &self,
+        path: Option<&BodyPath>,
+        owner: TypeDefRef,
+    ) -> Result<Option<EnumVariantRef>, ReadError> {
+        let path = path.and_then(BodyPath::as_def_map_path);
+        let Some(name) = path.as_ref().and_then(|path| path.segments().last()) else {
+            return Ok(None);
+        };
+        self.context
+            .item_query()
+            .enum_variant_ref_for_type_def(owner, name.as_str())
+    }
+
     /// Project the field type destructured by a record or tuple-variant pattern.
     ///
     /// Pattern matching peels written references but does not use receiver autoderef. Struct and
@@ -54,11 +125,6 @@ where
         expected_ty: &Ty,
         field_key: &FieldKey,
     ) -> Result<Option<Ty>, ReadError> {
-        let variant_path = path.and_then(BodyPath::as_def_map_path);
-        let variant_name = variant_path
-            .as_ref()
-            .and_then(|path| path.segments().last())
-            .map(rg_text::Name::as_str);
         let mut candidates = ExpectedUnique::new();
 
         for candidate in expected_ty.reference_chain() {
@@ -68,14 +134,7 @@ where
                         self.declared(nominal_ty, field_key)?
                     }
                     TypeDefId::Enum(_) => {
-                        let Some(variant_name) = variant_name else {
-                            continue;
-                        };
-                        let Some(variant_ref) = self
-                            .context
-                            .item_query()
-                            .enum_variant_ref_for_type_def(nominal_ty.def, variant_name)?
-                        else {
+                        let Some(variant_ref) = self.pattern_variant(path, nominal_ty.def)? else {
                             continue;
                         };
                         self.enum_variant_field_ty(nominal_ty, variant_ref, field_key)?

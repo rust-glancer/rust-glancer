@@ -204,7 +204,7 @@ where
             PatKind::TupleStruct {
                 ref path,
                 ref fields,
-            } => self.link_tuple_variant(path.as_ref(), fields, &expected_ty, default_ref),
+            } => self.link_tuple_struct_pat(path.as_ref(), fields, &expected_ty, default_ref),
             PatKind::Record {
                 ref path,
                 ref fields,
@@ -241,12 +241,13 @@ where
         let TyShape::Tuple(field_tys) = expected_ty.shape() else {
             return Ok(());
         };
-        if fields.len() != field_tys.len() {
-            return Ok(());
-        }
-
-        for (field_pat, field_ty) in fields.iter().zip(field_tys) {
-            self.infer_pat(*field_pat, &field_ty, default_ref)?;
+        let field_query = self.context.fields();
+        for (index, pat) in
+            field_query.tuple_pattern_fields(fields, || Ok(Some(field_tys.len())))?
+        {
+            if let Some(field_ty) = field_tys.get(index) {
+                self.infer_pat(pat, field_ty, default_ref)?;
+            }
         }
         Ok(())
     }
@@ -293,15 +294,20 @@ where
         self.infer_pat(pat, &inner_ty, None)
     }
 
-    /// Project tuple-variant payload fields from the expected enum instantiation.
-    fn link_tuple_variant(
+    /// Project positional fields from the expected struct or enum instantiation.
+    fn link_tuple_struct_pat(
         &mut self,
         path: Option<&BodyPath>,
         fields: &[PatId],
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), ReadError> {
-        for (index, field_pat) in fields.iter().enumerate() {
+        let field_query = self.context.fields();
+        let arity = || match expected_ty.as_adt() {
+            Some(owner) => field_query.tuple_pattern_arity(path, owner.def),
+            None => Ok(None),
+        };
+        for (index, field_pat) in field_query.tuple_pattern_fields(fields, arity)? {
             let field_key = FieldKey::Tuple(index);
             if let Some(field_ty) = self.context.live().pattern_field(
                 path,
@@ -309,7 +315,7 @@ where
                 &field_key,
                 self.inference.table(),
             )? {
-                self.infer_pat(*field_pat, &field_ty, default_ref)?;
+                self.infer_pat(field_pat, &field_ty, default_ref)?;
             }
         }
         Ok(())

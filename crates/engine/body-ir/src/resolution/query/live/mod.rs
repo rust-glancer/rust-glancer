@@ -198,15 +198,7 @@ where
             return Ok(None);
         };
         if matches!(adt.def.id, TypeDefId::Enum(_)) {
-            let path = path.and_then(BodyPath::as_def_map_path);
-            let Some(name) = path.as_ref().and_then(|p| p.segments().last()) else {
-                return Ok(None);
-            };
-            let Some(variant) = self
-                .context
-                .item_query()
-                .enum_variant_ref_for_type_def(adt.def, name.as_str())?
-            else {
+            let Some(variant) = self.context.fields().pattern_variant(path, adt.def)? else {
                 return Ok(None);
             };
             return self.enum_variant_field(adt, variant, field, table);

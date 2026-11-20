@@ -2397,6 +2397,44 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn infers_tuple_patterns_with_rest() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:tuple_pattern_rest
+enum Status { Penultimate }
+struct Packet<T>(bool, Status, u16, T);
+enum Event<T> { Empty, Arrived(bool, u32, u64, T) }
+
+fn inspect(tuple: &(bool, u8, u16, u64), packet: Packet<u64>, event: Event<u8>) {
+    let (head, .., tail) = tuple;
+    (head, tail)$0; // ty("borrowed tuple")
+
+    // The binding shares a name with a variant of the skipped field's type.
+    let Packet(.., Penultimate, last) = packet;
+    (Penultimate, last)$0; // ty("tuple struct")
+
+    match event {
+        Event::Arrived(first, .., last) => { (first, last)$0; } // ty("tuple variant")
+        Event::Empty => {}
+    }
+
+    let (leading, ..) = (true, 1u8, 2u16);
+    leading$0; // ty("trailing rest")
+    let (left, .., right) = (1u8, 2u16);
+    (left, right)$0; // ty("rest matching zero fields")
+}
+"#,
+        expect![[r#"
+            (&bool, &u64) // borrowed tuple
+            (u16, u64) // tuple struct
+            (bool, u8) // tuple variant
+            bool // trailing rest
+            (u8, u16) // rest matching zero fields
+        "#]],
+    );
+}
+
+#[test]
 fn infers_tuple_struct_constructor_generics() {
     check_analysis(
         r#"

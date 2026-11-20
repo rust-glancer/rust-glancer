@@ -345,16 +345,21 @@ where
         expected_ty: &Ty,
         active: &mut [bool],
     ) -> Result<(), ReadError> {
-        for (index, field_pat) in fields.iter().enumerate() {
-            let field_key = FieldKey::Tuple(index);
+        let field_query = self.context.fields();
+        let arity = || {
+            let owner = expected_ty.reference_chain().flat_map(Ty::as_adts).next();
+            match owner {
+                Some(owner) => field_query.tuple_pattern_arity(path, owner.def),
+                None => Ok(None),
+            }
+        };
+        for (index, field_pat) in field_query.tuple_pattern_fields(fields, arity)? {
             let Some(field_ty) =
-                self.context
-                    .fields()
-                    .pattern_field_ty(path, expected_ty, &field_key)?
+                field_query.pattern_field_ty(path, expected_ty, &FieldKey::Tuple(index))?
             else {
                 continue;
             };
-            self.deactivate_unit_variant_bindings_in_pat(*field_pat, &field_ty, active)?;
+            self.deactivate_unit_variant_bindings_in_pat(field_pat, &field_ty, active)?;
         }
         Ok(())
     }
