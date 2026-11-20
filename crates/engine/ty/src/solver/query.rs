@@ -11,11 +11,14 @@
 use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef};
 use rg_item_tree::FunctionQualifiers;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rustc_type_ir::{self as ir, Interner as _, Upcast, inherent::IntoKind as _};
+use rustc_type_ir::{
+    self as ir, Interner as _, Upcast, inherent::IntoKind as _, lang_items::SolverTraitLangItem,
+};
 
 use super::{
-    AliasTy, Clause, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, Outcome,
-    ProjectionTy, SolverInterner, Ty, TyShape,
+    AliasTy, Clause, DefId, GenericArgs, InferVarKind, InferenceSubstitution,
+    InferenceTable, List, Outcome, ProjectionTy, SolverInterner, Ty, TyShape,
+    declarations::LangItem,
 };
 use crate::{Ty as StoredTy, signature};
 
@@ -183,6 +186,69 @@ pub struct ImplSelection<'s> {
 }
 
 impl<'s> InferenceTable<'s> {
+    /// Recover a callable bound's arguments and project its output. For `F: Fn(u8) -> R`,
+    /// proving `F: FnOnce<(?Arg,)>` learns `?Arg = u8` before the body visits the argument.
+    pub fn callable_bound_signature(
+        &self,
+        callee: Ty<'s>,
+        arguments: impl Iterator<Item = Ty<'s>> + Clone,
+    ) -> Option<(List<'s, Ty<'s>>, Ty<'s>)> {
+        let cx = self.interner();
+        let DefId::Trait(def) = cx.lang_item(LangItem::Trait(SolverTraitLangItem::FnOnce))? else {
+            return None;
+        };
+        let DefId::TypeAlias(associated_ty) = cx.lang_item(LangItem::FnOnceOutput)? else {
+            return None;
+        };
+        let probe = |use_arguments| {
+            self.commit_if_some(|table| -> Result<_, std::convert::Infallible> {
+                if cx.metadata(DefId::TypeAlias(associated_ty)).parent != Some(DefId::Trait(def)) {
+                    return Ok(None);
+                }
+                let params = arguments
+                    .clone()
+                    .map(|arg| {
+                        if use_arguments && !arg.is_never() {
+                            table.instantiate_unknowns(arg)
+                        } else {
+                            table.new_type_var()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let args = List::new(cx, &[callee.into(), cx.tuple(&params).into()]);
+                if table.prove([TraitApplication { def, args }.clause(cx)]) != Outcome::Proven {
+                    return Ok(None);
+                }
+                let output = cx.projection(ProjectionTy {
+                    associated_ty,
+                    args,
+                });
+                Ok(Some((List::new(cx, &params), output)))
+            })
+            .expect("callable bound probe is infallible")
+        };
+
+        // Prefer the signature from the bound itself so its parameters can guide coercions.
+        // When `F` has both `Fn(u8)` and `Fn(u16)`, a typed argument can break the tie.
+        probe(false).or_else(|| {
+            let has_argument_evidence = arguments.clone().any(|arg| {
+                !matches!(
+                    arg.shape(),
+                    TyShape::Unknown
+                        | TyShape::Never
+                        | TyShape::InferVar {
+                            kind: InferVarKind::Type
+                        }
+                )
+            });
+            if has_argument_evidence {
+                probe(true)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Traits supplied by bounds on this receiver are method candidates even when the trait is
     /// named only in a bound, such as `fn draw<T: api::Render>(value: T)`. The environment already
     /// includes supertraits. Objects carry bounds in their type; opaque and associated types

@@ -76,6 +76,7 @@ pub(crate) enum LangItem {
     Adt(SolverAdtLangItem),
     Deref,
     DerefTarget,
+    FnOnceOutput,
 }
 
 /// Supply declaration metadata, types, and bounds to the solver as separate reads.
@@ -774,6 +775,11 @@ where
             LangItem::DerefTarget => {
                 return lookup
                     .lang_type_alias(ItemLangItem::DerefTarget)
+                    .map(DefId::TypeAlias);
+            }
+            LangItem::FnOnceOutput => {
+                return lookup
+                    .lang_type_alias(ItemLangItem::FnOnceOutput)
                     .map(DefId::TypeAlias);
             }
             LangItem::Projection(SolverProjectionLangItem::FutureOutput) => {
