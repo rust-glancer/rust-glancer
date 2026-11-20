@@ -75,6 +75,7 @@ pub(crate) enum LangItem {
     Projection(SolverProjectionLangItem),
     Adt(SolverAdtLangItem),
     Deref,
+    DerefMut,
     DerefTarget,
     FnOnceOutput,
 }
@@ -823,6 +824,7 @@ where
                     .map(DefId::TypeAlias);
             }
             LangItem::Deref => ItemLangItem::Deref,
+            LangItem::DerefMut => ItemLangItem::DerefMut,
             LangItem::Trait(SolverTraitLangItem::Sized) => ItemLangItem::Sized,
             LangItem::Trait(SolverTraitLangItem::MetaSized) => ItemLangItem::MetaSized,
             LangItem::Trait(SolverTraitLangItem::Tuple) => ItemLangItem::Tuple,

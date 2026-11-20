@@ -11,3 +11,5 @@ impl<T> Box<T> {
 impl<T: ?core::marker::Sized> core::ops::Deref for Box<T> {
     type Target = T;
 }
+
+impl<T: ?core::marker::Sized> core::ops::DerefMut for Box<T> {}

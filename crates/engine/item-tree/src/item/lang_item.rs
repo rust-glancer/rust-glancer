@@ -65,6 +65,8 @@ pub enum LangItem {
     Future,
     FutureOutput,
     IntoFuture,
+    /// The trait required for a mutable trait-backed dereference.
+    DerefMut,
 }
 
 impl LangItem {
@@ -72,8 +74,9 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::Deref,
+        Self::DerefMut,
         Self::DerefTarget,
         Self::IntoIter,
         Self::Fn,
@@ -114,6 +117,7 @@ impl LangItem {
     pub fn from_attr_value(attribute: &str, value: &str) -> Option<Self> {
         Some(match (attribute, value) {
             ("lang", "deref") => Self::Deref,
+            ("lang", "deref_mut") => Self::DerefMut,
             ("lang", "deref_target") => Self::DerefTarget,
             ("lang", "into_iter") => Self::IntoIter,
             ("lang", "iterator") => Self::Iterator,

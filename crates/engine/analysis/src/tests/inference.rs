@@ -120,6 +120,71 @@ pub fn from_later_evidence() {
 }
 
 #[test]
+fn infers_generic_arguments_through_mutable_deref_coercions() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:mutable_argument_coercions
+use std::{boxed::Box, ops::{Deref, DerefMut as WriteThrough}, vec::Vec};
+
+pub struct Item;
+fn first_mut<T>(_: &mut [T]) -> Option<&mut T> { None }
+
+pub fn from_vector(mut items: Vec<Item>) {
+    let item = first_mut(&mut items)$0; // ty("mutable vector deref").in_lib("mutable_argument_coercions")
+}
+
+pub fn from_bound<P: WriteThrough<Target = Vec<Item>>>(mut pointer: P) {
+    let item = first_mut(&mut pointer)$0; // ty("mutable deref through a bound and Vec").in_lib("mutable_argument_coercions")
+}
+
+fn take_u16(_: &mut u16) {}
+
+pub fn from_box() {
+    let mut boxed = Box::new(Default::default())$0; // ty("pointee inferred through Box").in_lib("mutable_argument_coercions")
+    take_u16(&mut boxed);
+}
+
+trait Marker {}
+impl Marker for u16 {}
+impl Marker for u32 {}
+struct Wrapper<T>(T);
+impl<T> Deref for Wrapper<T> { type Target = [T]; }
+impl<T: Marker> WriteThrough for Wrapper<T> {}
+fn make<T>() -> Wrapper<T> { loop {} }
+fn specify(_: &Wrapper<u32>) {}
+
+pub fn from_expected_pointee() {
+    let mut wrapped = make()$0; // ty("pointee match determines the impl argument").in_lib("mutable_argument_coercions")
+    first_mut::<u16>(&mut wrapped);
+}
+
+pub fn from_later_evidence() {
+    let mut wrapped = make();
+    let item = first_mut(&mut wrapped)$0; // ty("mutable deref after later type evidence").in_lib("mutable_argument_coercions")
+    specify(&wrapped);
+}
+
+struct MutableVec<T>(Vec<T>);
+impl<T> Deref for MutableVec<T> { type Target = [T]; }
+impl WriteThrough for MutableVec<u16> {}
+
+pub fn from_mutable_impl() {
+    let mut pointer = Box::new(MutableVec(Vec::new()));
+    let item = first_mut(&mut pointer)$0; // ty("DerefMut selects the element type").in_lib("mutable_argument_coercions")
+}
+"#,
+        expect![[r#"
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct mutable_argument_coercions[lib]::crate::Item> // mutable vector deref
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct mutable_argument_coercions[lib]::crate::Item> // mutable deref through a bound and Vec
+            nominal struct alloc[lib]::crate::boxed::Box<u16> // pointee inferred through Box
+            nominal struct mutable_argument_coercions[lib]::crate::Wrapper<u16> // pointee match determines the impl argument
+            nominal enum core[lib]::crate::option::Option<&mut u32> // mutable deref after later type evidence
+            nominal enum core[lib]::crate::option::Option<&mut u16> // DerefMut selects the element type
+        "#]],
+    );
+}
+
+#[test]
 fn infers_calls_through_saved_tuple_constructors() {
     check_analysis_with_fake_sysroot(
         r#"
@@ -951,6 +1016,8 @@ pub fn use_it(text: TextStore, mut string: String, preferred: Preferred, mutable
     let key = &[1_u8, 2];
     let from_array = SliceStore(1_u8)[key$0]$1; // ty("original array reference").in_lib("analysis_index_coercions"), ty("array index").in_lib("analysis_index_coercions")
     let from_mutable_array = mutable[&mut [1_u8, 2]]$0; // ty("mutable array unsizing").in_lib("analysis_index_coercions")
+    let mut vector = std::vec::Vec::<u8>::new();
+    let from_mutable_vec = mutable[&mut vector]$0; // ty("mutable vector deref").in_lib("analysis_index_coercions")
 }
 pub fn from_bound<P: Deref<Target = str>>(text: TextStore, pointer: P) {
     let value = text[&pointer]$0; // ty("generic Deref argument").in_lib("analysis_index_coercions")
@@ -973,6 +1040,7 @@ pub fn pending_key(text: TextStore, key: Result<&String, ()>) -> Result<(), ()> 
             &[u8; 2] // original array reference
             u8 // array index
             u16 // mutable array unsizing
+            u16 // mutable vector deref
             u32 // generic Deref argument
             nominal struct analysis_index_coercions[lib]::crate::SliceStore<u8> // receiver refined by output
             &[u8; 2] // array elements refined by output
