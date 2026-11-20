@@ -72,6 +72,7 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
               path: analysis_raw_identifiers::r#type
               signature:
                 pub r#struct: r#match
+              type: u8
 
             // hover raw method
             range: 28:25-28:29

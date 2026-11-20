@@ -461,6 +461,61 @@ fn hovers_over_documented_items_and_usages() {
 }
 
 #[test]
+fn hovers_with_an_instantiated_field_type() {
+    check_analysis(
+        r#"
+        //- /src/lib.rs crate:analysis_hover_field_types
+        pub struct Payload;
+        pub trait Show {}
+        impl Show for Payload {}
+
+        pub struct Packet<T> {
+            /// Contents of the packet.
+            pub va$0lue: T, // hover("field declaration")
+        }
+
+        pub fn inspect(packet: Packet<Payload>, borrowed: Packet<&'static Payload>) {
+            let _ = packet.va$0lue; // hover("generic field access")
+            let _: &dyn Show = borrowed.va$0lue; // hover("coerced field access")
+        }
+        "#,
+        expect![[r#"
+            // field declaration
+            range: 7:9-7:14
+            block:
+              kind: field
+              path: analysis_hover_field_types::Packet
+              signature:
+                pub value: T
+              docs:
+                Contents of the packet.
+
+            // generic field access
+            range: 11:20-11:25
+            block:
+              kind: field
+              path: analysis_hover_field_types::Packet
+              signature:
+                pub value: T
+              type: Payload
+              docs:
+                Contents of the packet.
+
+            // coerced field access
+            range: 12:33-12:38
+            block:
+              kind: field
+              path: analysis_hover_field_types::Packet
+              signature:
+                pub value: T
+              type: &'static Payload
+              docs:
+                Contents of the packet.
+        "#]],
+    );
+}
+
+#[test]
 fn hovers_over_impl_fn_trait_parenthesized_args() {
     check_analysis_with_fake_sysroot(
         r#"

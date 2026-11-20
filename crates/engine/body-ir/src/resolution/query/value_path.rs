@@ -20,7 +20,10 @@ use rg_ty::{
     solver::{self, AdtTy, InferenceTable, List, SolverInterner, Ty},
 };
 
-use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
+use crate::{
+    BodyAssociatedPathPrefix, BodyPath, body::facts::BodyResolution,
+    resolution::BodyResolutionContext,
+};
 
 /// Resolves paths used by expressions without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {
@@ -76,8 +79,9 @@ where
         &self,
         expr: ExprId,
         path: &BodyPath,
-        cx: SolverInterner<'s>,
+        table: &InferenceTable<'s>,
     ) -> Result<(BodyResolution, Ty<'s>), ReadError> {
+        let cx = table.interner();
         let expr_data = self.context.body().expr_unchecked(expr);
         // Preserve associated-item syntax such as `<T as Trait>::VALUE` before trying ordinary
         // lexical lookup, which only understands a DefMap path and its visible local bindings.
@@ -98,12 +102,38 @@ where
             ));
         }
 
-        match path.as_def_map_path() {
-            Some(path) => {
-                self.resolve_path_expr(expr_data.scope, &path, Some(expr_data.visible_bindings), cx)
+        let Some(def_map_path) = path.as_def_map_path() else {
+            return Ok((BodyResolution::Unknown, cx.unknown()));
+        };
+        let scope = expr_data.scope;
+        if def_map_path.is_self_type()
+            && let Some(BodyAssociatedPathPrefix::Type(ty)) = path.associated_prefix_through(0)
+        {
+            // `Self(value)` constructs the impl's type, including its existing arguments.
+            let ty = self.context.live().type_ref(scope, &ty, table)?;
+            if let Some(adt) = ty.as_adt()
+                && self
+                    .context
+                    .item_query()
+                    .type_def_has_value_constructor(adt.def)?
+            {
+                let declaration = DeclarationRef::from(adt.def);
+                return Ok((
+                    BodyResolution::Declarations([declaration].into_iter().collect()),
+                    ty,
+                ));
             }
-            None => Ok((BodyResolution::Unknown, cx.unknown())),
         }
+
+        let (resolution, mut ty) =
+            self.resolve_path_expr(scope, &def_map_path, Some(expr_data.visible_bindings), cx)?;
+        if path.last_segment_angle_args().is_some()
+            && let BodyResolution::Declarations(declarations) = &resolution
+            && let Some(DeclarationRef::Item(SemanticItemRef::TypeDef(def))) = declarations.as_one()
+        {
+            ty = cx.adt(self.nominal_expr_ty(scope, path, *def, table)?);
+        }
+        Ok((resolution, ty))
     }
 
     /// Record constructors use type names, independently of ordinary local value bindings.
@@ -128,7 +158,7 @@ where
             TypePathResolution::SelfType(type_def) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    cx.adt(self.record_nominal_ty(scope, path, type_def, table)?),
+                    cx.adt(self.nominal_expr_ty(scope, path, type_def, table)?),
                 ));
             }
             TypePathResolution::TypeDef(type_def) => {
@@ -145,7 +175,7 @@ where
                 };
                 return Ok((
                     BodyResolution::Declarations([declaration].into_iter().collect()),
-                    cx.adt(self.record_nominal_ty(scope, path, type_def, table)?),
+                    cx.adt(self.nominal_expr_ty(scope, path, type_def, table)?),
                 ));
             }
             TypePathResolution::TypeAlias(_)
@@ -159,7 +189,7 @@ where
         if let Some(variant_ref) = self
             .context
             .type_path_query()
-            .resolve_enum_variant_in_scope(scope, &def_map_path)?
+            .resolve_enum_variant_in_scope(scope, &def_map_path, NamespaceSet::TYPES)?
             && let Some(variant) = self.context.item_query().enum_variant_data(variant_ref)?
         {
             return Ok((
@@ -168,15 +198,15 @@ where
                         .into_iter()
                         .collect(),
                 ),
-                cx.adt(self.record_nominal_ty(scope, path, variant.owner, table)?),
+                cx.adt(self.nominal_expr_ty(scope, path, variant.owner, table)?),
             ));
         }
 
         self.resolve_path_expr(scope, &def_map_path, None, cx)
     }
 
-    /// Preserve written record arguments, leaving omitted type arguments unknown for inference.
-    fn record_nominal_ty<'s>(
+    /// Preserve written constructor arguments, leaving omitted type arguments unknown for inference.
+    fn nominal_expr_ty<'s>(
         &self,
         scope: ScopeId,
         path: &BodyPath,
@@ -485,7 +515,7 @@ where
                             declarations.push(DeclarationRef::from(type_def));
                             tys.push(cx.adt(AdtTy {
                                 def: type_def,
-                                args: List::default(),
+                                args: cx.unknown_args(solver::DefId::Adt(type_def)),
                             }));
                         }
                         BodyValueCandidate::EnumVariant(variant_ref, owner) => {

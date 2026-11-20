@@ -13,7 +13,7 @@ pub enum Option<T> {
     Some(T),
     None,
 }
-
+use Option::{None, Some};
 pub fn use_it(maybe: Option<User>) {
     let Some(value) = maybe else { return; };
     match maybe {
@@ -217,7 +217,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
 }
 
 #[test]
-fn resolves_lowercase_unit_variant_patterns_from_expected_type() {
+fn resolves_imported_lowercase_unit_variant_patterns() {
     check_project_body_ir_patterns(
         r#"
 //- /src/lib.rs crate:body_lowercase_unit_variant_pattern
@@ -225,7 +225,7 @@ pub enum State {
     idle,
     busy,
 }
-
+use State::{busy, idle};
 pub fn use_it(state: State) {
     match state {
         idle => {}
@@ -261,7 +261,7 @@ pub struct TuplePair(pub i32, pub i32, pub i32);
 pub enum Maybe {
     None,
 }
-
+use Maybe::None;
 pub fn use_it(
     tuple: (i32, i32, i32),
     tuple_pair: TuplePair,
@@ -326,7 +326,7 @@ pub enum Option<T> {
     Some(T),
     None,
 }
-
+use Option::{None, Some};
 pub struct User {
     pub name: Option<u8>,
 }

@@ -69,7 +69,7 @@ impl User {
                     callee
                       expr e1 path UserId -> struct body_expr_fixture[lib]::crate::UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:35
                     arg
-                      expr e2 literal int `1` => i32 @ 14:36-14:37
+                      expr e2 literal int `1` => u64 @ 14:36-14:37
               stmt s2 let v4: UserId @ 15:9-15:43
                 initializer
                   expr e6 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:30-15:42

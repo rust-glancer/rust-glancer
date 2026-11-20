@@ -2,40 +2,25 @@
 //!
 //! Lowering has to build scopes before value-name resolution is available, so ambiguous identifier
 //! patterns temporarily occupy binding slots. This query decides which slots are real bindings.
-//! The caller then compacts the body to its final binding arena, after this query has released
-//! its immutable body view and temporary signature.
-//!
-//! Materialization has three phases:
-//!
-//! 1. Decide which pending binding slots stay active.
-//! 2. Use known pattern input types to catch unit variants such as `None`.
-//! 3. Rewrite every binding reference from pending slot ids to final binding ids.
-
-use std::cell::OnceCell;
+//! The caller compacts the body to its final binding arena once the query has released the
+//! immutable body view.
 
 use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
-    BindingId, DefId, DefMapRef, ExprId, FieldKey, ModuleId, ModuleRef, Path, ScopeId,
-    SemanticItemRef, TypeDefId, identity::DeclarationRef,
+    BindingId, DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
+    identity::DeclarationRef,
 };
-use rg_item_tree::{FieldList, TypeRef};
 use rg_semantic_ir::{ItemLookupQuery, SemanticItemSource};
 use rg_source::ReadError;
-use rg_ty::{Ty, signature::CallableSignature};
 
 use super::lower::{LoweredBodyData, PendingBindingResolution};
-use crate::{
-    BodyPath,
-    body::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind, facts::BodyResolution},
-    resolution::BodyResolutionContext,
-};
+use crate::{body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Decide which lowered pattern identifiers are bindings. The body remains immutable until
 /// all decisions are made: lexical lookup still needs the original pending binding identities.
 pub(crate) struct PatternBindingQuery<'query, D, I> {
     context: BodyResolutionContext<'query, &'query D, &'query I>,
     body: &'query LoweredBodyData,
-    signature: OnceCell<Option<CallableSignature>>,
 }
 
 impl<'query, D, I> PatternBindingQuery<'query, D, I>
@@ -61,7 +46,6 @@ where
                 cancellation.clone(),
             ),
             body,
-            signature: OnceCell::new(),
         }
     }
 
@@ -82,340 +66,7 @@ where
             active.push(is_active);
         }
 
-        // Value lookup catches constants and statics. Unit variants also need the type of the
-        // pattern input, so run that pass after the first active binding set exists.
-        let pending_tys = self.pending_binding_tys(&active)?;
-        self.deactivate_unit_variant_pattern_bindings(&mut active, &pending_tys)?;
         Ok(active)
-    }
-
-    /// Returns binding types in the pending-id space used during materialization.
-    fn pending_binding_tys(&self, active: &[bool]) -> Result<Vec<Ty>, ReadError> {
-        let mut tys = Vec::with_capacity(self.body.body().bindings().len());
-        for binding_idx in 0..self.body.body().bindings().len() {
-            let binding = BindingId(binding_idx);
-            if active.get(binding_idx).copied().unwrap_or(false) {
-                tys.push(self.binding_ty(binding)?);
-            } else {
-                tys.push(Ty::Unknown);
-            }
-        }
-        Ok(tys)
-    }
-
-    fn deactivate_unit_variant_pattern_bindings(
-        &self,
-        active: &mut [bool],
-        pending_tys: &[Ty],
-    ) -> Result<(), ReadError> {
-        // A bare `None` cannot be recognized from value lookup alone unless it is written as a
-        // full path. The input type of `match value` or `let pat: Ty = ...` gives enough context to
-        // interpret single-segment unit variants without returning to capitalization heuristics.
-        for statement in self.body.body().statements().iter() {
-            let StmtKind::Let {
-                scope,
-                pat: Some(pat),
-                annotation,
-                initializer,
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-
-            let expected_ty = self.pending_expected_ty_for_let(
-                *scope,
-                annotation.as_ref(),
-                *initializer,
-                active,
-                pending_tys,
-            )?;
-            self.deactivate_unit_variant_bindings_in_pat(*pat, &expected_ty, active)?;
-        }
-
-        for expr_idx in 0..self.body.body().exprs().len() {
-            let expr = ExprId(expr_idx);
-            match &self.body.body().expr_unchecked(expr).kind {
-                ExprKind::Match { scrutinee, arms } => {
-                    let expected_ty = scrutinee
-                        .map(|scrutinee| self.pending_expr_ty(scrutinee, active, pending_tys))
-                        .transpose()?
-                        .unwrap_or(Ty::Unknown);
-                    for arm in arms {
-                        if let Some(pat) = arm.pat {
-                            self.deactivate_unit_variant_bindings_in_pat(
-                                pat,
-                                &expected_ty,
-                                active,
-                            )?;
-                        }
-                    }
-                }
-                ExprKind::Let {
-                    scope,
-                    pat: Some(pat),
-                    initializer,
-                    ..
-                } => {
-                    let expected_ty = self.pending_expected_ty_for_let(
-                        *scope,
-                        None,
-                        *initializer,
-                        active,
-                        pending_tys,
-                    )?;
-                    self.deactivate_unit_variant_bindings_in_pat(*pat, &expected_ty, active)?;
-                }
-                _ => {}
-            }
-        }
-
-        Ok(())
-    }
-
-    fn pending_expected_ty_for_let(
-        &self,
-        scope: ScopeId,
-        annotation: Option<&TypeRef>,
-        initializer: Option<ExprId>,
-        active: &[bool],
-        pending_tys: &[Ty],
-    ) -> Result<Ty, ReadError> {
-        if let Some(annotation) = annotation {
-            let ty = self.context.type_refs(scope).resolve(annotation)?;
-            if !matches!(ty, Ty::Unknown) {
-                return Ok(ty);
-            }
-        }
-
-        initializer
-            .map(|expr| self.pending_expr_ty(expr, active, pending_tys))
-            .transpose()
-            .map(|ty| ty.unwrap_or(Ty::Unknown))
-    }
-
-    fn pending_expr_ty(
-        &self,
-        expr: ExprId,
-        active: &[bool],
-        pending_tys: &[Ty],
-    ) -> Result<Ty, ReadError> {
-        match &self.body.body().expr_unchecked(expr).kind {
-            ExprKind::Path { path } => {
-                let Some(path) = path.as_def_map_path() else {
-                    return Ok(Ty::Unknown);
-                };
-                Ok(self
-                    .pending_binding_ty_for_path(
-                        self.body.body().expr_unchecked(expr).scope,
-                        self.body.body().expr_unchecked(expr).visible_bindings,
-                        &path,
-                        active,
-                        pending_tys,
-                    )
-                    .unwrap_or(Ty::Unknown))
-            }
-            ExprKind::Wrapper {
-                inner: Some(inner), ..
-            } => {
-                // This is only cheap context recovery for pattern disambiguation. Peeking through
-                // wrappers keeps common cases useful without trying to type-check the expression.
-                self.pending_expr_ty(*inner, active, pending_tys)
-            }
-
-            // Materialization runs before body inference, so other expression forms have no
-            // semantic fact to consult yet.
-            _ => Ok(Ty::Unknown),
-        }
-    }
-
-    fn pending_binding_ty_for_path(
-        &self,
-        start_scope: ScopeId,
-        visible_bindings: usize,
-        path: &Path,
-        active: &[bool],
-        pending_tys: &[Ty],
-    ) -> Option<Ty> {
-        let name = path.single_name()?;
-        let mut scope = Some(start_scope);
-        while let Some(scope_id) = scope {
-            let scope_data = self.body.body().scope(scope_id)?;
-            for binding in scope_data.bindings.iter().rev() {
-                if binding.0 >= visible_bindings {
-                    continue;
-                }
-                if !active.get(binding.0).copied().unwrap_or(false) {
-                    continue;
-                }
-                let Some(binding_data) = self.body.body().binding(*binding) else {
-                    continue;
-                };
-                if binding_data.name.as_deref() == Some(name) {
-                    return pending_tys.get(binding.0).cloned();
-                }
-            }
-            scope = scope_data.parent;
-        }
-
-        None
-    }
-
-    /// Walks a pattern with its input type and deactivates ambiguous unit-variant bindings.
-    fn deactivate_unit_variant_bindings_in_pat(
-        &self,
-        pat: rg_ir_model::PatId,
-        expected_ty: &Ty,
-        active: &mut [bool],
-    ) -> Result<(), ReadError> {
-        if matches!(expected_ty, Ty::Unknown) {
-            return Ok(());
-        }
-
-        let Some(data) = self.body.body().pat(pat) else {
-            return Ok(());
-        };
-        match &data.kind {
-            PatKind::Binding {
-                binding,
-                subpat,
-                path,
-                ..
-            } => {
-                if let Some(binding) = binding
-                    && active.get(binding.0).copied().unwrap_or(false)
-                    && matches!(
-                        self.body.pending_binding_resolution(*binding),
-                        PendingBindingResolution::AmbiguousPattern
-                    )
-                    && path
-                        .as_ref()
-                        .map(|path| self.path_is_unit_variant_pattern(path, expected_ty))
-                        .transpose()?
-                        .unwrap_or(false)
-                {
-                    active[binding.0] = false;
-                }
-                if let Some(subpat) = subpat {
-                    self.deactivate_unit_variant_bindings_in_pat(*subpat, expected_ty, active)?;
-                }
-            }
-            PatKind::TupleStruct { path, fields } => {
-                self.deactivate_unit_variant_bindings_in_tuple_struct_pat(
-                    path.as_ref(),
-                    fields,
-                    expected_ty,
-                    active,
-                )?;
-            }
-            PatKind::Record { path, fields, .. } => {
-                self.deactivate_unit_variant_bindings_in_record_pat(
-                    path.as_ref(),
-                    fields,
-                    expected_ty,
-                    active,
-                )?;
-            }
-            PatKind::Or { pats } => {
-                for pat in pats {
-                    self.deactivate_unit_variant_bindings_in_pat(*pat, expected_ty, active)?;
-                }
-            }
-            PatKind::Ref { pat, .. } | PatKind::Box { pat } => {
-                self.deactivate_unit_variant_bindings_in_pat(*pat, expected_ty, active)?;
-            }
-            PatKind::Tuple { .. }
-            | PatKind::Slice { .. }
-            | PatKind::Path { .. }
-            | PatKind::Rest
-            | PatKind::Literal { .. }
-            | PatKind::Range { .. }
-            | PatKind::ConstBlock { .. }
-            | PatKind::Wildcard
-            | PatKind::Unsupported => {}
-        }
-
-        Ok(())
-    }
-
-    fn deactivate_unit_variant_bindings_in_tuple_struct_pat(
-        &self,
-        path: Option<&BodyPath>,
-        fields: &[rg_ir_model::PatId],
-        expected_ty: &Ty,
-        active: &mut [bool],
-    ) -> Result<(), ReadError> {
-        for (index, field_pat) in fields.iter().enumerate() {
-            let field_key = FieldKey::Tuple(index);
-            let Some(field_ty) =
-                self.context
-                    .fields()
-                    .pattern_field_ty(path, expected_ty, &field_key)?
-            else {
-                continue;
-            };
-            self.deactivate_unit_variant_bindings_in_pat(*field_pat, &field_ty, active)?;
-        }
-        Ok(())
-    }
-
-    fn deactivate_unit_variant_bindings_in_record_pat(
-        &self,
-        path: Option<&BodyPath>,
-        fields: &[RecordPatField],
-        expected_ty: &Ty,
-        active: &mut [bool],
-    ) -> Result<(), ReadError> {
-        for field in fields {
-            let Some(field_ty) =
-                self.context
-                    .fields()
-                    .pattern_field_ty(path, expected_ty, &field.key)?
-            else {
-                continue;
-            };
-            self.deactivate_unit_variant_bindings_in_pat(field.pat, &field_ty, active)?;
-        }
-        Ok(())
-    }
-
-    fn path_is_unit_variant_pattern(
-        &self,
-        path: &BodyPath,
-        expected_ty: &Ty,
-    ) -> Result<bool, ReadError> {
-        let Some(path) = path.as_def_map_path() else {
-            return Ok(false);
-        };
-        let Some(variant_name) = path.single_name() else {
-            return Ok(false);
-        };
-
-        for candidate in expected_ty.reference_chain() {
-            for enum_ty in candidate
-                .as_adts()
-                .iter()
-                .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
-            {
-                let Some(variant_ref) = self
-                    .context
-                    .item_query()
-                    .enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
-                else {
-                    continue;
-                };
-                let Some(variant_data) =
-                    self.context.item_query().enum_variant_data(variant_ref)?
-                else {
-                    continue;
-                };
-                if matches!(variant_data.variant.fields, FieldList::Unit) {
-                    return Ok(true);
-                }
-            }
-        }
-
-        Ok(false)
     }
 
     /// Returns true when an ambiguous identifier pattern should stay a value path.
@@ -557,40 +208,5 @@ where
             DeclarationRef::Item(SemanticItemRef::Const(_) | SemanticItemRef::Static(_))
                 | DeclarationRef::EnumVariant(_)
         )
-    }
-
-    fn binding_ty(&self, binding: BindingId) -> Result<Ty, ReadError> {
-        let binding_data = self.body.body().binding_unchecked(binding);
-        if matches!(
-            binding_data.kind,
-            BindingKind::Param | BindingKind::SelfParam(_)
-        ) && let Some(function) = self.body.body().owner().function()
-            && let Some(param_index) = self.body.body().function_param_index_for_binding(binding)
-            && self.body.body().function_params()[param_index]
-                .bindings
-                .len()
-                == 1
-            && let Some(signature) = {
-                // Several parameters can need the same interpreted signature. Load it only
-                // after a parameter needs it, and keep it within this immutable body query.
-                if self.signature.get().is_none() {
-                    let signature = self.context.signatures().function(function)?;
-                    let _ = self.signature.set(signature);
-                }
-                self.signature.get().and_then(Option::as_ref)
-            }
-            && let Some(param_ty) = signature.params.get(param_index)
-        {
-            return Ok(param_ty.clone());
-        }
-
-        if let Some(annotation) = &binding_data.annotation {
-            return self
-                .context
-                .type_refs(binding_data.scope)
-                .resolve(annotation);
-        }
-
-        Ok(Ty::Unknown)
     }
 }

@@ -50,7 +50,7 @@ where
                 self.inference.constrain_infer_tys(&ty, &annotation);
             }
             if let Some(pat) = param.pat {
-                self.infer_pattern(pat, &ty)
+                self.infer_pattern(pat, scope, &ty)
                     .context("infer closure pattern")?;
             }
         }

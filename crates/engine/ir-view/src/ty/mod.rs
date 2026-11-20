@@ -10,8 +10,8 @@ use std::fmt;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, ModuleRef, Path, PrimitiveTy, ScopeId, SemanticItemRef,
-    TypeDefRef,
+    BodyRef, DefMapRef, EnumVariantRef, FieldRef, ModuleRef, Path, PrimitiveTy, ScopeId,
+    SemanticItemRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
 use rg_item_tree::TypeRef;
@@ -172,6 +172,17 @@ impl<'a, 'db> TyView<'a, 'db> {
         self.body_view().expr_ty(expr.body_ir(), expr.expr_id())
     }
 
+    /// Return the field type projected from its receiver, before coercion at the use site.
+    pub fn ty_for_field_access(
+        &self,
+        expr: ExprRef,
+        field: FieldRef,
+    ) -> anyhow::Result<Option<IndexedType>> {
+        Ok(BodyResolutionView::new(self.db)
+            .field_access_ty(expr, field)?
+            .map(IndexedType::new))
+    }
+
     /// Project a declaration into its type when that question is meaningful.
     pub fn ty_for_declaration(
         &self,
@@ -325,6 +336,9 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     /// Resolve the declared type of a field.
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<Ty>> {
+        if let DefMapRef::Body(body_ref) = field.owner.origin {
+            return BodyResolutionView::new(self.db).declared_field_ty(body_ref, field);
+        }
         SemanticSignatureQuery::new(self.db, self.db)
             .field_ty(field)
             .map_err(Into::into)

@@ -8,11 +8,14 @@
 use std::time::Instant;
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyAssociatedPathPrefix, BodyResolutionContext, BodyView};
+use rg_body_ir::{
+    BodyAssociatedPathPrefix, BodyResolutionContext, BodyView, ExprKind, ExprWrapperKind,
+};
+use rg_def_map::NamespaceSet;
 use rg_ir_model::{
     BodyRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ModuleId, ModuleRef, Path, ScopeId,
     TraitDefRef,
-    identity::{DeclarationRef, LexicalScopeRef},
+    identity::{DeclarationRef, ExprRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemLookupQuery, TypePathResolution};
@@ -20,6 +23,7 @@ use rg_text::Name;
 use rg_ty::{
     Ty,
     lookup::{AssociatedItemCandidateRef, ItemPathQuery, MemberMethodCandidateRef},
+    signature::SemanticSignatureQuery,
 };
 
 use crate::IndexedViewDb;
@@ -159,7 +163,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db.cancellation().clone(),
         )
         .type_path_query()
-        .resolve_enum_variant_in_scope(scope, path)
+        .resolve_enum_variant_in_scope(scope, path, NamespaceSet::TYPES)
         .map_err(Into::into)
     }
 
@@ -215,6 +219,72 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         .value_paths()
         .resolve_nonlocal_path_ty(scope, path)
         .context("resolve nonlocal body value type")
+    }
+
+    /// Lower a body-local field with access to the surrounding module where it was declared.
+    pub(crate) fn declared_field_ty(
+        &self,
+        body_ref: BodyRef,
+        field: FieldRef,
+    ) -> anyhow::Result<Option<Ty>> {
+        let Some((body, item_lookup_query)) = self.body_with_lookup(body_ref)? else {
+            return Ok(None);
+        };
+        let context = BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &item_lookup_query,
+            self.db.cancellation().clone(),
+        );
+        SemanticSignatureQuery::with_resolver(self.db, self.db, &context)
+            .field_ty(field)
+            .context("lower body-local field type")
+    }
+
+    pub(crate) fn field_access_ty(
+        &self,
+        expr: ExprRef,
+        field: FieldRef,
+    ) -> anyhow::Result<Option<Ty>> {
+        let body_ref = expr.body_ir();
+        let Some((body, item_lookup_query)) = self.body_with_lookup(body_ref)? else {
+            return Ok(None);
+        };
+        let mut expr_id = expr.expr_id();
+        let (base, key) = loop {
+            match body.expr(expr_id).map(|expr| &expr.kind) {
+                Some(ExprKind::Field {
+                    base: Some(base),
+                    field: Some(key),
+                    ..
+                }) => break (*base, key),
+                Some(ExprKind::Wrapper {
+                    kind: ExprWrapperKind::Paren,
+                    inner: Some(inner),
+                }) => {
+                    expr_id = *inner;
+                }
+                _ => return Ok(None),
+            }
+        };
+        // The field expression's saved type can include a coercion. Its receiver still carries
+        // the generic arguments and deref information needed to recover the projected type.
+        let Some(receiver) = body.expr_ty(base) else {
+            return Ok(None);
+        };
+        BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &item_lookup_query,
+            self.db.cancellation().clone(),
+        )
+        .fields()
+        .field_access_ty(receiver, key, field)
+        .context("project field access type")
     }
 
     /// Return fields using the body's assumptions and declaration overlay during autoderef.
