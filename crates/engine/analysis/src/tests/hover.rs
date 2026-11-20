@@ -466,19 +466,22 @@ fn hovers_with_an_instantiated_field_type() {
         r#"
         //- /src/lib.rs crate:analysis_hover_field_types
         pub struct Payload;
+        pub trait Show {}
+        impl Show for Payload {}
 
         pub struct Packet<T> {
             /// Contents of the packet.
             pub va$0lue: T, // hover("field declaration")
         }
 
-        pub fn inspect(packet: Packet<Payload>) {
+        pub fn inspect(packet: Packet<Payload>, borrowed: Packet<&'static Payload>) {
             let _ = packet.va$0lue; // hover("generic field access")
+            let _: &dyn Show = borrowed.va$0lue; // hover("coerced field access")
         }
         "#,
         expect![[r#"
             // field declaration
-            range: 5:9-5:14
+            range: 7:9-7:14
             block:
               kind: field
               path: analysis_hover_field_types::Packet
@@ -488,13 +491,24 @@ fn hovers_with_an_instantiated_field_type() {
                 Contents of the packet.
 
             // generic field access
-            range: 9:20-9:25
+            range: 11:20-11:25
             block:
               kind: field
               path: analysis_hover_field_types::Packet
               signature:
                 pub value: T
               type: Payload
+              docs:
+                Contents of the packet.
+
+            // coerced field access
+            range: 12:33-12:38
+            block:
+              kind: field
+              path: analysis_hover_field_types::Packet
+              signature:
+                pub value: T
+              type: &'static Payload
               docs:
                 Contents of the packet.
         "#]],

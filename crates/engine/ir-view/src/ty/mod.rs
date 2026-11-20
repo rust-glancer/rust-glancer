@@ -172,6 +172,17 @@ impl<'a, 'db> TyView<'a, 'db> {
         self.body_view().expr_ty(expr.body_ir(), expr.expr_id())
     }
 
+    /// Return the field type projected from its receiver, before coercion at the use site.
+    pub fn ty_for_field_access(
+        &self,
+        expr: ExprRef,
+        field: FieldRef,
+    ) -> anyhow::Result<Option<IndexedType>> {
+        Ok(BodyResolutionView::new(self.db)
+            .field_access_ty(expr, field)?
+            .map(IndexedType::new))
+    }
+
     /// Project a declaration into its type when that question is meaningful.
     pub fn ty_for_declaration(
         &self,

@@ -2445,6 +2445,7 @@ pub enum Event<T> {
 use Event::Payload as Present;
 
 fn inspect(tuple: Event<User>, record: Event<User>) {
+    struct Present {}
     match tuple {
         Present(.., user) if user.flag.is_ready()$0 => { user$1; } // ty("guard method"), ty("aliased tuple payload after rest")
         _ => {}
@@ -2470,10 +2471,12 @@ fn infers_tuple_patterns_with_rest() {
         r#"
 //- /src/lib.rs crate:tuple_pattern_rest
 enum Status { Penultimate }
+enum Readiness { Ready }
 struct Packet<T>(bool, Status, u16, T);
 enum Event<T> { Empty, Arrived(bool, u32, u64, T) }
 
-fn inspect(tuple: &(bool, u8, u16, u64), packet: Packet<u64>, event: Event<u8>) {
+#[allow(bindings_with_variant_name, non_snake_case)]
+fn inspect(tuple: &(bool, u8, u16, u64), packet: Packet<u64>, event: Event<u8>, ready: Packet<Readiness>) {
     let (head, .., tail) = tuple;
     (head, tail)$0; // ty("borrowed tuple")
 
@@ -2490,6 +2493,9 @@ fn inspect(tuple: &(bool, u8, u16, u64), packet: Packet<u64>, event: Event<u8>) 
     leading$0; // ty("trailing rest")
     let (left, .., right) = (1u8, 2u16);
     (left, right)$0; // ty("rest matching zero fields")
+
+    let Packet(.., Ready) = ready;
+    Ready$0; // ty("binding shares an out-of-scope variant name")
 }
 "#,
         expect![[r#"
@@ -2498,6 +2504,7 @@ fn inspect(tuple: &(bool, u8, u16, u64), packet: Packet<u64>, event: Event<u8>) 
             (bool, u8) // tuple variant
             bool // trailing rest
             (u8, u16) // rest matching zero fields
+            nominal enum tuple_pattern_rest[lib]::crate::Readiness // binding shares an out-of-scope variant name
         "#]],
     );
 }

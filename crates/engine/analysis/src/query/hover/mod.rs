@@ -85,11 +85,12 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             let mut block = self
                 .hover_block(declaration, details)
                 .context("resolve hover documentation")?;
-            if let (SymbolAt::Expr { expr }, DeclarationRef::Field(_)) = (&symbol, declaration) {
+            if let (SymbolAt::Expr { expr }, DeclarationRef::Field(field)) = (&symbol, declaration)
+            {
                 // On `packet.value`, keep the declaration `value: T` and show what `T` became
                 // for this receiver. Compare labels too, since distinct types can render alike.
                 let types = TyView::new(self.0.view_db());
-                if let Some(inferred) = types.ty_for_expr(*expr)?
+                if let Some(inferred) = types.ty_for_field_access(*expr, field)?
                     && let Some(declared) = types.ty_for_declaration(declaration)?
                     && inferred != declared
                     && let Some(label) = type_renderer.render(&inferred)?

@@ -5,7 +5,7 @@
 //! defer just that pattern projection; expressions owned by the pattern are still visited once.
 
 use anyhow::Context as _;
-use rg_def_map::DefMapSource;
+use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{FieldKey, Mutability, PatId, ScopeId};
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
@@ -326,7 +326,7 @@ where
             return Ok(());
         };
         let field_query = self.context.fields();
-        let variant = field_query.pattern_variant(scope, path, owner.def)?;
+        let variant = field_query.pattern_variant(scope, path, owner.def, NamespaceSet::VALUES)?;
         let arity = || field_query.tuple_pattern_arity(owner.def, variant);
         let live = self.context.live();
         for (index, field_pat) in field_query.tuple_pattern_fields(fields, arity)? {
@@ -352,10 +352,10 @@ where
         let Some(owner) = expected_ty.as_adt() else {
             return Ok(());
         };
-        let variant = self
-            .context
-            .fields()
-            .pattern_variant(scope, path, owner.def)?;
+        let variant =
+            self.context
+                .fields()
+                .pattern_variant(scope, path, owner.def, NamespaceSet::TYPES)?;
         let live = self.context.live();
         for field in fields {
             if let Some(field_ty) =

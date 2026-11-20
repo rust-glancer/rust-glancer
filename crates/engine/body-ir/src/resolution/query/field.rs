@@ -1,17 +1,17 @@
 //! Field types for owned receivers and pattern bindings.
 
-use rg_def_map::DefMapSource;
+use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, PatId, ScopeId, TypeDefId, TypeDefRef};
 use rg_item_tree::FieldList;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
-use rg_ty::{AdtTy, Ty, solver::SemanticDeclarations};
+use rg_ty::{Ty, solver::SemanticDeclarations};
 
-use crate::{BodyPath, PatKind, resolution::BodyResolutionContext};
+use crate::{BodyPath, PatKind, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Reads field declarations and substitutes the owner type's arguments into them.
 /// Enum patterns also supply a variant identity so the same field position is read from the right
-/// variant. Results use owned types and can be used before live body inference starts.
+/// variant. Editor queries use a temporary solver to project fields from saved receiver types.
 pub struct BodyFieldQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -39,6 +39,31 @@ where
                 }
             }
             Ok(fields)
+        })?
+    }
+
+    /// Project the selected field from its receiver before applying any use-site coercion.
+    pub fn field_access_ty(
+        &self,
+        receiver: &Ty,
+        key: &FieldKey,
+        field: FieldRef,
+    ) -> Result<Option<Ty>, ReadError> {
+        let context = self.context.ty_context();
+        let declarations = SemanticDeclarations::new(&context, &self.context);
+        declarations.with_table(|table, params| {
+            let receiver = table.interner().lower_ty(receiver, params);
+            let Some((BodyResolution::Declarations(declarations), ty)) =
+                self.context.live().field(receiver, key, &table)?
+            else {
+                return Ok(None);
+            };
+            if declarations.as_one() != Some(&field.into()) {
+                return Ok(None);
+            }
+            let ty = table.normalize(ty);
+            let _ = table.fulfill();
+            Ok(Some(table.finalize(ty)))
         })?
     }
 
@@ -104,6 +129,7 @@ where
         scope: ScopeId,
         path: Option<&BodyPath>,
         owner: TypeDefRef,
+        namespace: NamespaceSet,
     ) -> Result<Option<EnumVariantRef>, ReadError> {
         let (TypeDefId::Enum(enum_id), Some(path)) =
             (owner.id, path.and_then(BodyPath::as_def_map_path))
@@ -115,7 +141,7 @@ where
         if let Some(variant) = self
             .context
             .type_path_query()
-            .resolve_enum_variant_in_scope(scope, &path)?
+            .resolve_enum_variant_in_scope(scope, &path, namespace)?
         {
             return Ok(
                 (variant.origin == owner.origin && variant.enum_id == enum_id).then_some(variant),
@@ -129,94 +155,5 @@ where
         self.context
             .item_query()
             .enum_variant_ref_for_type_def(owner, name.as_str())
-    }
-
-    /// Project the field type destructured by a record or tuple-variant pattern.
-    ///
-    /// Read from the expected type after the caller peels any written references.
-    pub(crate) fn pattern_field_ty(
-        &self,
-        owner: &AdtTy,
-        variant: Option<EnumVariantRef>,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, ReadError> {
-        match (owner.def.id, variant) {
-            (TypeDefId::Enum(_), Some(variant)) => {
-                self.enum_variant_field_ty(owner, variant, field_key)
-            }
-            (TypeDefId::Enum(_), None) => Ok(None),
-            (TypeDefId::Struct(_) | TypeDefId::Union(_), _) => self.declared(owner, field_key),
-        }
-    }
-
-    /// Resolve a declared field directly from its owner type.
-    pub(crate) fn declared(
-        &self,
-        owner_ty: &AdtTy,
-        field: &FieldKey,
-    ) -> Result<Option<Ty>, ReadError> {
-        let item_query = self.context.item_query();
-        let Some(field_ref) = item_query.field_for_type(owner_ty.def, field)? else {
-            return Ok(None);
-        };
-        // A declaration remains useful for navigation even if its type data is unavailable.
-        // Read the type once before asking for substitutions, so missing data stays fail-soft.
-        let ty = self
-            .context
-            .signatures()
-            .field_ty(field_ref)?
-            .map(|ty| {
-                self.context
-                    .generics()
-                    .subst_for_nominal_ty(owner_ty)
-                    .map(|subst| subst.apply(&ty))
-            })
-            .transpose()?;
-
-        Ok(ty)
-    }
-
-    /// Return the type of an enum variant field for a known enum type.
-    pub(crate) fn enum_variant_field_ty(
-        &self,
-        enum_ty: &AdtTy,
-        variant_ref: EnumVariantRef,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, ReadError> {
-        let TypeDefId::Enum(enum_id) = enum_ty.def.id else {
-            return Ok(None);
-        };
-        if variant_ref.origin != enum_ty.def.origin || variant_ref.enum_id != enum_id {
-            return Ok(None);
-        }
-
-        let item_query = self.context.item_query();
-        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
-            return Ok(None);
-        };
-        let Some(field_index) = Self::variant_field(&variant_data.variant.fields, field_key) else {
-            return Ok(None);
-        };
-        let subst = self.context.generics().subst_for_nominal_ty(enum_ty)?;
-        Ok(self
-            .context
-            .signatures()
-            .enum_variant_field_ty(variant_ref, field_index)?
-            .map(|ty| subst.apply(&ty)))
-    }
-
-    /// Find a named or tuple field inside a variant declaration.
-    fn variant_field(fields: &FieldList, key: &FieldKey) -> Option<usize> {
-        match key {
-            FieldKey::Named(_) => fields
-                .fields()
-                .iter()
-                .position(|field| field.key.as_ref() == Some(key)),
-            FieldKey::Tuple(index) => fields
-                .fields()
-                .get(*index)
-                .filter(|field| field.key.as_ref() == Some(key))
-                .map(|_| *index),
-        }
     }
 }

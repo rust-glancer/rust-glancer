@@ -189,7 +189,7 @@ where
         if let Some(variant_ref) = self
             .context
             .type_path_query()
-            .resolve_enum_variant_in_scope(scope, &def_map_path)?
+            .resolve_enum_variant_in_scope(scope, &def_map_path, NamespaceSet::TYPES)?
             && let Some(variant) = self.context.item_query().enum_variant_data(variant_ref)?
         {
             return Ok((
