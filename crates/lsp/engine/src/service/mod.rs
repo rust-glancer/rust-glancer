@@ -12,7 +12,8 @@ use std::{ffi::OsStr, path::PathBuf, sync::Arc};
 use anyhow::Context as _;
 use gen_lsp_types::{
     CodeAction, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint, Location,
-    PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
+    PrepareRenameResult, Range, SemanticTokens, SignatureHelp, TextEdit, WorkspaceEdit,
+    WorkspaceSymbol,
 };
 use rg_lsp_proto::{
     CodeActionRequestContext, CompletionClientCapabilities, CompletionImport,
@@ -20,6 +21,7 @@ use rg_lsp_proto::{
     DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig, EngineError,
     EngineResult, EngineService, FoldingClientCapabilities, OpenDocumentsRevision,
     ProjectInitialization, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
+    SignatureHelpClientCapabilities,
 };
 use rg_project::SavedFileChange;
 use rg_source::CapturedSource;
@@ -279,6 +281,21 @@ impl EngineService for Service {
     ) -> Result<QueryValue<Option<Hover>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Hover { input, respond_to })
+            .await
+    }
+
+    async fn signature_help(
+        self,
+        _: context::Context,
+        input: DocumentPositionSnapshot,
+        client_capabilities: SignatureHelpClientCapabilities,
+    ) -> Result<QueryValue<Option<SignatureHelp>>, QueryError> {
+        self.engine
+            .query(|respond_to| EngineCommand::SignatureHelp {
+                input,
+                client_capabilities,
+                respond_to,
+            })
             .await
     }
 

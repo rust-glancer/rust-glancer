@@ -17,6 +17,7 @@ mod query;
 mod saved_source;
 mod semantic_tokens;
 mod service;
+mod signature_help;
 mod snapshot;
 
 pub use self::{
@@ -44,6 +45,7 @@ pub use self::{
         EngineResult, EngineService, EngineServiceClient, NotificationsService,
         NotificationsServiceClient, ProjectInitialization,
     },
+    signature_help::SignatureHelpClientCapabilities,
     snapshot::{
         DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentRevision, DocumentSnapshot,
         EditorDocumentSnapshot, EditorSnapshot, OpenDocumentSession, OpenDocumentsRevision,

@@ -10,7 +10,8 @@ use std::path::PathBuf;
 
 use gen_lsp_types::{
     CodeAction, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint, Location,
-    PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
+    PrepareRenameResult, Range, SemanticTokens, SignatureHelp, TextEdit, WorkspaceEdit,
+    WorkspaceSymbol,
 };
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +20,7 @@ use crate::{
     CompletionImportCandidate, CompletionResult, DocumentPositionSnapshot, DocumentRangeSnapshot,
     DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig, EngineError,
     FoldingClientCapabilities, OpenDocumentsRevision, QueryError, QueryValue, SaveProposal,
-    SavedProjectChanges, ServiceNotification,
+    SavedProjectChanges, ServiceNotification, SignatureHelpClientCapabilities,
 };
 
 pub type EngineResult<T> = Result<T, EngineError>;
@@ -87,6 +88,11 @@ pub trait EngineService {
     async fn hover(
         input: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Option<Hover>>, QueryError>;
+
+    async fn signature_help(
+        input: DocumentPositionSnapshot,
+        client_capabilities: SignatureHelpClientCapabilities,
+    ) -> Result<QueryValue<Option<SignatureHelp>>, QueryError>;
 
     async fn code_action(
         input: DocumentRangeSnapshot,
