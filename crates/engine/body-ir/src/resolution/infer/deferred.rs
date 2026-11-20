@@ -8,7 +8,7 @@
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, ItemOwner, Mutability, PatId, TraitDefRef};
+use rg_ir_model::{ExprId, ItemOwner, Mutability, PatId, ScopeId, TraitDefRef};
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
 use rg_ty::solver::{DynTy, List, TraitApplication, Ty, TyShape};
@@ -43,6 +43,7 @@ pub(super) enum DeferredKind<'s> {
     },
     Pattern {
         pat: PatId,
+        scope: ScopeId,
         expected: Ty<'s>,
         default_ref: Option<Mutability>,
     },
@@ -560,10 +561,11 @@ where
             }
             DeferredKind::Pattern {
                 pat,
+                scope,
                 expected,
                 default_ref,
             } => self
-                .try_infer_pat(*pat, expected, *default_ref)
+                .try_infer_pat(*pat, *scope, expected, *default_ref)
                 .context("project pending pattern"),
             DeferredKind::Field { expr } => {
                 let ExprKind::Field {

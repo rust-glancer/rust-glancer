@@ -7,9 +7,7 @@ use std::borrow::Cow;
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::{
-    body::BodyStructureView,
-    display::ty_label::TypeRenderer,
-    member::{FunctionParameterView, MemberView},
+    body::BodyStructureView, display::ty_label::TypeRenderer, member::MemberView,
     ty::locals::BodyView,
 };
 use rg_parse::{SourceReader, syntax_edition};
@@ -167,14 +165,20 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             for (arg_idx, arg) in call.args().iter().enumerate() {
                 rg_std::check_cancel!(self.analysis, "inlay hints");
                 let param_idx = arg_idx + call.param_offset();
-                let Some(param) = function.parameter(param_idx) else {
+                let Some(param) = function
+                    .parameter(param_idx)
+                    .filter(|param| !param.is_receiver())
+                else {
                     continue;
                 };
-                let Some(param_name) = Self::param_hint_name(param) else {
+                let Some(param_name) = param.simple_binding_name() else {
                     continue;
                 };
 
-                if is_unary && Self::is_obvious_param_name(function.name(), param_name) {
+                let name = Self::name_for_comparison(param_name);
+                if name.is_empty()
+                    || (is_unary && Self::is_obvious_param_name(function.name(), name))
+                {
                     continue;
                 }
                 let arg_span = arg.span();
@@ -187,7 +191,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     .and_then(|text| Self::arg_hint_name(text, edition));
                 if arg_name
                     .as_deref()
-                    .is_some_and(|arg_name| Self::arg_name_matches_param_name(arg_name, param_name))
+                    .is_some_and(|arg_name| Self::arg_name_matches_param_name(arg_name, name))
                 {
                     continue;
                 }
@@ -209,30 +213,10 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         Ok(hints.into_vec())
     }
 
-    fn param_hint_name(param: FunctionParameterView<'_>) -> Option<&str> {
-        if param.is_receiver() {
-            return None;
-        }
-
-        let name = param.pattern();
-        if name.trim_matches('_').is_empty() {
-            return None;
-        }
-        let mut chars = name.chars();
-        let first = chars.next()?;
-        if !(first == '_' || first.is_ascii_alphabetic()) {
-            return None;
-        }
-        chars
-            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-            .then_some(name)
-    }
-
     // A single input is often explained by the function name (`set_timeout`) or
     // has only a generic role (`value`, `predicate`). Keep these labels when there
     // are several inputs, where they can help distinguish the argument positions.
-    fn is_obvious_param_name(function_name: &str, param_name: &str) -> bool {
-        let name = param_name.trim_matches('_');
+    fn is_obvious_param_name(function_name: &str, name: &str) -> bool {
         function_name
             .strip_suffix(name)
             .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('_'))
@@ -281,12 +265,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     }
 
     // Names such as `local_user` and `user_id` already expose a `user` parameter's role.
-    fn arg_name_matches_param_name(arg_name: &str, param_name: &str) -> bool {
-        let name = param_name.trim_matches('_');
-        let arg_name = arg_name
-            .strip_prefix("r#")
-            .unwrap_or(arg_name)
-            .trim_matches('_');
+    fn arg_name_matches_param_name(arg_name: &str, name: &str) -> bool {
+        let arg_name = Self::name_for_comparison(arg_name);
         arg_name.eq_ignore_ascii_case(name)
             || arg_name
                 .strip_prefix(name)
@@ -294,6 +274,10 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             || arg_name
                 .strip_suffix(name)
                 .is_some_and(|rest| rest.ends_with('_'))
+    }
+
+    fn name_for_comparison(name: &str) -> &str {
+        name.strip_prefix("r#").unwrap_or(name).trim_matches('_')
     }
 
     fn should_show_method_chain_expr_hint(

@@ -1,18 +1,17 @@
 //! Field types for owned receivers and pattern bindings.
 
-use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, TypeDefId};
+use rg_def_map::{DefMapSource, NamespaceSet};
+use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, PatId, ScopeId, TypeDefId, TypeDefRef};
 use rg_item_tree::FieldList;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
-use rg_std::ExpectedUnique;
-use rg_ty::{AdtTy, Ty, solver::SemanticDeclarations};
+use rg_ty::{Ty, solver::SemanticDeclarations};
 
-use crate::{BodyPath, resolution::BodyResolutionContext};
+use crate::{BodyPath, PatKind, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Reads field declarations and substitutes the owner type's arguments into them.
-/// Enum patterns also supply a variant name so the same field position is read from the right
-/// variant. Results use owned types and can be used before live body inference starts.
+/// Enum patterns also supply a variant identity so the same field position is read from the right
+/// variant. Editor queries use a temporary solver to project fields from saved receiver types.
 pub struct BodyFieldQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -43,121 +42,118 @@ where
         })?
     }
 
-    /// Project the field type destructured by a record or tuple-variant pattern.
-    ///
-    /// Pattern matching peels written references but does not use receiver autoderef. Struct and
-    /// union fields come directly from the expected nominal type; enum fields additionally use the
-    /// pattern path's final segment to select the variant.
-    pub(crate) fn pattern_field_ty(
+    /// Project the selected field from its receiver before applying any use-site coercion.
+    pub fn field_access_ty(
         &self,
-        path: Option<&BodyPath>,
-        expected_ty: &Ty,
-        field_key: &FieldKey,
+        receiver: &Ty,
+        key: &FieldKey,
+        field: FieldRef,
     ) -> Result<Option<Ty>, ReadError> {
-        let variant_path = path.and_then(BodyPath::as_def_map_path);
-        let variant_name = variant_path
-            .as_ref()
-            .and_then(|path| path.segments().last())
-            .map(rg_text::Name::as_str);
-        let mut candidates = ExpectedUnique::new();
-
-        for candidate in expected_ty.reference_chain() {
-            for nominal_ty in candidate.as_adts() {
-                let field_ty = match nominal_ty.def.id {
-                    TypeDefId::Struct(_) | TypeDefId::Union(_) => {
-                        self.declared(nominal_ty, field_key)?
-                    }
-                    TypeDefId::Enum(_) => {
-                        let Some(variant_name) = variant_name else {
-                            continue;
-                        };
-                        let Some(variant_ref) = self
-                            .context
-                            .item_query()
-                            .enum_variant_ref_for_type_def(nominal_ty.def, variant_name)?
-                        else {
-                            continue;
-                        };
-                        self.enum_variant_field_ty(nominal_ty, variant_ref, field_key)?
-                    }
-                };
-                if let Some(field_ty) = field_ty {
-                    candidates.push(field_ty);
-                }
+        let context = self.context.ty_context();
+        let declarations = SemanticDeclarations::new(&context, &self.context);
+        declarations.with_table(|table, params| {
+            let receiver = table.interner().lower_ty(receiver, params);
+            let Some((BodyResolution::Declarations(declarations), ty)) =
+                self.context.live().field(receiver, key, &table)?
+            else {
+                return Ok(None);
+            };
+            if declarations.as_one() != Some(&field.into()) {
+                return Ok(None);
             }
-        }
-
-        Ok(candidates.into_option())
+            let ty = table.normalize(ty);
+            let _ = table.fulfill();
+            Ok(Some(table.finalize(ty)))
+        })?
     }
 
-    /// Resolve a declared field directly from its owner type.
-    pub(crate) fn declared(
+    /// In `(left, .., right)`, count `left` from the start and `right` from the end.
+    /// Only a suffix needs the arity, so leading fields still work with incomplete type data.
+    pub(crate) fn tuple_pattern_fields<'pat>(
         &self,
-        owner_ty: &AdtTy,
-        field: &FieldKey,
-    ) -> Result<Option<Ty>, ReadError> {
-        let item_query = self.context.item_query();
-        let Some(field_ref) = item_query.field_for_type(owner_ty.def, field)? else {
-            return Ok(None);
-        };
-        // A declaration remains useful for navigation even if its type data is unavailable.
-        // Read the type once before asking for substitutions, so missing data stays fail-soft.
-        let ty = self
-            .context
-            .signatures()
-            .field_ty(field_ref)?
-            .map(|ty| {
-                self.context
-                    .generics()
-                    .subst_for_nominal_ty(owner_ty)
-                    .map(|subst| subst.apply(&ty))
+        fields: &'pat [PatId],
+        arity: impl FnOnce() -> Result<Option<usize>, ReadError>,
+    ) -> Result<impl Iterator<Item = (usize, PatId)> + 'pat, ReadError> {
+        let body = self.context.body();
+        let rest = fields
+            .iter()
+            .position(|pat| {
+                body.pat(*pat)
+                    .is_some_and(|pat| matches!(pat.kind, PatKind::Rest))
             })
-            .transpose()?;
-
-        Ok(ty)
+            .unwrap_or(fields.len());
+        let (prefix, rest_and_suffix) = fields.split_at(rest);
+        let suffix = rest_and_suffix.get(1..).unwrap_or_default();
+        let suffix_start = if suffix.is_empty() {
+            None
+        } else {
+            arity()?
+                .and_then(|arity| arity.checked_sub(suffix.len()))
+                .filter(|start| *start >= prefix.len())
+        };
+        let suffix = suffix_start
+            .into_iter()
+            .flat_map(move |start| (start..).zip(suffix.iter().copied()));
+        Ok(prefix.iter().copied().enumerate().chain(suffix))
     }
 
-    /// Return the type of an enum variant field for a known enum type.
-    pub(crate) fn enum_variant_field_ty(
+    pub(crate) fn tuple_pattern_arity(
         &self,
-        enum_ty: &AdtTy,
-        variant_ref: EnumVariantRef,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, ReadError> {
-        let TypeDefId::Enum(enum_id) = enum_ty.def.id else {
-            return Ok(None);
+        owner: TypeDefRef,
+        variant: Option<EnumVariantRef>,
+    ) -> Result<Option<usize>, ReadError> {
+        let items = self.context.item_query();
+        let fields = match owner.id {
+            TypeDefId::Struct(_) => items
+                .semantic_item_view(owner.into())?
+                .and_then(|item| item.struct_data())
+                .map(|data| &data.fields),
+            TypeDefId::Enum(_) => {
+                let Some(variant) = variant else {
+                    return Ok(None);
+                };
+                items
+                    .enum_variant_data(variant)?
+                    .map(|data| &data.variant.fields)
+            }
+            TypeDefId::Union(_) => None,
         };
-        if variant_ref.origin != enum_ty.def.origin || variant_ref.enum_id != enum_id {
-            return Ok(None);
-        }
-
-        let item_query = self.context.item_query();
-        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
-            return Ok(None);
-        };
-        let Some(field_index) = Self::variant_field(&variant_data.variant.fields, field_key) else {
-            return Ok(None);
-        };
-        let subst = self.context.generics().subst_for_nominal_ty(enum_ty)?;
-        Ok(self
-            .context
-            .signatures()
-            .enum_variant_field_ty(variant_ref, field_index)?
-            .map(|ty| subst.apply(&ty)))
+        Ok(match fields {
+            Some(FieldList::Tuple(fields)) => Some(fields.len()),
+            _ => None,
+        })
     }
 
-    /// Find a named or tuple field inside a variant declaration.
-    fn variant_field(fields: &FieldList, key: &FieldKey) -> Option<usize> {
-        match key {
-            FieldKey::Named(_) => fields
-                .fields()
-                .iter()
-                .position(|field| field.key.as_ref() == Some(key)),
-            FieldKey::Tuple(index) => fields
-                .fields()
-                .get(*index)
-                .filter(|field| field.key.as_ref() == Some(key))
-                .map(|_| *index),
+    pub(crate) fn pattern_variant(
+        &self,
+        scope: ScopeId,
+        path: Option<&BodyPath>,
+        owner: TypeDefRef,
+        namespace: NamespaceSet,
+    ) -> Result<Option<EnumVariantRef>, ReadError> {
+        let (TypeDefId::Enum(enum_id), Some(path)) =
+            (owner.id, path.and_then(BodyPath::as_def_map_path))
+        else {
+            return Ok(None);
+        };
+        // The written name can alias a variant with a different name, even one whose name
+        // collides with another variant of this enum. Prefer the declaration visible in scope.
+        if let Some(variant) = self
+            .context
+            .type_path_query()
+            .resolve_enum_variant_in_scope(scope, &path, namespace)?
+        {
+            return Ok(
+                (variant.origin == owner.origin && variant.enum_id == enum_id).then_some(variant),
+            );
         }
+        // DefMap path lookup does not follow type aliases or `Self` to their underlying enum.
+        // Keep using the expected enum as a fallback for these patterns.
+        let Some(name) = path.segments().last() else {
+            return Ok(None);
+        };
+        self.context
+            .item_query()
+            .enum_variant_ref_for_type_def(owner, name.as_str())
     }
 }

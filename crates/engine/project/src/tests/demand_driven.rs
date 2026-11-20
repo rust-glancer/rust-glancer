@@ -333,14 +333,15 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         0
     );
 
-    // Keep the existing scanner's source policy: generated constructor expressions are not
-    // projected as written references, and aliases keep their separate spelling.
+    // Find References includes `Self` in signatures and constructor expressions. Generated
+    // constructor expressions are excluded, and aliases keep their separate spelling.
     let expected = [
         "declaration",
         "import",
         "ordinary",
         "implementation",
         "signature",
+        "self_type",
     ];
     let query = |project: &Project| {
         project.inspect(|snapshot| {

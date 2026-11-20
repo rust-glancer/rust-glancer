@@ -97,35 +97,32 @@ where
         )
     }
 
-    /// Resolve an enum variant selected through the type namespace.
-    ///
-    /// All variants have a type-namespace binding, but they are not themselves Rust types and
-    /// therefore cannot be represented by `TypePathResolution`. Record syntax such as
-    /// `Choice::Record { value: 1 }` asks for the variant identity through this separate path. The
-    /// lookup order still mirrors [`Self::resolve_in_scope`]: lexical body, owner, then fallback.
+    /// Resolve an enum variant in the namespace used by its syntax.
+    /// Record syntax such as `Choice::Record { value: 1 }` uses the type namespace. Tuple patterns
+    /// such as `Choice::Tuple(value)` use the value namespace. Look in the lexical body first,
+    /// followed by the owner and fallback modules.
     pub fn resolve_enum_variant_in_scope(
         &self,
         scope: ScopeId,
         path: &Path,
+        namespace: NamespaceSet,
     ) -> Result<Option<EnumVariantRef>, ReadError> {
         let from = ModuleRef {
             origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
         };
         let def_maps = self.context.def_map_query();
-        let result =
-            def_maps
-                .name_resolver()
-                .resolve_lexical_path(from, path, NamespaceSet::TYPES)?;
+        let result = def_maps
+            .name_resolver()
+            .resolve_lexical_path(from, path, namespace)?;
         if !result.resolved.is_empty() {
             return self.enum_variant_from_defs(result.resolved);
         }
 
         let owner_module = self.context.body().owner_module();
-        let result =
-            def_maps
-                .name_resolver()
-                .resolve_path(owner_module, path, NamespaceSet::TYPES)?;
+        let result = def_maps
+            .name_resolver()
+            .resolve_path(owner_module, path, namespace)?;
         if !result.resolved.is_empty() {
             return self.enum_variant_from_defs(result.resolved);
         }
@@ -134,10 +131,9 @@ where
         if fallback_module == owner_module {
             return Ok(None);
         }
-        let result =
-            def_maps
-                .name_resolver()
-                .resolve_path(fallback_module, path, NamespaceSet::TYPES)?;
+        let result = def_maps
+            .name_resolver()
+            .resolve_path(fallback_module, path, namespace)?;
         self.enum_variant_from_defs(result.resolved)
     }
 

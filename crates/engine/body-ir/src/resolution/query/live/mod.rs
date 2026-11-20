@@ -6,7 +6,7 @@ mod index;
 mod member;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TypeDefId};
+use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, ScopeId, TypeDefId};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_semantic_ir::{Generics, SemanticItemSource};
 use rg_source::ReadError;
@@ -19,7 +19,7 @@ use rg_ty::{
 };
 
 pub(crate) use self::{call::LiveCallTarget, member::FunctionLookup};
-use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
+use crate::{body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Looks up declarations without turning the body's live types into saved types along the way.
 /// For a field on `Wrapper<?T>`, its declared `T` must become that same `?T`, so later assignments
@@ -114,21 +114,34 @@ where
             let Some(adt) = receiver.as_adt() else {
                 continue;
             };
-            let Some(field_ref) = self.context.item_query().field_for_type(adt.def, field)? else {
+            let Some((field_ref, ty)) = self.declared_field(adt, field, table)? else {
                 continue;
             };
-            let paths = self.context.item_paths();
-            let lowering = TypeLoweringQuery::new(&paths, &self.context);
-            let ty = lowering
-                .field_ty(table.interner(), field_ref)?
-                .map(|ty| self.instantiate_field(adt, ty, table))
-                .unwrap_or(table.interner().unknown());
             return Ok(Some((
                 BodyResolution::Declarations([field_ref.into()].into_iter().collect()),
                 ty,
             )));
         }
         Ok(None)
+    }
+
+    /// Project a field of the given owner directly, as required for constructor arguments.
+    pub(crate) fn declared_field<'s>(
+        &self,
+        adt: AdtTy<'s>,
+        field: &FieldKey,
+        table: &InferenceTable<'s>,
+    ) -> Result<Option<(FieldRef, Ty<'s>)>, ReadError> {
+        let Some(field_ref) = self.context.item_query().field_for_type(adt.def, field)? else {
+            return Ok(None);
+        };
+        let paths = self.context.item_paths();
+        let lowering = TypeLoweringQuery::new(&paths, &self.context);
+        let ty = lowering
+            .field_ty(table.interner(), field_ref)?
+            .map(|ty| self.instantiate_field(adt, ty, table))
+            .unwrap_or(table.interner().unknown());
+        Ok(Some((field_ref, ty)))
     }
 
     fn instantiate_field<'s>(
@@ -173,31 +186,19 @@ where
 
     pub(crate) fn pattern_field<'s>(
         &self,
-        path: Option<&BodyPath>,
-        mut ty: Ty<'s>,
+        owner: AdtTy<'s>,
+        variant: Option<EnumVariantRef>,
         field: &FieldKey,
         table: &InferenceTable<'s>,
     ) -> Result<Option<Ty<'s>>, ReadError> {
-        while let TyShape::Reference { inner, .. } = table.resolve_root_var(ty).shape() {
-            ty = inner;
+        match (owner.def.id, variant) {
+            (TypeDefId::Enum(_), Some(variant)) => {
+                self.enum_variant_field(owner, variant, field, table)
+            }
+            (TypeDefId::Enum(_), None) => Ok(None),
+            (TypeDefId::Struct(_) | TypeDefId::Union(_), _) => Ok(self
+                .field(table.interner().adt(owner), field, table)?
+                .map(|(_, ty)| ty)),
         }
-        let Some(adt) = table.resolve_root_var(ty).as_adt() else {
-            return Ok(None);
-        };
-        if matches!(adt.def.id, TypeDefId::Enum(_)) {
-            let path = path.and_then(BodyPath::as_def_map_path);
-            let Some(name) = path.as_ref().and_then(|p| p.segments().last()) else {
-                return Ok(None);
-            };
-            let Some(variant) = self
-                .context
-                .item_query()
-                .enum_variant_ref_for_type_def(adt.def, name.as_str())?
-            else {
-                return Ok(None);
-            };
-            return self.enum_variant_field(adt, variant, field, table);
-        }
-        Ok(self.field(ty, field, table)?.map(|(_, ty)| ty))
     }
 }

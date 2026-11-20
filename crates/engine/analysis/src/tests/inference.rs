@@ -2466,6 +2466,162 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn infers_types_from_boolean_conditions_and_operands() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:boolean_expectations
+fn make<T>() -> T { loop {} }
+
+fn check() {
+    let condition = make()$0; // ty("if condition flows back to initializer")
+    if condition {}
+    while make()$0 { break; } // ty("while condition")
+    match () {
+        () if make()$0 => (), // ty("match guard")
+        _ => (),
+    }
+    let _ = make()$0 && make()$1; // ty("and left operand"), ty("and right operand")
+    let _ = make()$0 || make()$1; // ty("or left operand"), ty("or right operand")
+}
+"#,
+        expect![[r#"
+            bool // if condition flows back to initializer
+            bool // while condition
+            bool // match guard
+            bool // and left operand
+            bool // and right operand
+            bool // or left operand
+            bool // or right operand
+        "#]],
+    );
+}
+
+#[test]
+fn infers_payloads_from_scoped_variant_aliases() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:variant_pattern_aliases
+struct Flag;
+impl Flag { fn is_ready(&self) -> bool { true } }
+struct User { flag: Flag }
+
+pub enum Event<T> {
+    Payload(bool, u16, T),
+    Present(bool, u16, u32),
+    Named { value: T },
+}
+
+use Event::Payload as Present;
+
+fn inspect(tuple: Event<User>, record: Event<User>) {
+    struct Present {}
+    match tuple {
+        Present(.., user) if user.flag.is_ready()$0 => { user$1; } // ty("guard method"), ty("aliased tuple payload after rest")
+        _ => {}
+    }
+
+    use crate::Event::Named as Local;
+    if let Local { value: user } = record {
+        user.flag.is_ready()$0; // ty("block-local record alias")
+    }
+}
+"#,
+        expect![[r#"
+            bool // guard method
+            nominal struct variant_pattern_aliases[lib]::crate::User // aliased tuple payload after rest
+            bool // block-local record alias
+        "#]],
+    );
+}
+
+#[test]
+fn infers_tuple_patterns_with_rest() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:tuple_pattern_rest
+enum Status { Penultimate }
+enum Readiness { Ready }
+struct Packet<T>(bool, Status, u16, T);
+enum Event<T> { Empty, Arrived(bool, u32, u64, T) }
+
+#[allow(bindings_with_variant_name, non_snake_case)]
+fn inspect(tuple: &(bool, u8, u16, u64), packet: Packet<u64>, event: Event<u8>, ready: Packet<Readiness>) {
+    let (head, .., tail) = tuple;
+    (head, tail)$0; // ty("borrowed tuple")
+
+    // The binding shares a name with a variant of the skipped field's type.
+    let Packet(.., Penultimate, last) = packet;
+    (Penultimate, last)$0; // ty("tuple struct")
+
+    match event {
+        Event::Arrived(first, .., last) => { (first, last)$0; } // ty("tuple variant")
+        Event::Empty => {}
+    }
+
+    let (leading, ..) = (true, 1u8, 2u16);
+    leading$0; // ty("trailing rest")
+    let (left, .., right) = (1u8, 2u16);
+    (left, right)$0; // ty("rest matching zero fields")
+
+    let Packet(.., Ready) = ready;
+    Ready$0; // ty("binding shares an out-of-scope variant name")
+}
+"#,
+        expect![[r#"
+            (&bool, &u64) // borrowed tuple
+            (u16, u64) // tuple struct
+            (bool, u8) // tuple variant
+            bool // trailing rest
+            (u8, u16) // rest matching zero fields
+            nominal enum tuple_pattern_rest[lib]::crate::Readiness // binding shares an out-of-scope variant name
+        "#]],
+    );
+}
+
+#[test]
+fn infers_tuple_struct_constructor_generics() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:tuple_constructors
+mod model {
+    pub struct Wrapper<T>(pub T);
+
+    impl<T> Wrapper<T> {
+        fn new() -> Self { Self(super::make()$0) } // ty("Self constructor payload")
+    }
+}
+
+use model::Wrapper as Renamed;
+
+pub struct User;
+impl User {
+    fn code(&self) -> u8 { 0 }
+}
+
+struct Bytes<const N: usize>([u8; N]);
+fn make<T>() -> T { loop {} }
+
+pub fn use_it(user: User) {
+    let wrapped = Renamed(user)$0; // ty("imported constructor result")
+    wrapped.0.code()$0; // ty("method on the wrapped value")
+    let _ = model::Wrapper::<u16>(1$0)$1; // ty("explicit constructor payload"), ty("explicit constructor result")
+    let _: Renamed<u32> = Renamed(make()$0); // ty("expected type reaches the payload")
+    let _ = Bytes([0u8; 3])$0; // ty("inferred const argument")
+}
+"#,
+        expect![[r#"
+            param T // Self constructor payload
+            nominal struct tuple_constructors[lib]::crate::model::Wrapper<nominal struct tuple_constructors[lib]::crate::User> // imported constructor result
+            u8 // method on the wrapped value
+            u16 // explicit constructor payload
+            nominal struct tuple_constructors[lib]::crate::model::Wrapper<u16> // explicit constructor result
+            u32 // expected type reaches the payload
+            nominal struct tuple_constructors[lib]::crate::Bytes<3> // inferred const argument
+        "#]],
+    );
+}
+
+#[test]
 fn infers_enum_variant_payload_generics_bidirectionally() {
     check_analysis(
         r#"
@@ -2584,6 +2740,34 @@ pub fn use_it(user: User, error: Error) {
             nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair2<nominal struct analysis_bidirectional_record_inference[lib]::crate::User, nominal struct analysis_bidirectional_record_inference[lib]::crate::Error> // record two generic field result
             nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::Error> // record wildcard generic field result
             nominal struct analysis_bidirectional_record_inference[lib]::crate::Same<nominal struct analysis_bidirectional_record_inference[lib]::crate::User> // record conflicting generic field result
+        "#]],
+    );
+}
+
+#[test]
+fn infers_record_update_base_bidirectionally() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:record_updates
+pub struct Packet<T> {
+    seen: bool,
+    payload: Option<T>,
+}
+
+impl<T> Default for Packet<T> {
+    fn default() -> Self { Self { seen: false, payload: Option::None } }
+}
+
+pub fn update(existing: Packet<u64>) {
+    let updated = Packet { seen: true, ..existing }$0; // ty("update result").in_lib("record_updates")
+    updated.payload$0; // ty("field inherited from base").in_lib("record_updates")
+    let _ = Packet { payload: Option::Some(42u64), ..Default::default()$0 }; // ty("default base").in_lib("record_updates")
+}
+"#,
+        expect![[r#"
+            nominal struct record_updates[lib]::crate::Packet<u64> // update result
+            nominal enum core[lib]::crate::option::Option<u64> // field inherited from base
+            nominal struct record_updates[lib]::crate::Packet<u64> // default base
         "#]],
     );
 }
