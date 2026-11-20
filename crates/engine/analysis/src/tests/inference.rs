@@ -62,6 +62,136 @@ impl Pair {
 }
 
 #[test]
+fn infers_generic_arguments_through_reference_coercions() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:argument_coercions
+use std::{boxed::Box, string::String, vec::Vec};
+
+pub struct Item;
+fn first<T>(_: &[T]) -> Option<&T> { None }
+fn first_mut<T>(_: &mut [T]) -> Option<&mut T> { None }
+fn first_in_array_mut<T>(_: &mut [T; 1]) -> Option<&mut T> { None }
+fn identity<T>(value: T) -> T { value }
+fn take_u16(_: &u16) {}
+
+pub fn use_it(items: Vec<Item>, mut array: [Item; 1], text: String, check_text: fn(&str)) {
+    let items_ref = &items;
+    let from_vec = first(items_ref)$0; // ty("vector deref").in_lib("argument_coercions")
+    items_ref$0; // ty("original vector reference").in_lib("argument_coercions")
+    let from_array = first(&[Item])$0; // ty("array unsizing").in_lib("argument_coercions")
+    let from_mut_array = first_mut(&mut array)$0; // ty("mutable array unsizing").in_lib("argument_coercions")
+    let from_reborrow = first_in_array_mut(&mut &mut array)$0; // ty("mutable reference deref").in_lib("argument_coercions")
+    let from_generic_value = first(&identity(items))$0; // ty("deref after a generic call").in_lib("argument_coercions")
+    let text_ref = &text;
+    check_text(text_ref$0); // ty("string deref through function pointer").in_lib("argument_coercions")
+    first::<&str>(&{ [(&text)$0] }); // ty("slice expectation reaches array elements").in_lib("argument_coercions")
+}
+
+pub fn from_box() {
+    let boxed = Box::new(Default::default())$0; // ty("pointee inferred through a shared Box borrow").in_lib("argument_coercions")
+    take_u16(&boxed);
+}
+
+pub fn from_projection(items: Result<Vec<Item>, ()>) -> Result<(), ()> {
+    let projected = first(&items?)$0; // ty("deref after projection").in_lib("argument_coercions")
+    Ok(())
+}
+
+struct Wrapper<T>(T);
+impl std::ops::Deref for Wrapper<u16> { type Target = [u16]; }
+impl std::ops::Deref for Wrapper<u32> { type Target = [u32]; }
+fn make<T>() -> Wrapper<T> { loop {} }
+fn specify(_: Wrapper<u16>) {}
+
+pub fn from_later_evidence() {
+    let wrapped = make();
+    let item = first(&wrapped)$0; // ty("deref after later type evidence").in_lib("argument_coercions")
+    specify(wrapped);
+}
+"#,
+        expect![[r#"
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // vector deref
+            &nominal struct alloc[lib]::crate::vec::Vec<nominal struct argument_coercions[lib]::crate::Item, nominal struct alloc[lib]::crate::vec::Global> // original vector reference
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // array unsizing
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct argument_coercions[lib]::crate::Item> // mutable array unsizing
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct argument_coercions[lib]::crate::Item> // mutable reference deref
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // deref after a generic call
+            &str // string deref through function pointer
+            &str // slice expectation reaches array elements
+            nominal struct alloc[lib]::crate::boxed::Box<u16> // pointee inferred through a shared Box borrow
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // deref after projection
+            nominal enum core[lib]::crate::option::Option<&u16> // deref after later type evidence
+        "#]],
+    );
+}
+
+#[test]
+fn infers_generic_arguments_through_mutable_deref_coercions() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:mutable_argument_coercions
+use std::{boxed::Box, ops::{Deref, DerefMut as WriteThrough}, vec::Vec};
+
+pub struct Item;
+fn first_mut<T>(_: &mut [T]) -> Option<&mut T> { None }
+
+pub fn from_vector(mut items: Vec<Item>) {
+    let item = first_mut(&mut items)$0; // ty("mutable vector deref").in_lib("mutable_argument_coercions")
+}
+
+pub fn from_bound<P: WriteThrough<Target = Vec<Item>>>(mut pointer: P) {
+    let item = first_mut(&mut pointer)$0; // ty("mutable deref through a bound and Vec").in_lib("mutable_argument_coercions")
+}
+
+fn take_u16(_: &mut u16) {}
+
+pub fn from_box() {
+    let mut boxed = Box::new(Default::default())$0; // ty("pointee inferred through Box").in_lib("mutable_argument_coercions")
+    take_u16(&mut boxed);
+}
+
+trait Marker {}
+impl Marker for u16 {}
+impl Marker for u32 {}
+struct Wrapper<T>(T);
+impl<T> Deref for Wrapper<T> { type Target = [T]; }
+impl<T: Marker> WriteThrough for Wrapper<T> {}
+fn make<T>() -> Wrapper<T> { loop {} }
+fn specify(_: &Wrapper<u32>) {}
+
+pub fn from_expected_pointee() {
+    let mut wrapped = make()$0; // ty("pointee match determines the impl argument").in_lib("mutable_argument_coercions")
+    first_mut::<u16>(&mut wrapped);
+}
+
+pub fn from_later_evidence() {
+    let mut wrapped = make();
+    let item = first_mut(&mut wrapped)$0; // ty("mutable deref after later type evidence").in_lib("mutable_argument_coercions")
+    specify(&wrapped);
+}
+
+struct MutableVec<T>(Vec<T>);
+impl<T> Deref for MutableVec<T> { type Target = [T]; }
+impl WriteThrough for MutableVec<u16> {}
+
+pub fn from_mutable_impl() {
+    let mut pointer = Box::new(MutableVec(Vec::new()));
+    let item = first_mut(&mut pointer)$0; // ty("DerefMut selects the element type").in_lib("mutable_argument_coercions")
+}
+"#,
+        expect![[r#"
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct mutable_argument_coercions[lib]::crate::Item> // mutable vector deref
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct mutable_argument_coercions[lib]::crate::Item> // mutable deref through a bound and Vec
+            nominal struct alloc[lib]::crate::boxed::Box<u16> // pointee inferred through Box
+            nominal struct mutable_argument_coercions[lib]::crate::Wrapper<u16> // pointee match determines the impl argument
+            nominal enum core[lib]::crate::option::Option<&mut u32> // mutable deref after later type evidence
+            nominal enum core[lib]::crate::option::Option<&mut u16> // DerefMut selects the element type
+        "#]],
+    );
+}
+
+#[test]
 fn infers_calls_through_saved_tuple_constructors() {
     check_analysis_with_fake_sysroot(
         r#"
@@ -893,6 +1023,8 @@ pub fn use_it(text: TextStore, mut string: String, preferred: Preferred, mutable
     let key = &[1_u8, 2];
     let from_array = SliceStore(1_u8)[key$0]$1; // ty("original array reference").in_lib("analysis_index_coercions"), ty("array index").in_lib("analysis_index_coercions")
     let from_mutable_array = mutable[&mut [1_u8, 2]]$0; // ty("mutable array unsizing").in_lib("analysis_index_coercions")
+    let mut vector = std::vec::Vec::<u8>::new();
+    let from_mutable_vec = mutable[&mut vector]$0; // ty("mutable vector deref").in_lib("analysis_index_coercions")
 }
 pub fn from_bound<P: Deref<Target = str>>(text: TextStore, pointer: P) {
     let value = text[&pointer]$0; // ty("generic Deref argument").in_lib("analysis_index_coercions")
@@ -915,6 +1047,7 @@ pub fn pending_key(text: TextStore, key: Result<&String, ()>) -> Result<(), ()> 
             &[u8; 2] // original array reference
             u8 // array index
             u16 // mutable array unsizing
+            u16 // mutable vector deref
             u32 // generic Deref argument
             nominal struct analysis_index_coercions[lib]::crate::SliceStore<u8> // receiver refined by output
             &[u8; 2] // array elements refined by output

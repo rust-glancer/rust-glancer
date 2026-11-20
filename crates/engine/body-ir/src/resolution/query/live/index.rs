@@ -1,11 +1,10 @@
 //! Indexing selects a receiver before leaving its output projection to fulfillment.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::Mutability;
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
-use rg_ty::solver::{InferenceTable, List, Outcome, TraitApplication, Ty, TyShape};
+use rg_ty::solver::{InferenceTable, List, Outcome, TraitApplication, Ty};
 
 use super::LiveBodyQuery;
 
@@ -71,49 +70,9 @@ where
 
                 let source = trial.resolve_root_var(index);
                 let target = trial.resolve_root_var(parameter);
-                let coerced = if source.is_never() || trial.try_unify(source, target).is_ok() {
-                    true
-                } else {
-                    match (source.shape(), target.shape()) {
-                        (
-                            TyShape::Reference { inner: source, .. },
-                            TyShape::Reference {
-                                mutability: Mutability::Shared,
-                                inner: target,
-                                ..
-                            },
-                        ) => {
-                            // Reborrow each pointee adjustment, including an array's slice
-                            // alternative. Keep the original reference type in the body: the
-                            // coercion only connects its live children to the parameter.
-                            trial
-                                .method_receivers(source)
-                                .any(|pointee| trial.try_unify(pointee, target).is_ok())
-                        }
-                        (
-                            TyShape::Reference {
-                                mutability: Mutability::Mutable,
-                                inner: source,
-                                ..
-                            },
-                            TyShape::Reference {
-                                mutability: Mutability::Mutable,
-                                inner: target,
-                                ..
-                            },
-                        ) => match (
-                            trial.resolve_root_var(source).shape(),
-                            trial.resolve_root_var(target).shape(),
-                        ) {
-                            (TyShape::Array { inner, .. }, TyShape::Slice(element)) => {
-                                trial.try_unify(inner, element).is_ok()
-                            }
-                            // TODO: Mutable trait deref coercions need DerefMut selection.
-                            _ => false,
-                        },
-                        _ => false,
-                    }
-                };
+                let coerced = source.is_never()
+                    || trial.try_unify(source, target).is_ok()
+                    || trial.try_coerce_reference(source, target);
                 if !coerced {
                     outcome = Outcome::NoSolution;
                     return Ok(None);
