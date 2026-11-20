@@ -62,6 +62,45 @@ impl Pair {
 }
 
 #[test]
+fn infers_calls_through_saved_tuple_constructors() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:saved_constructors
+struct Pair(u8);
+struct Wrapper<T>(T);
+enum Event<T> { Received(T) }
+
+struct Callable(fn() -> u16);
+
+impl core::ops::Deref for Callable {
+    type Target = fn() -> u16;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+pub fn demo(pointer: fn() -> u16) {
+    let make_pair = Pair;
+    let pair = make_pair(1$0)$1; // ty("saved constructor argument").in_lib("saved_constructors"), ty("saved constructor result").in_lib("saved_constructors")
+    let payload = pair.0$0; // ty("field on constructed struct").in_lib("saved_constructors")
+    let wrap = Wrapper;
+    let wrapped = wrap(false)$0; // ty("saved generic constructor").in_lib("saved_constructors")
+    let receive = Event::Received;
+    let event = receive(2u32)$0; // ty("saved variant constructor").in_lib("saved_constructors")
+    let callable = Callable(pointer);
+    let value = callable()$0; // ty("callable struct result").in_lib("saved_constructors")
+}
+"#,
+        expect![[r#"
+            u8 // saved constructor argument
+            nominal struct saved_constructors[lib]::crate::Pair // saved constructor result
+            u8 // field on constructed struct
+            nominal struct saved_constructors[lib]::crate::Wrapper<bool> // saved generic constructor
+            nominal enum saved_constructors[lib]::crate::Event<u32> // saved variant constructor
+            u16 // callable struct result
+        "#]],
+    );
+}
+
+#[test]
 fn projects_function_items_through_iterator_map() {
     check_analysis_with_fake_sysroot(
         r#"

@@ -144,8 +144,8 @@ where
         Ok(())
     }
 
-    /// Find a signature before visiting arguments. A path call already has a function item
-    /// from visiting its callee. A dot call selects its function using the receiver here.
+    /// Find a signature before visiting arguments. Ordinary calls use the callee's type.
+    /// A dot call selects its function using the receiver.
     pub(super) fn prepare_call(
         &mut self,
         call: ExprId,

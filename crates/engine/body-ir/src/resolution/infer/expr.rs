@@ -7,10 +7,7 @@
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    BuiltinMacroExprKind, ExprBinaryOp, ExprId, FieldKey, SemanticItemRef, StmtId,
-    identity::DeclarationRef,
-};
+use rg_ir_model::{BuiltinMacroExprKind, ExprBinaryOp, ExprId, StmtId};
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
 use rg_ty::{
@@ -176,51 +173,8 @@ where
             ExprKind::Call { callee, ref args } => {
                 self.infer_optional(callee, &self.cx.unknown())
                     .context("infer optional expression")?;
-                let constructor = callee.and_then(|callee| {
-                    let BodyResolution::Declarations(declarations) =
-                        self.inference.expr_resolution(callee)
-                    else {
-                        return None;
-                    };
-                    let declaration = *declarations.as_one()?;
-                    matches!(
-                        declaration,
-                        DeclarationRef::EnumVariant(_)
-                            | DeclarationRef::Item(SemanticItemRef::TypeDef(_))
-                    )
-                    .then_some((callee, declaration))
-                });
-                if let Some((callee, constructor)) = constructor {
-                    self.inference
-                        .set_expr_ty(expr, self.inference.root_resolved_expr_ty(callee));
-                    // Give omitted generic arguments live slots so the result and the written
-                    // fields of `Wrapper(value)` or `Some(value)` can refine each other.
-                    let ty = self.inference.expr_ty(expr);
-                    self.inference.instantiate_expr_nested_unknown_ty(expr, &ty);
-                    self.inference.constrain_expr_ty(expr, expected);
-                    let nominal = self.inference.root_resolved_expr_ty(expr).as_adt();
-                    let live = self.context.live();
-                    for (index, arg) in args.iter().enumerate() {
-                        let field = FieldKey::Tuple(index);
-                        let table = self.inference.table();
-                        let expected = match (nominal, constructor) {
-                            (Some(adt), DeclarationRef::EnumVariant(variant)) => {
-                                live.enum_variant_field(adt, variant, &field, table)
-                            }
-                            (Some(adt), _) => live
-                                .declared_field(adt, &field, table)
-                                .map(|field| field.map(|(_, ty)| ty)),
-                            (None, _) => Ok(None),
-                        }
-                        .context("resolve constructor field type")?
-                        .unwrap_or(self.cx.unknown());
-                        self.infer_expr(*arg, &expected)
-                            .context("infer constructor argument")?;
-                    }
-                } else {
-                    self.infer_call(expr, args, expected)
-                        .context("infer call")?;
-                }
+                self.infer_call(expr, args, expected)
+                    .context("infer call")?;
             }
             ExprKind::MethodCall {
                 receiver, ref args, ..
@@ -779,7 +733,14 @@ where
                             |item| self.cx.fn_def(item.def, item.args),
                         )
                     } else {
-                        path_result.ty
+                        self.context
+                            .live()
+                            .constructor_value_ty(
+                                path_result.ty,
+                                &path_result.resolution,
+                                self.inference.table(),
+                            )
+                            .context("resolve constructor type")?
                     };
                     self.inference
                         .set_expr_facts(expr, path_result.resolution, ty);

@@ -280,7 +280,7 @@ pub fn use_it() {
                 initializer
                   expr e2 call => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 9:17-9:27
                     callee
-                      expr e0 path Some -> variant enum body_imported_enum_variant_inference[lib]::crate::Option::Some => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<<unknown>> @ 9:17-9:21
+                      expr e0 path Some -> variant enum body_imported_enum_variant_inference[lib]::crate::Option::Some => fn(u8) -> nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 9:17-9:21
                     arg
                       expr e1 literal int `10u8` => u8 @ 9:22-9:26
               stmt s1 let v1: Option<u8> @ 10:5-10:35
@@ -751,7 +751,7 @@ pub fn use_match(guess: Guess) {
                 initializer
                   expr e2 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 23:21-23:45
                     callee
-                      expr e0 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 23:21-23:32
+                      expr e0 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => fn(nominal enum body_self_referential_branch_inference[lib]::crate::Mode) -> nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 23:21-23:32
                     arg
                       expr e1 path Mode::First -> variant enum body_self_referential_branch_inference[lib]::crate::Mode::First => nominal enum body_self_referential_branch_inference[lib]::crate::Mode @ 23:33-23:44
               stmt s1 expr; @ 24:5-28:7
@@ -771,7 +771,7 @@ pub fn use_match(guess: Guess) {
                           tail
                             expr e9 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 27:9-27:34
                               callee
-                                expr e7 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 27:9-27:20
+                                expr e7 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => fn(nominal enum body_self_referential_branch_inference[lib]::crate::Mode) -> nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 27:9-27:20
                               arg
                                 expr e8 path Mode::Second -> variant enum body_self_referential_branch_inference[lib]::crate::Mode::Second => nominal enum body_self_referential_branch_inference[lib]::crate::Mode @ 27:21-27:33
               stmt s2 expr; @ 29:5-29:11
@@ -796,7 +796,7 @@ pub fn use_match(guess: Guess) {
                 initializer
                   expr e2 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 33:18-33:51
                     callee
-                      expr e0 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 33:18-33:29
+                      expr e0 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => fn(nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior) -> nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 33:18-33:29
                     arg
                       expr e1 path MergeBehavior::Crate -> variant enum body_self_referential_branch_inference[lib]::crate::MergeBehavior::Crate => nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior @ 33:30-33:50
               stmt s1 expr; @ 34:5-41:7
@@ -820,7 +820,7 @@ pub fn use_match(guess: Guess) {
                           arm s6
                             expr e11 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 39:28-39:62
                               callee
-                                expr e9 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 39:28-39:39
+                                expr e9 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => fn(nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior) -> nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 39:28-39:39
                               arg
                                 expr e10 path MergeBehavior::Module -> variant enum body_self_referential_branch_inference[lib]::crate::MergeBehavior::Module => nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior @ 39:40-39:61
               stmt s2 expr; @ 42:5-42:8

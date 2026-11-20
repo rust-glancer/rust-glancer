@@ -8,8 +8,9 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ExprId, FunctionRef, ItemOwner, ScopeId, SemanticItemRef, identity::DeclarationRef,
+    ExprId, FieldKey, FunctionRef, ItemOwner, ScopeId, SemanticItemRef, identity::DeclarationRef,
 };
+use rg_item_tree::FieldList;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::{
@@ -63,6 +64,58 @@ where
     D: DefMapSource + Copy,
     I: SemanticItemSource<'query> + Copy,
 {
+    /// Give a tuple constructor its signature at the path, before it can be saved in a binding.
+    /// For `let make = Wrapper; make(true)`, the parameter and `Wrapper` result share `?T`.
+    pub(crate) fn constructor_value_ty<'s>(
+        &self,
+        ty: Ty<'s>,
+        resolution: &BodyResolution,
+        table: &InferenceTable<'s>,
+    ) -> Result<Ty<'s>, ReadError> {
+        let (Some(adt), BodyResolution::Declarations(declarations)) = (ty.as_adt(), resolution)
+        else {
+            return Ok(ty);
+        };
+        let items = self.context.item_query();
+        let (fields, variant) = match declarations.as_one().copied() {
+            Some(DeclarationRef::Item(SemanticItemRef::TypeDef(def))) if def == adt.def => {
+                (items.struct_fields_for_type_def(def)?, None)
+            }
+            Some(DeclarationRef::EnumVariant(variant)) => (
+                items
+                    .enum_variant_data(variant)?
+                    .filter(|data| data.owner == adt.def)
+                    .map(|data| &data.variant.fields),
+                Some(variant),
+            ),
+            _ => return Ok(ty),
+        };
+        let Some(FieldList::Tuple(fields)) = fields else {
+            // Unit structs and unit variants already have the type of the constructed value.
+            return Ok(ty);
+        };
+
+        let output = table.instantiate_nested_unknowns(ty);
+        let adt = output
+            .as_adt()
+            .expect("instantiation preserves the nominal type");
+        let cx = table.interner();
+        let mut params = Vec::with_capacity(fields.len());
+        for index in 0..fields.len() {
+            let field = FieldKey::Tuple(index);
+            let param = match variant {
+                Some(variant) => self.enum_variant_field(adt, variant, &field, table)?,
+                None => self.declared_field(adt, &field, table)?.map(|(_, ty)| ty),
+            };
+            params.push(param.unwrap_or_else(|| cx.unknown()));
+        }
+
+        // The path retains the declaration for navigation. Use the function pointer shape so
+        // the existing call inference can read this signature through any binding or expression.
+        // TODO: Model constructor identity in the type itself.
+        Ok(cx.fn_pointer(&params, output))
+    }
+
     /// Find the best dot-call candidates in receiver adjustment order. Ties remain useful
     /// for navigation even when inference cannot choose a signature.
     pub(crate) fn method_targets<'s>(

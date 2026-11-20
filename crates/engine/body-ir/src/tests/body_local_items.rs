@@ -168,7 +168,7 @@ pub fn use_it() {
                     field pair
                       expr e4 call => nominal struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 @ 15:15-15:39
                         callee
-                          expr e1 path Pair -> struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 => nominal struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 @ 15:15-15:19
+                          expr e1 path Pair -> struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 => fn(nominal struct body_local_field_fixture[lib]::crate::GlobalId, nominal struct body_local_field_fixture[lib]::crate::GlobalId) -> nominal struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 @ 15:15-15:19
                         arg
                           expr e2 path GlobalId -> struct body_local_field_fixture[lib]::crate::GlobalId => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 15:20-15:28
                         arg
@@ -681,7 +681,7 @@ pub fn use_it() {
                 initializer
                   expr e6 call => nominal enum fn body_more_local_items_fixture[lib]::crate::use_it::Action @ 4:5-7:6 @ 30:18-30:41
                     callee
-                      expr e4 path Action::Start -> variant enum fn body_more_local_items_fixture[lib]::crate::use_it::Action @ 4:5-7:6::Start => nominal enum fn body_more_local_items_fixture[lib]::crate::use_it::Action @ 4:5-7:6 @ 30:18-30:31
+                      expr e4 path Action::Start -> variant enum fn body_more_local_items_fixture[lib]::crate::use_it::Action @ 4:5-7:6::Start => fn(nominal struct body_more_local_items_fixture[lib]::crate::GlobalId) -> nominal enum fn body_more_local_items_fixture[lib]::crate::use_it::Action @ 4:5-7:6 @ 30:18-30:31
                     arg
                       expr e5 path GlobalId -> struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 30:32-30:40
 
@@ -1274,7 +1274,7 @@ pub fn use_it() {
                 initializer
                   expr e2 call => nominal enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6 @ 10:26-10:45
                     callee
-                      expr e0 path Action::Start -> variant enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6::Start => nominal enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6 @ 10:26-10:39
+                      expr e0 path Action::Start -> variant enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6::Start => fn(nominal struct body_local_enum_pattern_fixture[lib]::crate::User) -> nominal enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6 @ 10:26-10:39
                     arg
                       expr e1 path User -> struct body_local_enum_pattern_fixture[lib]::crate::User => nominal struct body_local_enum_pattern_fixture[lib]::crate::User @ 10:40-10:44
               stmt s2 let v1 @ 11:5-11:38
@@ -1284,7 +1284,7 @@ pub fn use_it() {
                 initializer
                   expr e6 call => nominal enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6 @ 12:25-12:44
                     callee
-                      expr e4 path Action::Start -> variant enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6::Start => nominal enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6 @ 12:25-12:38
+                      expr e4 path Action::Start -> variant enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6::Start => fn(nominal struct body_local_enum_pattern_fixture[lib]::crate::User) -> nominal enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6 @ 12:25-12:38
                     arg
                       expr e5 path User -> struct body_local_enum_pattern_fixture[lib]::crate::User => nominal struct body_local_enum_pattern_fixture[lib]::crate::User @ 12:39-12:43
               stmt s4 let v3 @ 13:5-13:38
