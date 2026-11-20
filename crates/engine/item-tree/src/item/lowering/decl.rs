@@ -386,11 +386,18 @@ fn param_list_from_ast(
     }
 
     for param in param_list.params() {
+        let pat = param.pat().as_ref().map(normalized_syntax);
+        // The ellipsis is its own token, including in a named parameter like `args: ...`.
+        if param.dotdotdot_token().is_some() {
+            params.push(ParamItem {
+                pat: pat.map_or_else(|| "...".to_string(), |pat| format!("{pat}: ...")),
+                ty: None,
+                kind: ParamKind::Variadic,
+            });
+            continue;
+        }
         params.push(ParamItem {
-            pat: param
-                .pat()
-                .map(|pat| normalized_syntax(&pat))
-                .unwrap_or_else(|| "<missing>".to_string()),
+            pat: pat.unwrap_or_else(|| "<missing>".to_string()),
             ty: param.ty().map(|ty| TypeRef::from_ast(&ty, source)),
             kind: ParamKind::Normal,
         });

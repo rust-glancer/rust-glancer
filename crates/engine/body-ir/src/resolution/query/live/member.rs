@@ -231,7 +231,7 @@ where
                 let signature = cx.function_signature(function)?;
                 Some(subst.apply(cx, *signature.params.first()?))
             }
-            ParamKind::Normal => None,
+            ParamKind::Normal | ParamKind::Variadic => None,
         }
     }
 

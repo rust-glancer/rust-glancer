@@ -90,9 +90,9 @@ where
                     ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
                         cx.reference(mutability, implicit_self_ty)
                     }
-                    ParamKind::SelfParam(SelfParamKind::Explicit) | ParamKind::Normal => {
-                        cx.unknown()
-                    }
+                    ParamKind::SelfParam(SelfParamKind::Explicit)
+                    | ParamKind::Normal
+                    | ParamKind::Variadic => cx.unknown(),
                 },
             };
             params.push(ty);

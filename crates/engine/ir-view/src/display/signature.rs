@@ -9,14 +9,14 @@
 //! Every canonical name passes through `SyntaxRenderer` for the use-site edition. This renderer
 //! stays syntactic rather than reconstructing rustc-perfect signatures.
 
-use std::fmt::Write as _;
+use std::{fmt::Write as _, ops::Range};
 
 use anyhow::Context as _;
 use rg_body_ir::BindingData;
 use rg_ir_model::Mutability;
 use rg_item_tree::{
-    EnumVariantItem, FieldItem, FieldList, FunctionQualifiers, GenericParams, ParamItem,
-    TypeOrConstParamData, TypeRef, VisibilityLevel, WherePredicate,
+    EnumVariantItem, FieldItem, FieldList, GenericParams, ParamItem, TypeOrConstParamData, TypeRef,
+    VisibilityLevel, WherePredicate,
 };
 use rg_semantic_ir::{
     ConstData, EnumData, FieldData, FunctionData, StaticData, StructData, TraitData, TypeAliasData,
@@ -112,17 +112,7 @@ impl SignatureRenderer {
 
     /// Render a function or method signature.
     pub fn function_signature(&self, data: &FunctionData) -> String {
-        format!(
-            "{}{}",
-            Self::visibility_prefix(&data.visibility),
-            self.function_signature_from_parts(
-                &data.name,
-                data.signature.generics(),
-                data.signature.params(),
-                data.signature.ret_ty(),
-                data.signature.qualifiers(),
-            )
-        )
+        self.render_function_signature(data, |_, _| {})
     }
 
     /// Render the method signature that completion or a code action inserts into the user's impl.
@@ -218,6 +208,21 @@ impl SignatureRenderer {
     /// Render a function reached through the editor-facing member projection.
     pub fn member_function_signature(&self, function: MemberFunction<'_>) -> String {
         self.function_signature(function.data())
+    }
+
+    /// Render the declaration and locate the parameters the caller writes as arguments.
+    pub fn call_signature(
+        &self,
+        function: MemberFunction<'_>,
+        param_offset: usize,
+    ) -> (String, Vec<Range<usize>>) {
+        let mut parameters = Vec::new();
+        let label = self.render_function_signature(function.data(), |index, range| {
+            if index >= param_offset {
+                parameters.push(range);
+            }
+        });
+        (label, parameters)
     }
 
     /// Render a type alias signature.
@@ -349,15 +354,13 @@ impl SignatureRenderer {
         }
     }
 
-    fn function_signature_from_parts(
+    fn render_function_signature(
         &self,
-        name: &str,
-        generics: Option<&GenericParams>,
-        params: &[ParamItem],
-        ret_ty: Option<&TypeRef>,
-        qualifiers: FunctionQualifiers,
+        data: &FunctionData,
+        mut parameter_range: impl FnMut(usize, Range<usize>),
     ) -> String {
-        let mut signature = String::new();
+        let mut signature = Self::visibility_prefix(&data.visibility);
+        let qualifiers = data.signature.qualifiers();
         if qualifiers.is_const {
             signature.push_str("const ");
         }
@@ -369,19 +372,21 @@ impl SignatureRenderer {
         }
 
         signature.push_str("fn ");
-        write!(signature, "{}", self.syntax.identifier(name))
+        write!(signature, "{}", self.syntax.identifier(&data.name))
             .expect("string writes should not fail");
+        let generics = data.signature.generics();
         signature.push_str(&self.generic_params_opt(generics));
         signature.push('(');
-        signature.push_str(
-            &params
-                .iter()
-                .map(|param| self.param_signature(param))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
+        for (index, param) in data.signature.params().iter().enumerate() {
+            if index > 0 {
+                signature.push_str(", ");
+            }
+            let start = signature.len();
+            signature.push_str(&self.param_signature(param));
+            parameter_range(index, start..signature.len());
+        }
         signature.push(')');
-        if let Some(ret_ty) = ret_ty
+        if let Some(ret_ty) = data.signature.ret_ty()
             && !matches!(ret_ty, TypeRef::Unit)
         {
             signature.push_str(" -> ");
