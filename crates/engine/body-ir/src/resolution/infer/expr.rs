@@ -12,7 +12,7 @@ use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
 use rg_ty::{
     AsyncCoroutineTyId, PrimitiveTy,
-    solver::{AdtTy, List, TraitApplication, Ty, TyShape},
+    solver::{AdtTy, InferVarKind, List, TraitApplication, Ty, TyShape},
 };
 
 use super::{BodyInference, ReturnTarget, deferred::DeferredKind};
@@ -215,16 +215,21 @@ where
                     }
                     _ => self.cx.unknown(),
                 };
-                // Every element shares this destination. Expected types and later sibling
-                // evidence constrain the same live slots, without revisiting earlier elements.
                 if !elements.is_empty() {
+                    let element_ty = self.coercion_site_expected(element_ty);
                     let shared_element = self.inference.table_mut().new_type_var();
+                    let mut element_tys = Vec::with_capacity(elements.len());
                     for element in elements {
                         self.infer_expr(*element, &element_ty)
                             .context("infer array element")?;
-                        let ty = self.inference.expr_slot(*element);
-                        self.inference.constrain_infer_tys(&shared_element, &ty);
+                        element_tys.push(self.inference.expr_slot(*element));
                     }
+                    self.run_or_defer(DeferredKind::BranchResult {
+                        result: shared_element,
+                        branches: element_tys,
+                        never_fallback: false,
+                    })
+                    .context("coerce array elements")?;
                     self.inference.set_expr_ty(
                         expr,
                         self.cx
@@ -349,6 +354,11 @@ where
                             self.inference.table(),
                         )
                         .context("resolve cast type")?;
+                    if matches!(ty.shape(), TyShape::FnPointer { .. })
+                        && let Some(inner) = inner
+                    {
+                        self.coerce_expr_ty(inner, &ty);
+                    }
                     self.inference.set_expr_ty(expr, ty);
                 }
             }
@@ -409,6 +419,7 @@ where
                 let scrutinee = scrutinee
                     .map(|expr| self.inference.expr_slot(expr))
                     .unwrap_or(self.cx.unknown());
+                let arm_expected = self.coercion_site_expected(*expected);
                 for arm in arms {
                     if let Some(pat) = arm.pat {
                         self.infer_pattern(pat, arm.scope, &scrutinee)
@@ -416,7 +427,7 @@ where
                     }
                     self.infer_optional(arm.guard, &self.cx.primitive(PrimitiveTy::Bool))
                         .context("infer match guard")?;
-                    self.infer_optional(arm.expr, expected)
+                    self.infer_optional(arm.expr, &arm_expected)
                         .context("infer optional expression")?;
                 }
                 self.infer_branch_result(expr, arms.iter().filter_map(|arm| arm.expr))
@@ -430,13 +441,13 @@ where
                 self.infer_optional(condition, &self.cx.primitive(PrimitiveTy::Bool))
                     .context("infer if condition")?;
                 let branch_expected = if else_branch.is_some() {
-                    expected
+                    self.coercion_site_expected(*expected)
                 } else {
-                    &self.cx.unknown()
+                    self.cx.unknown()
                 };
-                self.infer_optional(then_branch, branch_expected)
+                self.infer_optional(then_branch, &branch_expected)
                     .context("infer optional expression")?;
-                self.infer_optional(else_branch, branch_expected)
+                self.infer_optional(else_branch, &branch_expected)
                     .context("infer optional expression")?;
                 if let Some(else_branch) = else_branch {
                     self.infer_branch_result(expr, then_branch.into_iter().chain([else_branch]))
@@ -808,6 +819,18 @@ where
                 .infer_expr(expr, expected)
                 .context("infer child expression"),
             None => Ok(()),
+        }
+    }
+
+    /// A known expectation can guide siblings. An open type variable gets their common type
+    /// afterward so the first constructor item cannot decide the join by itself.
+    fn coercion_site_expected(&self, expected: Ty<'s>) -> Ty<'s> {
+        let expected = self.inference.root_resolved_ty(&expected);
+        match expected.shape() {
+            TyShape::InferVar {
+                kind: InferVarKind::Type,
+            } => self.cx.unknown(),
+            _ => expected,
         }
     }
 

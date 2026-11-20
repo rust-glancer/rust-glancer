@@ -99,6 +99,16 @@ impl<'s> FnDefTy<'s> {
             qualifiers: signature.qualifiers,
         })
     }
+
+    /// Reify a tuple constructor at a coercion site, keeping its live generic arguments.
+    pub fn constructor_pointer(self, cx: SolverInterner<'s>) -> Option<Ty<'s>> {
+        // TODO: Preserve safety and ABI in pointer types before reifying named functions.
+        if !matches!(self.def, FnDefRef::Constructor(_)) {
+            return None;
+        }
+        let signature = self.signature(cx)?;
+        Some(cx.fn_pointer(&signature.params, signature.call_return))
+    }
 }
 
 /// A source bound keeps its associated equalities beside the positional trait arguments.
