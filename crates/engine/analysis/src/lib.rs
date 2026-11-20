@@ -297,7 +297,7 @@ impl<'a> Analysis<'a> {
 
     /// Show the signature and active parameter for the innermost call under the cursor.
     ///
-    /// A named function or method can resolve before the argument list is complete.
+    /// A declaration or a callable type can supply a signature before the list is complete.
     pub fn signature_help(
         &self,
         crate_ref: CrateRef,

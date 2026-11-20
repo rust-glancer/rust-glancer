@@ -19,19 +19,29 @@ use rg_item_tree::{
     VisibilityLevel, WherePredicate,
 };
 use rg_semantic_ir::{
-    ConstData, EnumData, FieldData, FunctionData, StaticData, StructData, TraitData, TypeAliasData,
-    UnionData,
+    ConstData, EnumData, FieldData, FunctionData, ItemStoreQuery, StaticData, StructData,
+    TraitData, TypeAliasData, UnionData,
 };
 use rg_text::RustEdition;
-use rg_ty::{Substitution, TraitApplication, Ty, signature::CallableSignature};
+use rg_ty::{
+    ClosureTy, ConstructorRef, FnDefRef, Substitution, TraitApplication, Ty,
+    signature::{CallableSignature, SemanticSignatureQuery},
+};
 
 use crate::{
     IndexedViewDb,
     display::{syntax::SyntaxRenderer, ty_label::TypeRenderer},
     member::{MemberEnumVariantField, MemberField, MemberFunction},
+    ty::IndexedType,
 };
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
+
+/// The signature label and byte ranges of the parameters written at the call site.
+pub struct CallSignature {
+    pub label: String,
+    pub parameters: Vec<Range<usize>>,
+}
 
 /// Renders declaration previews and signatures for members we insert, using one Rust edition.
 #[derive(Debug, Clone, Copy)]
@@ -215,14 +225,83 @@ impl SignatureRenderer {
         &self,
         function: MemberFunction<'_>,
         param_offset: usize,
-    ) -> (String, Vec<Range<usize>>) {
+    ) -> CallSignature {
         let mut parameters = Vec::new();
         let label = self.render_function_signature(function.data(), |index, range| {
             if index >= param_offset {
                 parameters.push(range);
             }
         });
-        (label, parameters)
+        CallSignature { label, parameters }
+    }
+
+    /// Show the parameter types of a callable value, preserving a tuple constructor's name.
+    /// A closure such as `|x: u8, flag: bool| flag` displays as `|u8, bool| -> bool`.
+    pub fn callable_signature(
+        &self,
+        db: &IndexedViewDb<'_>,
+        callable: &IndexedType,
+    ) -> anyhow::Result<Option<CallSignature>> {
+        let constructor_signature;
+        let (mut label, close, params, ret) = match callable.raw() {
+            Ty::FnPointer { params, ret } => {
+                ("fn(".to_owned(), ')', params.as_slice(), ret.as_ref())
+            }
+            Ty::Closure(ClosureTy { params, ret, .. }) => {
+                ("|".to_owned(), '|', params.as_slice(), ret.as_ref())
+            }
+            Ty::FnDef(item) => {
+                let FnDefRef::Constructor(constructor) = item.def else {
+                    return Ok(None);
+                };
+                let items = ItemStoreQuery::new(db);
+                let Some(owner) = items.type_def_name(constructor.owner())? else {
+                    return Ok(None);
+                };
+                let mut label = self.syntax.identifier(owner).to_string();
+                if let ConstructorRef::Variant(variant) = constructor {
+                    let Some(data) = items.enum_variant_data(variant)? else {
+                        return Ok(None);
+                    };
+                    write!(label, "::{}", self.syntax.identifier(&data.variant.name))
+                        .expect("string writes should not fail");
+                }
+                let Some(signature) = SemanticSignatureQuery::new(db, db)
+                    .constructor(constructor, &item.args)
+                    .context("read tuple constructor signature")?
+                else {
+                    return Ok(None);
+                };
+                constructor_signature = signature;
+                label.push('(');
+                (
+                    label,
+                    ')',
+                    constructor_signature.params.as_slice(),
+                    &constructor_signature.call_return,
+                )
+            }
+            // TODO: Expose the selected signature for trait bounds and custom Deref.
+            _ => return Ok(None),
+        };
+
+        let types = TypeRenderer::new(db, self.syntax.edition());
+        let mut parameters = Vec::with_capacity(params.len());
+        for (index, param) in params.iter().enumerate() {
+            if index > 0 {
+                label.push_str(", ");
+            }
+            let start = label.len();
+            label.push_str(types.render_ty(param)?.as_deref().unwrap_or("_"));
+            parameters.push(start..label.len());
+        }
+        label.push(close);
+        if !matches!(ret, Ty::Unit) {
+            label.push_str(" -> ");
+            label.push_str(types.render_ty(ret)?.as_deref().unwrap_or("_"));
+        }
+
+        Ok(Some(CallSignature { label, parameters }))
     }
 
     /// Render a type alias signature.

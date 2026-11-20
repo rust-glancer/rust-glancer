@@ -106,26 +106,22 @@ impl ResolvedCallArg {
     }
 }
 
-/// A call site whose arguments can be related back to one function signature.
-///
-/// This gives higher analysis features a stable way to talk about call-site arguments in
-/// declaration terms, regardless of whether the source used a free call, an associated call, or a
-/// receiver method call.
+/// A written call site paired with the target used to interpret its arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedFunctionCall {
+pub struct ResolvedCall<T> {
     file_id: FileId,
-    function: FunctionRef,
+    target: T,
     param_offset: usize,
     args: Vec<ResolvedCallArg>,
 }
 
-impl ResolvedFunctionCall {
+impl<T> ResolvedCall<T> {
     pub fn file_id(&self) -> FileId {
         self.file_id
     }
 
-    pub fn function(&self) -> FunctionRef {
-        self.function
+    pub fn target(&self) -> &T {
+        &self.target
     }
 
     pub fn param_offset(&self) -> usize {
@@ -135,6 +131,12 @@ impl ResolvedFunctionCall {
     pub fn args(&self) -> &[ResolvedCallArg] {
         &self.args
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallTarget {
+    Function(FunctionRef),
+    Value(IndexedType),
 }
 
 /// Body and owner declaration for body-local items.
@@ -524,19 +526,29 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(bindings)
     }
 
-    /// Return the resolved function and arguments for one written call.
-    pub fn resolved_function_call(
+    /// Return the declaration or callee type and argument spans for one written call.
+    pub fn resolved_call(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         call_span: Span,
-    ) -> anyhow::Result<Option<ResolvedFunctionCall>> {
+    ) -> anyhow::Result<Option<ResolvedCall<CallTarget>>> {
         let mut call = ExpectedUnique::new();
-        for candidate in
-            self.resolved_function_calls_matching(crate_ref, file_id, call_span, |span| {
-                span == call_span
-            })?
-        {
+        for candidate in self.resolved_calls_matching(
+            crate_ref,
+            file_id,
+            call_span,
+            |span| span == call_span,
+            |function, callee_ty| {
+                if let Some(function) = function {
+                    return Some(CallTarget::Function(function));
+                }
+                // A reference to a closure or function pointer can be called directly.
+                let ty = callee_ty?.reference_chain().last()?;
+                (!matches!(ty, Ty::Unknown))
+                    .then(|| CallTarget::Value(IndexedType::new(ty.clone())))
+            },
+        )? {
             call.push(candidate);
         }
         Ok(call.into_option())
@@ -552,19 +564,24 @@ impl<'a, 'db> BodyView<'a, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         range: Span,
-    ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
-        self.resolved_function_calls_matching(crate_ref, file_id, range, |span| {
-            span.touches_span(range)
-        })
+    ) -> anyhow::Result<Vec<ResolvedCall<FunctionRef>>> {
+        self.resolved_calls_matching(
+            crate_ref,
+            file_id,
+            range,
+            |span| span.touches_span(range),
+            |function, _| function,
+        )
     }
 
-    fn resolved_function_calls_matching(
+    fn resolved_calls_matching<T>(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         range: Span,
         matches_span: impl Fn(Span) -> bool,
-    ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
+        select_target: impl Fn(Option<FunctionRef>, Option<&Ty>) -> Option<T>,
+    ) -> anyhow::Result<Vec<ResolvedCall<T>>> {
         let mut calls = Vec::new();
         for (body_ref, body) in self
             .db
@@ -589,15 +606,20 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     ExprKind::MethodCall { args, .. } => (ExprId(expr_idx), args, 1),
                     _ => continue,
                 };
-                let Some(function) = self
+                let function = self
                     .single_function(body.expr_declarations(body_ref, callee))
-                    .context("resolve call target function")?
-                else {
+                    .context("resolve call target function")?;
+                let callee_ty = if param_offset == 0 {
+                    body.expr_ty(callee)
+                } else {
+                    None
+                };
+                let Some(target) = select_target(function, callee_ty) else {
                     continue;
                 };
-                calls.push(ResolvedFunctionCall {
+                calls.push(ResolvedCall {
                     file_id,
-                    function,
+                    target,
                     param_offset,
                     args: Self::resolved_call_args(body, args),
                 });

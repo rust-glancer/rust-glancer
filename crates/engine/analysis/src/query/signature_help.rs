@@ -1,11 +1,15 @@
 //! Signature help for calls in the editor's source.
 //!
 //! Syntax tells us where the cursor falls even when the next argument is still missing.
-//! Body IR tells us which function was called and which arguments are enabled for this target.
+//! Body IR supplies the target declaration or callable type and the arguments enabled by cfg.
 
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, Span};
-use rg_ir_view::{display::signature::SignatureRenderer, member::MemberView, ty::locals::BodyView};
+use rg_ir_view::{
+    display::signature::{CallSignature, SignatureRenderer},
+    member::MemberView,
+    ty::locals::{BodyView, CallTarget},
+};
 use rg_syntax::{AstNode as _, SyntaxKind, TextSize, ast};
 
 use crate::{Analysis, SignatureHelp};
@@ -53,20 +57,34 @@ pub(crate) fn signature_help(
         return Ok(None);
     };
 
-    // TODO: Use callable type information for closures and function pointers.
     let db = analysis.view_db();
     let call_span = Span::from_text_range(call_syntax.text_range());
-    let Some(call) = BodyView::new(db).resolved_function_call(crate_ref, file_id, call_span)?
-    else {
+    let Some(call) = BodyView::new(db).resolved_call(crate_ref, file_id, call_span)? else {
         return Ok(None);
     };
-    let members = MemberView::new(db);
-    let Some(function) = members
-        .function(call.function())
-        .context("read signature help function")?
-    else {
-        return Ok(None);
+    let renderer = SignatureRenderer::new(db.crate_edition(crate_ref)?);
+    let (signature, is_variadic) = match call.target() {
+        CallTarget::Function(function) => {
+            let members = MemberView::new(db);
+            let Some(function) = members
+                .function(*function)
+                .context("read signature help function")?
+            else {
+                return Ok(None);
+            };
+            (
+                renderer.call_signature(function, call.param_offset()),
+                function.is_variadic(),
+            )
+        }
+        CallTarget::Value(ty) => {
+            let Some(signature) = renderer.callable_signature(db, ty)? else {
+                return Ok(None);
+            };
+            (signature, false)
+        }
     };
+    let CallSignature { label, parameters } = signature;
 
     // Count the commas in this list before the cursor. The comma in `(1, 2)` belongs to the
     // tuple. The parser wraps the comma in `send(, $0)` in an error node. That comma still
@@ -100,11 +118,9 @@ pub(crate) fn signature_help(
                 .is_none();
         }
     }
-    let renderer = SignatureRenderer::new(db.crate_edition(crate_ref)?);
-    let (label, parameters) = renderer.call_signature(function, call.param_offset());
     // All extra arguments to a C variadic function share its trailing `...` slot.
     let active_parameter = parameters.len().checked_sub(1).and_then(|last| {
-        (argument_index <= last || function.is_variadic()).then_some(argument_index.min(last))
+        (argument_index <= last || is_variadic).then_some(argument_index.min(last))
     });
 
     Ok(Some(SignatureHelp {

@@ -30,6 +30,8 @@ unsafe extern "C" {
     fn print(count: u8, ...);
 }
 struct Client;
+struct Pair<T>(T, bool);
+enum Event<T> { Received(T, bool) }
 impl Client {
     fn send(&self, payload: u8, retry: bool) {}
     fn ping(&self) {}
@@ -46,6 +48,25 @@ fn demo(client: Client, make_client: fn() -> Client) {
 }
 fn unfinished_function() {
     send($after_open$
+}
+fn unfinished_pointer(callback: &fn(u8, bool) -> u16) {
+    callback($pointer$
+}
+fn unfinished_closure() {
+    let callback = |_: u8, value| value;
+    callback(1, $closure$
+}
+fn unfinished_tuple_struct() {
+    Pair::<u8>(1, $tuple_struct$
+}
+fn unfinished_tuple_variant() {
+    let make = Event::Received;
+    make(1_u16, $tuple_variant$
+}
+fn unfinished_local_constructor() {
+    type Payload = u16;
+    struct Local(Payload, bool);
+    Local($local_constructor$
 }
 fn unfinished_method(client: Client) {
     client.send(1, $after_comma$
@@ -67,6 +88,16 @@ fn unfinished_method(client: Client) {
         ("inferred_receiver", method, 1, "retry: bool"),
         ("after_comma", method, 1, "retry: bool"),
         ("variadic", "fn print(count: u8, ...)", 1, "..."),
+        ("pointer", "fn(u8, bool) -> u16", 0, "u8"),
+        ("closure", "|u8, _| -> _", 1, "_"),
+        ("tuple_struct", "Pair(u8, bool) -> Pair<u8>", 1, "bool"),
+        (
+            "tuple_variant",
+            "Event::Received(u16, bool) -> Event<u16>",
+            1,
+            "bool",
+        ),
+        ("local_constructor", "Local(u16, bool) -> Local", 0, "u16"),
     ] {
         let help = fixture
             .signature_help(&dirty, marker, SignatureHelpClientCapabilities::default())
