@@ -11,7 +11,11 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, ItemOwner, Mutability, PatId, ScopeId, TraitDefRef};
 use rg_item_tree::LangItem;
 use rg_semantic_ir::SemanticItemSource;
-use rg_ty::solver::{DynTy, List, TraitApplication, Ty, TyShape};
+use rg_std::ExpectedUnique;
+use rg_ty::{
+    FnDefRef,
+    solver::{AliasTy, DynTy, FnDefTy, List, TraitApplication, Ty, TyShape},
+};
 
 use super::{BodyInference, InferenceState};
 use crate::{
@@ -75,17 +79,17 @@ where
     D: DefMapSource + Copy,
     I: SemanticItemSource<'query> + Copy,
 {
-    /// Apply an expression expectation, allowing divergence and trait-object conversion.
+    /// Apply an expression expectation, allowing divergence and coercions.
     /// An unfinished producer needs to supply its type before we can choose the relation.
     pub(super) fn coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) {
-        if !self.try_coerce_expr_ty(expr, expected) {
-            self.defer(
-                DeferredKind::Coerce {
-                    expr,
-                    expected: *expected,
-                },
-                None,
-            );
+        let mut expected = self.inference.root_resolved_ty(expected);
+        if matches!(expected.shape(), TyShape::Alias(AliasTy::Projection(_))) {
+            // `F::Factory` can reveal a function pointer after an earlier argument determines F.
+            // Keep the normalized slot so retries can use its shape before relating the item.
+            expected = self.inference.table().normalize(expected);
+        }
+        if !self.try_coerce_expr_ty(expr, &expected) {
+            self.defer(DeferredKind::Coerce { expr, expected }, None);
         }
     }
 
@@ -167,6 +171,9 @@ where
                 DeferredKind::BranchResult {
                     result, branches, ..
                 } => {
+                    if self.try_join_constructors(result, &branches) {
+                        continue;
+                    }
                     for branch in branches {
                         let branch = self.inference.root_resolved_ty(&branch);
                         if !matches!((branch).shape(), TyShape::Never) {
@@ -189,6 +196,18 @@ where
             return false;
         }
         let source = self.inference.root_resolved_expr_ty(expr);
+        if self.constructor_waits_for_projection(source, expected) {
+            return false;
+        }
+
+        if matches!(expected.shape(), TyShape::FnPointer { .. })
+            && let TyShape::FnDef(item) = source.shape()
+            && let Some(pointer) = item.constructor_pointer(self.cx)
+            && self.inference.table().try_unify(pointer, expected).is_ok()
+        {
+            self.inference.set_coerced_expr_ty(expr, expected);
+            return true;
+        }
 
         if let Some(object) = self.trait_object_pointee(expected) {
             // In `let object: Box<dyn Trait> = id(Box::new(value))`, id's result starts as
@@ -231,6 +250,76 @@ where
         }
         self.inference.constrain_expr_ty(expr, &expected);
         true
+    }
+
+    fn constructor_waits_for_projection(&self, source: Ty<'s>, expected: Ty<'s>) -> bool {
+        matches!(
+            source.shape(),
+            TyShape::FnDef(FnDefTy {
+                def: FnDefRef::Constructor(_),
+                ..
+            })
+        ) && self.inference.table().has_pending_projection(expected)
+    }
+
+    /// Distinct items can share a pointer type, as in `if flag { Event::A } else { Event::B }`.
+    /// Relate their signatures in one trial so a failed join cannot refine an earlier branch.
+    fn try_join_constructors(&self, result: Ty<'s>, branches: &[Ty<'s>]) -> bool {
+        let table = self.inference.table();
+        let result = table.resolve_root_var(result);
+        let mut pointer = matches!(result.shape(), TyShape::FnPointer { .. }).then_some(result);
+        let mut items = ExpectedUnique::new();
+        for &branch in branches {
+            let branch = table.resolve_root_var(branch);
+            match branch.shape() {
+                TyShape::FnDef(item) => items.push(item.def),
+                TyShape::FnPointer { .. } => {
+                    pointer.get_or_insert(branch);
+                }
+                TyShape::Never | TyShape::Unknown | TyShape::InferVar { .. } => {}
+                _ => return false,
+            }
+        }
+        if items.is_empty() || (pointer.is_none() && !items.is_ambiguous()) {
+            return false;
+        }
+
+        table
+            .commit_if_some(|table| -> Result<_, std::convert::Infallible> {
+                if pointer.is_none() {
+                    pointer = branches.iter().find_map(|&branch| {
+                        match table.resolve_root_var(branch).shape() {
+                            TyShape::FnDef(item) => item.constructor_pointer(self.cx),
+                            _ => None,
+                        }
+                    });
+                }
+                let Some(pointer) = pointer else {
+                    return Ok(None);
+                };
+                if table.try_unify(result, pointer).is_err() {
+                    return Ok(None);
+                }
+                for &branch in branches {
+                    let branch = table.resolve_root_var(branch);
+                    let input = match branch.shape() {
+                        TyShape::Never => continue,
+                        TyShape::FnDef(item) => {
+                            let Some(input) = item.constructor_pointer(self.cx) else {
+                                return Ok(None);
+                            };
+                            input
+                        }
+                        _ => branch,
+                    };
+                    if table.try_unify(input, pointer).is_err() {
+                        return Ok(None);
+                    }
+                }
+                Ok(Some(()))
+            })
+            .expect("function pointer join is infallible")
+            .is_some()
     }
 
     /// Find the trait object inside a conversion target such as `&dyn Trait` or `Arc<dyn Trait>`.
@@ -281,8 +370,8 @@ where
         }
 
         !self.deferred.iter().any(|operation| match &operation.kind {
-            DeferredKind::Call { call } => self.inference.call_result_is_pending(*call, &ty),
-            DeferredKind::Field { expr }
+            DeferredKind::Call { call: expr }
+            | DeferredKind::Field { expr }
             | DeferredKind::Index { expr }
             | DeferredKind::Operator { expr } => self.inference.root_resolved_expr_ty(*expr) == ty,
             DeferredKind::BranchResult { result, .. } | DeferredKind::BlockTail { result, .. } => {
@@ -381,6 +470,7 @@ where
                     DeferredKind::Coerce { expr, expected } => {
                         let source = self.inference.root_resolved_expr_ty(*expr);
                         self.can_coerce_ty(&source)
+                            && !self.constructor_waits_for_projection(source, *expected)
                             && !(source.is_var() && self.trait_object_pointee(*expected).is_some())
                     }
                     DeferredKind::BranchResult { branches, .. } => {
@@ -418,19 +508,26 @@ where
 
     /// Snapshot the types this operation depends on, expanding solved variables for comparison.
     /// Tuples here group dependencies into a key; they are not types of source expressions.
-    fn deferred_input(&self, kind: &DeferredKind<'s>) -> Ty<'s> {
+    pub(super) fn deferred_input(&self, kind: &DeferredKind<'s>) -> Ty<'s> {
         let expr_ty = |expr| self.inference.expr_ty(expr);
         let input = match kind {
-            DeferredKind::Call { call } => {
-                let receiver = match self.body.expr_unchecked(*call).kind {
-                    ExprKind::Call { .. } => None,
-                    ExprKind::MethodCall { receiver, .. } => receiver,
-                    _ => unreachable!("pending call owns a call expression"),
-                };
-                // Only unselected calls wait here, and receiver evidence can change their
-                // lookup. Selected calls' predicates and projections are retried by the solver.
-                receiver.map(expr_ty).unwrap_or(self.cx.unknown())
-            }
+            DeferredKind::Call { call } => match &self.body.expr_unchecked(*call).kind {
+                // Multiple callable bounds of the same arity can need argument evidence.
+                ExprKind::Call {
+                    callee: Some(callee),
+                    args,
+                } => self.cx.tuple(
+                    std::iter::once(*callee)
+                        .chain(args.iter().copied())
+                        .map(expr_ty)
+                        .collect::<Vec<_>>(),
+                ),
+                ExprKind::MethodCall { receiver, .. } => {
+                    receiver.map(expr_ty).unwrap_or(self.cx.unknown())
+                }
+                ExprKind::Call { callee: None, .. } => self.cx.unknown(),
+                _ => unreachable!("pending call owns a call expression"),
+            },
             DeferredKind::Field { expr } => match self.body.expr_unchecked(*expr).kind {
                 ExprKind::Field { base, .. } => base.map(expr_ty).unwrap_or(self.cx.unknown()),
                 _ => unreachable!("pending field owns a field expression"),
@@ -508,6 +605,23 @@ where
                     return Ok(true);
                 }
 
+                // A pending branch can supply another item, changing the join to a pointer.
+                // Wait before committing the result to the first known callable's identity.
+                let callable = branches.iter().any(|ty| {
+                    matches!(
+                        self.inference.root_resolved_ty(ty).shape(),
+                        TyShape::FnDef(_) | TyShape::FnPointer { .. }
+                    )
+                });
+                if callable {
+                    if branches.iter().any(|ty| !self.can_coerce_ty(ty)) {
+                        return Ok(false);
+                    }
+                    if self.try_join_constructors(*result, branches) {
+                        return Ok(true);
+                    }
+                }
+
                 // In `if flag { user.abort() } else { 1 }`, the integer branch can supply the
                 // result immediately. Leave the pending method result separate: discovering `!`
                 // later must not turn that integer into a conflict.
@@ -539,18 +653,17 @@ where
             }
             DeferredKind::Call { call } => {
                 let body = self.body;
-                let (receiver, args) = match &body.expr_unchecked(*call).kind {
-                    ExprKind::Call { args, .. } => (None, args.as_slice()),
-                    ExprKind::MethodCall { receiver, args, .. } => (*receiver, args.as_slice()),
+                let args = match &body.expr_unchecked(*call).kind {
+                    ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => args,
                     _ => unreachable!("pending call owns a call expression"),
                 };
                 let Some(prepared) = self
-                    .prepare_call(*call, receiver)
+                    .prepare_call(*call)
                     .context("select pending call signature")?
                 else {
                     return Ok(false);
                 };
-                self.finish_call(prepared, args);
+                self.finish_call(*call, prepared, args);
                 Ok(true)
             }
             DeferredKind::Pattern {

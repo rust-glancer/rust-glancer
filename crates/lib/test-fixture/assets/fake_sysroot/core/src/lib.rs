@@ -74,6 +74,7 @@ impl<T> [T] {
 }
 
 impl str {
+    pub fn len(&self) -> usize {}
     pub fn starts_with(&self, _prefix: &str) -> bool {}
 }
 

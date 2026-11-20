@@ -2059,7 +2059,7 @@ pub fn make() {
 }
 "#,
         expect![[r#"
-            nominal enum fn analysis_local_enum_variant_type[lib]::crate::make::Action // type at local enum variant
+            function item enum fn analysis_local_enum_variant_type[lib]::crate::make::Action::Start // type at local enum variant
         "#]],
     );
 }

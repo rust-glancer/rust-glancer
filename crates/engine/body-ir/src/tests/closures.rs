@@ -130,7 +130,7 @@ pub fn use_it(attr: Attr) {
               stmt s0 expr; @ 15:5-15:42
                 expr e5 call => () @ 15:5-15:41
                   callee
-                    expr e0 path with_attrs -> fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs => function item fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs<<unknown>> @ 15:5-15:15
+                    expr e0 path with_attrs -> fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs => function item fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs<closure #4> @ 15:5-15:15
                   arg
                     expr e4 closure s2 (v1) => closure #4 @ 15:16-15:40
                       body
@@ -142,7 +142,7 @@ pub fn use_it(attr: Attr) {
               stmt s1 expr; @ 16:5-16:37
                 expr e9 call => () @ 16:5-16:36
                   callee
-                    expr e6 path with_pair -> fn body_direct_closure_expectation_fixture[lib]::crate::with_pair => function item fn body_direct_closure_expectation_fixture[lib]::crate::with_pair<<unknown>> @ 16:5-16:14
+                    expr e6 path with_pair -> fn body_direct_closure_expectation_fixture[lib]::crate::with_pair => function item fn body_direct_closure_expectation_fixture[lib]::crate::with_pair<closure #8> @ 16:5-16:14
                   arg
                     expr e8 closure s3 (v2, v3) => closure #8 @ 16:15-16:35
                       body
@@ -226,7 +226,7 @@ pub fn use_it() {
               stmt s0 expr; @ 10:5-10:25
                 expr e3 call => () @ 10:5-10:24
                   callee
-                    expr e0 path invoke -> fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke => function item fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke<<unknown>> @ 10:5-10:11
+                    expr e0 path invoke -> fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke => function item fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke<closure #2> @ 10:5-10:11
                   arg
                     expr e2 closure s2 (v0) => closure #2 @ 10:12-10:23
                       body
@@ -381,11 +381,11 @@ pub fn use_it() {
                 initializer
                   expr e5 call => nominal struct body_solver_callable_fixture[lib]::crate::Name @ 39:24-39:53
                     callee
-                      expr e0 path project -> fn body_solver_callable_fixture[lib]::crate::project => function item fn body_solver_callable_fixture[lib]::crate::project<<unknown>> @ 39:24-39:31
+                      expr e0 path project -> fn body_solver_callable_fixture[lib]::crate::project => function item fn body_solver_callable_fixture[lib]::crate::project<nominal struct body_solver_callable_fixture[lib]::crate::Adapter<closure #3>> @ 39:24-39:31
                     arg
                       expr e4 call => nominal struct body_solver_callable_fixture[lib]::crate::Adapter<closure #3> @ 39:32-39:52
                         callee
-                          expr e1 path adapter -> fn body_solver_callable_fixture[lib]::crate::adapter => function item fn body_solver_callable_fixture[lib]::crate::adapter<<unknown>> @ 39:32-39:39
+                          expr e1 path adapter -> fn body_solver_callable_fixture[lib]::crate::adapter => function item fn body_solver_callable_fixture[lib]::crate::adapter<closure #3> @ 39:32-39:39
                         arg
                           expr e3 closure s2 (v0) => closure #3 @ 39:40-39:51
                             body
@@ -394,7 +394,7 @@ pub fn use_it() {
                 initializer
                   expr e8 call => nominal struct body_solver_callable_fixture[lib]::crate::Name @ 40:25-40:42
                     callee
-                      expr e6 path invoke -> fn body_solver_callable_fixture[lib]::crate::invoke => function item fn body_solver_callable_fixture[lib]::crate::invoke<<unknown>> @ 40:25-40:31
+                      expr e6 path invoke -> fn body_solver_callable_fixture[lib]::crate::invoke => function item fn body_solver_callable_fixture[lib]::crate::invoke<function item fn body_solver_callable_fixture[lib]::crate::make_name> @ 40:25-40:31
                     arg
                       expr e7 path make_name -> fn body_solver_callable_fixture[lib]::crate::make_name => function item fn body_solver_callable_fixture[lib]::crate::make_name @ 40:32-40:41
               stmt s2 expr; @ 41:5-41:18
@@ -476,7 +476,7 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
               tail
                 expr e2 call => param R @ 11:5-11:21
                   callee
-                    expr e0 path invoke -> fn body_function_pointer_callable_fixture[lib]::crate::invoke => function item fn body_function_pointer_callable_fixture[lib]::crate::invoke<<unknown>, <unknown>> @ 11:5-11:11
+                    expr e0 path invoke -> fn body_function_pointer_callable_fixture[lib]::crate::invoke => function item fn body_function_pointer_callable_fixture[lib]::crate::invoke<fn(nominal struct body_function_pointer_callable_fixture[lib]::crate::User) -> param R, param R> @ 11:5-11:11
                   arg
                     expr e1 path callback -> local v0 => fn(nominal struct body_function_pointer_callable_fixture[lib]::crate::User) -> param R @ 11:12-11:20
 

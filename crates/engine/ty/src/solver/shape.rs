@@ -4,8 +4,7 @@
 //! table, and inspecting a shape does not normalize it or choose fallback types.
 
 use rg_ir_model::{
-    DefMapRef, FunctionRef, GenericParamRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef,
-    TypeParamRef,
+    DefMapRef, GenericParamRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef, TypeParamRef,
 };
 use rustc_abi::ExternAbi;
 use rustc_type_ir::{
@@ -17,7 +16,7 @@ use super::{
     Clause, Const, DefId, GenericArg, GenericArgs, List, Param, Region, SolverInterner, Ty,
     types::{ErrorGuaranteed, Safety, ValueConst},
 };
-use crate::{AsyncCoroutineTyId, ClosureTyId, Mutability, PrimitiveTy};
+use crate::{AsyncCoroutineTyId, ClosureTyId, FnDefRef, Mutability, PrimitiveTy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferVarKind {
@@ -107,7 +106,7 @@ pub struct DynAssocTypeBinding<'s> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FnDefTy<'s> {
-    pub def: FunctionRef,
+    pub def: FnDefRef,
     pub args: GenericArgs<'s>,
 }
 
@@ -217,7 +216,9 @@ impl<'s> Ty<'s> {
                 predicates,
                 lifetime,
             }),
-            ir::FnDef(DefId::Function(def), args) => S::FnDef(FnDefTy { def, args }),
+            ir::FnDef(id, args) => id
+                .fn_def()
+                .map_or(S::Unknown, |def| S::FnDef(FnDefTy { def, args })),
             ir::FnPtr(sig, _) => S::FnPointer {
                 params: sig.skip_binder().inputs(),
                 ret: sig.skip_binder().output(),
@@ -444,8 +445,8 @@ impl<'s> SolverInterner<'s> {
         }
     }
 
-    pub fn fn_def(self, function: FunctionRef, args: GenericArgs<'s>) -> Ty<'s> {
-        Ty::new(self, ir::FnDef(DefId::Function(function), args))
+    pub fn fn_def(self, def: impl Into<FnDefRef>, args: GenericArgs<'s>) -> Ty<'s> {
+        Ty::new(self, ir::FnDef(def.into().into(), args))
     }
 
     pub fn fn_pointer(self, params: &[Ty<'s>], ret: Ty<'s>) -> Ty<'s> {

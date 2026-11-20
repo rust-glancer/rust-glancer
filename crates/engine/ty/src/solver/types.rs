@@ -24,7 +24,7 @@ use rustc_type_ir::{
 };
 
 use super::{SolverInterner, interner::ListElement};
-use crate::{AsyncCoroutineTyId, ClosureTyId};
+use crate::{AsyncCoroutineTyId, ClosureTyId, ConstructorRef, FnDefRef};
 
 type Interner<'s> = SolverInterner<'s>;
 pub type GenericArgs<'s> = List<'s, GenericArg<'s>>;
@@ -220,6 +220,7 @@ pub enum DefId {
     Trait(TraitDefRef),
     Impl(ImplRef),
     Function(FunctionRef),
+    Constructor(ConstructorRef),
     Const(rg_ir_model::ConstRef),
     Static(rg_ir_model::StaticRef),
     TypeAlias(TypeAliasRef),
@@ -239,12 +240,30 @@ impl DefId {
             Self::Trait(id) => G::Trait(id),
             Self::Impl(id) => G::Impl(id),
             Self::Function(id) => G::Function(id),
+            Self::Constructor(id) => G::TypeDef(id.owner()),
             Self::Const(id) => G::Const(id),
             Self::Static(id) => G::Static(id),
             Self::TypeAlias(id) => G::TypeAlias(id),
             Self::Opaque(id) => id.owner,
             Self::Closure(_) | Self::AsyncCoroutine(_) | Self::Unavailable => return None,
         })
+    }
+
+    pub(super) fn fn_def(self) -> Option<FnDefRef> {
+        match self {
+            Self::Function(function) => Some(FnDefRef::Function(function)),
+            Self::Constructor(constructor) => Some(FnDefRef::Constructor(constructor)),
+            _ => None,
+        }
+    }
+}
+
+impl From<FnDefRef> for DefId {
+    fn from(def: FnDefRef) -> Self {
+        match def {
+            FnDefRef::Function(function) => Self::Function(function),
+            FnDefRef::Constructor(constructor) => Self::Constructor(constructor),
+        }
     }
 }
 

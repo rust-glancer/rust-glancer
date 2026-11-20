@@ -245,7 +245,7 @@ pub fn use_it() {
                 initializer
                   expr e2 call => u16 @ 16:16-16:27
                     callee
-                      expr e1 path u32::make -> fn trait body_unkeyed_trait_associated_path_fixture[lib]::crate::PrimitiveFactory::make => <unknown> @ 16:16-16:25
+                      expr e1 path u32::make -> fn trait body_unkeyed_trait_associated_path_fixture[lib]::crate::PrimitiveFactory::make => function item fn trait body_unkeyed_trait_associated_path_fixture[lib]::crate::PrimitiveFactory::make<u32, u16> @ 16:16-16:25
 
 
             const impl PrimitiveFactory<u16> for u32::DEFAULT @ 7:5-7:28

@@ -9,17 +9,17 @@
 
 use std::sync::Arc;
 
-use rg_ir_model::{FunctionRef, ImplRef, TypeAliasRef, TypeDefRef};
+use rg_ir_model::{ImplRef, TypeAliasRef, TypeDefRef};
 use rustc_type_ir::data_structures::HashMap;
 
 use super::DeclarationMetadata;
-use crate::{Clause, Ty, signature, solver::DefId};
+use crate::{Clause, FnDefRef, Ty, signature, solver::DefId};
 
 #[derive(Default)]
 pub(crate) struct StoredDeclarations {
     pub metadata: HashMap<DefId, Arc<DeclarationMetadata>>,
     pub impl_headers: HashMap<ImplRef, Arc<signature::ImplHeader>>,
-    pub functions: HashMap<FunctionRef, Arc<signature::CallableSignature>>,
+    pub signatures: HashMap<FnDefRef, Arc<signature::CallableSignature>>,
     pub predicates: HashMap<DefId, Arc<[Clause]>>,
     pub bounds: HashMap<DefId, Arc<[Clause]>>,
     pub alias_values: HashMap<TypeAliasRef, Arc<Ty>>,

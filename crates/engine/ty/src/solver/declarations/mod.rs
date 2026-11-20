@@ -13,8 +13,8 @@ use std::{
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, DefMapRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner,
-    OpaqueTyId, TraitDefRef, TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, DefMapRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner, OpaqueTyId,
+    TraitDefRef, TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{ImplPolarity, LangItem as ItemLangItem};
 use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource, TypePathContext};
@@ -33,7 +33,7 @@ use super::{
     profile::SolverProfile, types::AdtDef,
 };
 use crate::{
-    TyContext,
+    FnDefRef, TyContext,
     lookup::{ItemPathQuery, TraitImplFilter},
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver},
 };
@@ -76,6 +76,7 @@ pub(crate) enum LangItem {
     Adt(SolverAdtLangItem),
     Deref,
     DerefTarget,
+    FnOnceOutput,
 }
 
 /// Supply declaration metadata, types, and bounds to the solver as separate reads.
@@ -93,10 +94,10 @@ pub(crate) trait DeclarationProvider {
         trait_alias: TypeAliasRef,
     ) -> Option<TypeAliasRef>;
     fn impl_header<'s>(&self, cx: SolverInterner<'s>, id: ImplRef) -> Option<ImplHeader<'s>>;
-    fn function_signature<'s>(
+    fn callable_signature<'s>(
         &self,
         cx: SolverInterner<'s>,
-        id: FunctionRef,
+        id: FnDefRef,
     ) -> Option<CallableSignature<'s>>;
     fn predicates<'s>(&self, cx: SolverInterner<'s>, id: DefId) -> Option<List<'s, Clause<'s>>>;
     fn bounds<'s>(&self, cx: SolverInterner<'s>, id: DefId) -> Option<List<'s, Clause<'s>>>;
@@ -386,7 +387,7 @@ where
             DefId::Opaque(_) => {
                 result.parent = Some(owner.into());
             }
-            DefId::Function(_) | DefId::Const(_) | DefId::Static(_) => {}
+            DefId::Function(_) | DefId::Constructor(_) | DefId::Const(_) | DefId::Static(_) => {}
             DefId::Closure(_) | DefId::AsyncCoroutine(_) | DefId::Unavailable => unreachable!(),
         }
         Ok(Some(result))
@@ -524,13 +525,13 @@ where
         Some(data)
     }
 
-    fn function_signature<'s>(
+    fn callable_signature<'s>(
         &self,
         cx: SolverInterner<'s>,
-        id: FunctionRef,
+        id: FnDefRef,
     ) -> Option<CallableSignature<'s>> {
-        if let Some(data) = self.cached(|cache| cache.functions.get(&id).cloned()) {
-            let params = cx.params(DefId::Function(id));
+        if let Some(data) = self.cached(|cache| cache.signatures.get(&id).cloned()) {
+            let params = cx.params(id.into());
             return Some(CallableSignature {
                 params: List::new(
                     cx,
@@ -548,12 +549,15 @@ where
                 qualifiers: data.qualifiers,
             });
         }
-        let data =
-            self.load(|| TypeLoweringQuery::new(self.paths, &self.resolver).function(cx, id))?;
+        let lowering = TypeLoweringQuery::new(self.paths, &self.resolver);
+        let data = self.load(|| match id {
+            FnDefRef::Function(function) => lowering.function(cx, function),
+            FnDefRef::Constructor(constructor) => lowering.constructor(cx, constructor),
+        })?;
         if self.shared.is_some() && !cx.has_unavailable() {
             let stored = Arc::new(data.raise(cx));
             self.cache(|cache| {
-                cache.functions.insert(id, stored);
+                cache.signatures.insert(id, stored);
             });
         }
         Some(data)
@@ -806,6 +810,11 @@ where
             LangItem::DerefTarget => {
                 return lookup
                     .lang_type_alias(ItemLangItem::DerefTarget)
+                    .map(DefId::TypeAlias);
+            }
+            LangItem::FnOnceOutput => {
+                return lookup
+                    .lang_type_alias(ItemLangItem::FnOnceOutput)
                     .map(DefId::TypeAlias);
             }
             LangItem::Projection(SolverProjectionLangItem::FutureOutput) => {

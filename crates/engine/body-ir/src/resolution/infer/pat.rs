@@ -23,7 +23,7 @@ where
     /// Even a pattern with one binding can change the type: `&value: &u8` binds `value: u8`.
     pub(super) fn infer_parameters(&mut self) -> anyhow::Result<()> {
         let function = self.body.owner().function();
-        let signature = function.and_then(|function| self.cx.function_signature(function));
+        let signature = function.and_then(|function| self.cx.callable_signature(function));
         // A missing arrow leaves the expectation open for ordinary functions. An async
         // function with no annotation has a future whose output is unit.
         if let (Some(function), Some(signature)) = (function, signature)
