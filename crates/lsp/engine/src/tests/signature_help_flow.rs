@@ -49,6 +49,10 @@ fn demo(client: Client, make_client: fn() -> Client) {
 fn unfinished_function() {
     send($after_open$
 }
+fn unfinished_function_item() {
+    let callback = send;
+    callback(1_u8, $function_item$
+}
 fn unfinished_pointer(callback: &fn(u8, bool) -> u16) {
     callback($pointer$
 }
@@ -78,6 +82,7 @@ fn unfinished_method(client: Client) {
     let method = "fn send(&self, payload: u8, retry: bool)";
     for (marker, label, index, parameter) in [
         ("after_open", free, 0, "payload: T"),
+        ("function_item", free, 1, "retry: bool"),
         ("tuple", free, 0, "payload: T"),
         ("after_tuple", free, 1, "retry: bool"),
         ("after_inner", free, 0, "payload: T"),

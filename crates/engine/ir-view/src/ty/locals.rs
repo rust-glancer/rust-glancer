@@ -543,8 +543,15 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 if let Some(function) = function {
                     return Some(CallTarget::Function(function));
                 }
-                // A reference to a closure or function pointer can be called directly.
+                // References to callable values can be called directly.
                 let ty = callee_ty?.reference_chain().last()?;
+                // In `let callback = send; callback(...)`, the callee resolves to a binding.
+                // Its inferred function item still identifies the declaration of `send`.
+                if let Ty::FnDef(item) = ty
+                    && let Some(function) = item.def.function()
+                {
+                    return Some(CallTarget::Function(function));
+                }
                 (!matches!(ty, Ty::Unknown))
                     .then(|| CallTarget::Value(IndexedType::new(ty.clone())))
             },
