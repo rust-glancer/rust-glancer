@@ -21,7 +21,7 @@ use super::{
     InferenceTable, List, Outcome, ProjectionTy, SolverInterner, Ty, TyShape,
     declarations::LangItem,
 };
-use crate::{Ty as StoredTy, signature};
+use crate::{FnDefRef, Ty as StoredTy, signature};
 
 /// A trait together with its live arguments. `args[0]` is `Self`: for `Vec<?T>: IntoIterator`,
 /// it holds `Vec<?T>`. Associated-type equalities such as `Item = u8` are separate clauses.
@@ -86,8 +86,8 @@ impl<'s> FnDefTy<'s> {
     /// Use the arguments fixed when this function item was formed. A later `f(...)` can
     /// refine those variables, and another use of the same binding sees that refinement.
     pub fn signature(self, cx: SolverInterner<'s>) -> Option<CallableSignature<'s>> {
-        let signature = cx.function_signature(self.def)?;
-        let params = cx.params(DefId::Function(self.def));
+        let signature = cx.callable_signature(self.def)?;
+        let params = cx.params(self.def.into());
         if params.is_empty() {
             return Some(signature);
         }
@@ -382,7 +382,7 @@ impl<'s> InferenceTable<'s> {
     ) -> Option<FnDefTy<'s>> {
         let cx = self.interner();
         let callbacks = cx.track_callbacks();
-        cx.function_signature(function)?;
+        cx.callable_signature(function)?;
         let owner = DefId::Function(function);
         let args = subst.args_for(cx, cx.params(owner).iter().copied());
         let clauses = subst.apply(cx, cx.predicates(owner));
@@ -393,7 +393,7 @@ impl<'s> InferenceTable<'s> {
             self.register(clause);
         }
         Some(FnDefTy {
-            def: function,
+            def: function.into(),
             args,
         })
     }

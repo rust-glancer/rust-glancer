@@ -7,7 +7,8 @@
 use std::fmt;
 
 use rg_ir_model::{
-    BodyRef, ExprId, FunctionRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef, TypeParamRef,
+    BodyRef, EnumVariantRef, ExprId, FunctionRef, OpaqueTyRef, TraitDefRef, TypeAliasRef,
+    TypeDefId, TypeDefRef, TypeParamRef,
 };
 use rg_semantic_ir::TypePathResolution;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
@@ -182,9 +183,9 @@ impl Ty {
         })
     }
 
-    pub fn fn_def_with_args(function: FunctionRef, args: impl Into<GenericArgs>) -> Self {
+    pub fn fn_def_with_args(def: FnDefRef, args: impl Into<GenericArgs>) -> Self {
         Self::FnDef(FnDefTy {
-            def: function,
+            def,
             args: args.into(),
         })
     }
@@ -399,10 +400,53 @@ pub struct DynAssocTypeBinding {
     pub ty: Ty,
 }
 
-/// Instantiated type of one function definition.
+/// The declaration behind a tuple constructor. Variants of the same enum can share a signature
+/// and still have distinct function-item types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub enum ConstructorRef {
+    Struct(TypeDefRef),
+    Variant(EnumVariantRef),
+}
+
+impl ConstructorRef {
+    pub fn owner(self) -> TypeDefRef {
+        match self {
+            Self::Struct(def) => def,
+            Self::Variant(variant) => TypeDefRef {
+                origin: variant.origin,
+                id: TypeDefId::Enum(variant.enum_id),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub enum FnDefRef {
+    Function(FunctionRef),
+    Constructor(ConstructorRef),
+}
+
+impl FnDefRef {
+    pub fn function(self) -> Option<FunctionRef> {
+        match self {
+            Self::Function(function) => Some(function),
+            Self::Constructor(_) => None,
+        }
+    }
+}
+
+impl From<FunctionRef> for FnDefRef {
+    fn from(function: FunctionRef) -> Self {
+        Self::Function(function)
+    }
+}
+
+/// Instantiated type of a function item.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct FnDefTy {
-    pub def: FunctionRef,
+    pub def: FnDefRef,
     pub args: GenericArgs,
 }
 

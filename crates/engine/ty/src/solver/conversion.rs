@@ -105,7 +105,7 @@ impl<'s> SolverInterner<'s> {
                 },
                 self.complete_args(DefId::Opaque(o.opaque), self.lower_args(&o.args, params)),
             )),
-            Stored::FnDef(f) => ir::FnDef(DefId::Function(f.def), self.lower_args(&f.args, params)),
+            Stored::FnDef(f) => ir::FnDef(f.def.into(), self.lower_args(&f.args, params)),
             Stored::FnPointer {
                 params: inputs,
                 ret,
@@ -361,9 +361,7 @@ impl<'s> SolverInterner<'s> {
                 })),
                 _ => return None,
             },
-            ir::FnDef(DefId::Function(def), args) => {
-                Stored::fn_def_with_args(def, self.raise_args(args))
-            }
+            ir::FnDef(id, args) => Stored::fn_def_with_args(id.fn_def()?, self.raise_args(args)),
             ir::FnPtr(sig, _) => {
                 let sig = sig.skip_binder();
                 let inputs = sig

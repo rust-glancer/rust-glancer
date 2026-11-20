@@ -571,11 +571,11 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn fn_sig(self, id: DefId) -> ir::EarlyBinder<Self, ir::Binder<Self, ir::FnSig<Self>>> {
-        let DefId::Function(function) = id else {
+        let Some(def) = id.fn_def() else {
             self.unavailable("function identity");
             return ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig::dummy()));
         };
-        let Some(sig) = self.function_signature(function) else {
+        let Some(sig) = self.callable_signature(def) else {
             return ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig::dummy()));
         };
         let tys = sig

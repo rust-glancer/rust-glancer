@@ -10,13 +10,16 @@
 
 use std::sync::Arc;
 
-use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TypeAliasRef, TypeDefRef};
+use rg_ir_model::{GenericParamRef, ImplRef, TypeAliasRef, TypeDefRef};
 use rustc_type_ir::{self as ir, Upcast, data_structures::HashMap, inherent::GenericArgs as _};
 
 use super::SolverInterner;
-use crate::solver::{
-    CallableSignature, Clause, DeclarationKind, DeclarationMetadata, DefId, GenericArgs,
-    ImplHeader, List, ParamEnv, Ty, types::Generics,
+use crate::{
+    FnDefRef,
+    solver::{
+        CallableSignature, Clause, DeclarationKind, DeclarationMetadata, DefId, GenericArgs,
+        ImplHeader, List, ParamEnv, Ty, types::Generics,
+    },
 };
 
 #[derive(Default)]
@@ -24,7 +27,7 @@ pub(crate) struct WorkingDeclarations<'s> {
     metadata: HashMap<DefId, Arc<DeclarationMetadata>>,
     generics: HashMap<DefId, Generics<'s>>,
     impl_headers: HashMap<ImplRef, ImplHeader<'s>>,
-    functions: HashMap<FunctionRef, CallableSignature<'s>>,
+    signatures: HashMap<FnDefRef, CallableSignature<'s>>,
     predicates: HashMap<DefId, List<'s, Clause<'s>>>,
     bounds: HashMap<DefId, List<'s, Clause<'s>>>,
     alias_values: HashMap<TypeAliasRef, Ty<'s>>,
@@ -129,17 +132,18 @@ impl<'s> SolverInterner<'s> {
         }
     }
 
-    /// Read a function's parameter and return types with its generic parameters still in place.
+    /// Read a callable's parameter and return types with its generic parameters still in place.
     /// For `fn id<T>(value: T) -> T`, both positions contain `T`; each call supplies its own
     /// substitution. Requirements such as `T: Clone` are read separately.
-    pub fn function_signature(self, id: FunctionRef) -> Option<CallableSignature<'s>> {
-        if let Some(&data) = self.0.declarations.borrow().functions.get(&id) {
+    pub fn callable_signature(self, id: impl Into<FnDefRef>) -> Option<CallableSignature<'s>> {
+        let id = id.into();
+        if let Some(&data) = self.0.declarations.borrow().signatures.get(&id) {
             self.profile(|p| p.declaration_hits += 1);
             return Some(data);
         }
         let callbacks = self.track_callbacks();
-        let Some(data) = self.0.provider.function_signature(self, id) else {
-            self.unavailable("missing function signature");
+        let Some(data) = self.0.provider.callable_signature(self, id) else {
+            self.unavailable("missing callable signature");
             return None;
         };
         // A nested read may have failed even though lowering returned a signature. Its fallback
@@ -147,7 +151,7 @@ impl<'s> SolverInterner<'s> {
         if callbacks.failure().is_some() {
             return None;
         }
-        self.0.declarations.borrow_mut().functions.insert(id, data);
+        self.0.declarations.borrow_mut().signatures.insert(id, data);
         Some(data)
     }
 
