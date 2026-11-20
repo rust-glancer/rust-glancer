@@ -271,6 +271,7 @@ impl<S> EditorIngress<S> {
                 | "textDocument/rename"
                 | "textDocument/documentHighlight"
                 | "textDocument/hover"
+                | "textDocument/signatureHelp"
                 | "textDocument/codeAction"
                 | "textDocument/completion"
                 | "textDocument/formatting"

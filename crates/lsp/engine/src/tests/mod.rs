@@ -44,5 +44,6 @@ mod macro_navigation;
 mod rename_flow;
 mod save_flow;
 mod semantic_tokens_flow;
+mod signature_help_flow;
 mod target_selection;
 mod utils;

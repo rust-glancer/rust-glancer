@@ -466,6 +466,26 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
+            rg.method = "signatureHelp",
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
+        )
+    )]
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let capabilities = self.client_capabilities.get().copied().unwrap_or_default();
+        let context = self
+            .document_context_for(&params.text_document_position_params.text_document.uri)
+            .await?;
+        methods::text_document::signature_help::signature_help(
+            context,
+            params,
+            capabilities.signature_help,
+        )
+        .await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
             rg.method = "codeAction",
             rg.uri = %params.text_document.uri.as_str()
         )

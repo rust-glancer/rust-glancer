@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CodeActionClientCapabilities, CompletionClientCapabilities, FoldingClientCapabilities,
+    SignatureHelpClientCapabilities,
 };
 
 /// Client features that engine requests need after LSP initialization.
@@ -9,6 +10,7 @@ use crate::{
 pub struct ClientCapabilities {
     pub code_action: CodeActionClientCapabilities,
     pub completion: CompletionClientCapabilities,
+    pub signature_help: SignatureHelpClientCapabilities,
     /// Workspace edits may use versioned `documentChanges`.
     pub versioned_document_edits: bool,
     pub folding: FoldingClientCapabilities,
@@ -30,6 +32,9 @@ impl ClientCapabilities {
                 .unwrap_or(false),
             code_action: CodeActionClientCapabilities::from_lsp_client_capabilities(capabilities),
             completion: CompletionClientCapabilities::from_lsp_client_capabilities(capabilities),
+            signature_help: SignatureHelpClientCapabilities::from_lsp_client_capabilities(
+                capabilities,
+            ),
             folding: FoldingClientCapabilities::from_lsp_client_capabilities(capabilities),
         }
     }
@@ -60,6 +65,12 @@ mod tests {
                             "snippetSupport": true,
                             "resolveSupport": { "properties": ["additionalTextEdits"] }
                         }
+                    },
+                    "signatureHelp": {
+                        "signatureInformation": {
+                            "parameterInformation": { "labelOffsetSupport": true },
+                            "noActiveParameterSupport": true
+                        }
                     }
                 }
             }))
@@ -73,6 +84,8 @@ mod tests {
         assert!(actual.supports_eager_actions());
         assert!(actual.completion.snippet_support);
         assert!(actual.completion.resolve_additional_text_edits);
+        assert!(actual.signature_help.label_offset_support);
+        assert!(actual.signature_help.no_active_parameter_support);
 
         let defaults = ClientCapabilities::from_lsp_client_capabilities(
             &gen_lsp_types::ClientCapabilities::default(),

@@ -14,6 +14,7 @@ use rg_ir_model::{
     identity::{DeclarationRef, LexicalScopeRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, SourceSelection};
+use rg_std::ExpectedUnique;
 use rg_ty::Ty;
 
 use crate::{IndexedViewDb, lookup::name::ValueOrTypeNamespace, ty::IndexedType};
@@ -105,26 +106,22 @@ impl ResolvedCallArg {
     }
 }
 
-/// A call site whose arguments can be related back to one function signature.
-///
-/// This gives higher analysis features a stable way to talk about call-site arguments in
-/// declaration terms, regardless of whether the source used a free call, an associated call, or a
-/// receiver method call.
+/// A written call site paired with the target used to interpret its arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedFunctionCall {
+pub struct ResolvedCall<T> {
     file_id: FileId,
-    function: FunctionRef,
+    target: T,
     param_offset: usize,
     args: Vec<ResolvedCallArg>,
 }
 
-impl ResolvedFunctionCall {
+impl<T> ResolvedCall<T> {
     pub fn file_id(&self) -> FileId {
         self.file_id
     }
 
-    pub fn function(&self) -> FunctionRef {
-        self.function
+    pub fn target(&self) -> &T {
+        &self.target
     }
 
     pub fn param_offset(&self) -> usize {
@@ -134,6 +131,12 @@ impl ResolvedFunctionCall {
     pub fn args(&self) -> &[ResolvedCallArg] {
         &self.args
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallTarget {
+    Function(FunctionRef),
+    Value(IndexedType),
 }
 
 /// Body and owner declaration for body-local items.
@@ -523,7 +526,42 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(bindings)
     }
 
-    /// Return call sites from overlapping body owners that resolve to a single known function.
+    /// Return the declaration or callee type and argument spans for one written call.
+    pub fn resolved_call(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        call_span: Span,
+    ) -> anyhow::Result<Option<ResolvedCall<CallTarget>>> {
+        let mut call = ExpectedUnique::new();
+        for candidate in self.resolved_calls_matching(
+            crate_ref,
+            file_id,
+            call_span,
+            |span| span == call_span,
+            |function, callee_ty| {
+                if let Some(function) = function {
+                    return Some(CallTarget::Function(function));
+                }
+                // References to callable values can be called directly.
+                let ty = callee_ty?.reference_chain().last()?;
+                // In `let callback = send; callback(...)`, the callee resolves to a binding.
+                // Its inferred function item still identifies the declaration of `send`.
+                if let Ty::FnDef(item) = ty
+                    && let Some(function) = item.def.function()
+                {
+                    return Some(CallTarget::Function(function));
+                }
+                (!matches!(ty, Ty::Unknown))
+                    .then(|| CallTarget::Value(IndexedType::new(ty.clone())))
+            },
+        )? {
+            call.push(candidate);
+        }
+        Ok(call.into_option())
+    }
+
+    /// Return call sites touching the range that resolve to a single known function.
     ///
     /// This is the body-local view used by features that need to project declaration metadata, such
     /// as parameter names, onto concrete argument expressions without owning call resolution.
@@ -533,7 +571,24 @@ impl<'a, 'db> BodyView<'a, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         range: Span,
-    ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
+    ) -> anyhow::Result<Vec<ResolvedCall<FunctionRef>>> {
+        self.resolved_calls_matching(
+            crate_ref,
+            file_id,
+            range,
+            |span| span.touches_span(range),
+            |function, _| function,
+        )
+    }
+
+    fn resolved_calls_matching<T>(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        range: Span,
+        matches_span: impl Fn(Span) -> bool,
+        select_target: impl Fn(Option<FunctionRef>, Option<&Ty>) -> Option<T>,
+    ) -> anyhow::Result<Vec<ResolvedCall<T>>> {
         let mut calls = Vec::new();
         for (body_ref, body) in self
             .db
@@ -542,45 +597,39 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .context("read bodies for resolved calls")?
         {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
-                rg_std::check_cancel!(self.db, "local declaration candidates");
-                if !body.source_at(expr.source).is_written_in_file(file_id) {
+                rg_std::check_cancel!(self.db, "resolved function calls");
+                let source = body.source_at(expr.source);
+                if !source.is_written_in_file(file_id) || !matches_span(source.span) {
                     continue;
                 }
 
-                match &expr.kind {
-                    ExprKind::Call { callee, args } => {
-                        let Some(callee) = *callee else {
-                            continue;
-                        };
-                        let Some(function) = self
-                            .single_function(body.expr_declarations(body_ref, callee))
-                            .context("resolve call target function")?
-                        else {
-                            continue;
-                        };
-                        calls.push(ResolvedFunctionCall {
-                            file_id: body.source_at(expr.source).file_id,
-                            function,
-                            param_offset: 0,
-                            args: Self::resolved_call_args(body, args),
-                        });
-                    }
-                    ExprKind::MethodCall { args, .. } => {
-                        let Some(function) = self
-                            .single_function(body.expr_declarations(body_ref, ExprId(expr_idx)))
-                            .context("resolve method call target function")?
-                        else {
-                            continue;
-                        };
-                        calls.push(ResolvedFunctionCall {
-                            file_id: body.source_at(expr.source).file_id,
-                            function,
-                            param_offset: 1,
-                            args: Self::resolved_call_args(body, args),
-                        });
-                    }
-                    _ => {}
-                }
+                // A path call writes every argument, even for `Type::method(&value)`.
+                // A dot call supplies the receiver before the argument list.
+                let (callee, args, param_offset) = match &expr.kind {
+                    ExprKind::Call {
+                        callee: Some(callee),
+                        args,
+                    } => (*callee, args, 0),
+                    ExprKind::MethodCall { args, .. } => (ExprId(expr_idx), args, 1),
+                    _ => continue,
+                };
+                let function = self
+                    .single_function(body.expr_declarations(body_ref, callee))
+                    .context("resolve call target function")?;
+                let callee_ty = if param_offset == 0 {
+                    body.expr_ty(callee)
+                } else {
+                    None
+                };
+                let Some(target) = select_target(function, callee_ty) else {
+                    continue;
+                };
+                calls.push(ResolvedCall {
+                    file_id,
+                    target,
+                    param_offset,
+                    args: Self::resolved_call_args(body, args),
+                });
             }
         }
 

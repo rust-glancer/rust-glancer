@@ -15,5 +15,6 @@ pub(crate) mod inlay_hints;
 pub(crate) mod navigation;
 pub(crate) mod references;
 pub(crate) mod rename;
+pub(crate) mod signature_help;
 pub(crate) mod symbols;
 pub(crate) mod trait_member;

@@ -21,6 +21,10 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         })),
         document_highlight_provider: Some(true.into()),
         hover_provider: Some(true.into()),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+            ..Default::default()
+        }),
         code_action_provider: Some(CodeActionProvider::CodeActionOptions(CodeActionOptions {
             code_action_kinds: Some(vec![
                 CodeActionKind::QuickFix,
@@ -88,6 +92,14 @@ mod tests {
 
         assert!(capabilities.inlay_hint_provider.is_some());
         assert!(capabilities.hover_provider.is_some());
+        let signature_help = capabilities
+            .signature_help_provider
+            .as_ref()
+            .expect("signature help should advertise its triggers");
+        assert_eq!(
+            signature_help.trigger_characters.as_deref(),
+            Some(&["(".to_string(), ",".to_string()][..])
+        );
         assert!(capabilities.implementation_provider.is_some());
         assert!(capabilities.references_provider.is_some());
         assert!(capabilities.document_formatting_provider.is_some());

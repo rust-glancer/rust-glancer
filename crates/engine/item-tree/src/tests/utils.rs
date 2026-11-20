@@ -472,7 +472,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 
     fn render_param(param: &crate::ParamItem) -> String {
         match (param.kind, &param.ty) {
-            (ParamKind::SelfParam(_), _) => param.pat.clone(),
+            (ParamKind::SelfParam(_) | ParamKind::Variadic, _) => param.pat.clone(),
             (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
             (ParamKind::Normal, None) => param.pat.clone(),
         }
