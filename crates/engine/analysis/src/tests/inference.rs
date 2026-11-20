@@ -62,6 +62,64 @@ impl Pair {
 }
 
 #[test]
+fn infers_generic_arguments_through_reference_coercions() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:argument_coercions
+use std::{string::String, vec::Vec};
+
+pub struct Item;
+fn first<T>(_: &[T]) -> Option<&T> { None }
+fn first_mut<T>(_: &mut [T]) -> Option<&mut T> { None }
+fn first_in_array_mut<T>(_: &mut [T; 1]) -> Option<&mut T> { None }
+fn identity<T>(value: T) -> T { value }
+
+pub fn use_it(items: Vec<Item>, mut array: [Item; 1], text: String, check_text: fn(&str)) {
+    let items_ref = &items;
+    let from_vec = first(items_ref)$0; // ty("vector deref").in_lib("argument_coercions")
+    items_ref$0; // ty("original vector reference").in_lib("argument_coercions")
+    let from_array = first(&[Item])$0; // ty("array unsizing").in_lib("argument_coercions")
+    let from_mut_array = first_mut(&mut array)$0; // ty("mutable array unsizing").in_lib("argument_coercions")
+    let from_reborrow = first_in_array_mut(&mut &mut array)$0; // ty("mutable reference deref").in_lib("argument_coercions")
+    let from_generic_value = first(&identity(items))$0; // ty("deref after a generic call").in_lib("argument_coercions")
+    let text_ref = &text;
+    check_text(text_ref$0); // ty("string deref through function pointer").in_lib("argument_coercions")
+    first::<&str>(&{ [(&text)$0] }); // ty("slice expectation reaches array elements").in_lib("argument_coercions")
+}
+
+pub fn from_projection(items: Result<Vec<Item>, ()>) -> Result<(), ()> {
+    let projected = first(&items?)$0; // ty("deref after projection").in_lib("argument_coercions")
+    Ok(())
+}
+
+struct Wrapper<T>(T);
+impl std::ops::Deref for Wrapper<u16> { type Target = [u16]; }
+impl std::ops::Deref for Wrapper<u32> { type Target = [u32]; }
+fn make<T>() -> Wrapper<T> { loop {} }
+fn specify(_: Wrapper<u16>) {}
+
+pub fn from_later_evidence() {
+    let wrapped = make();
+    let item = first(&wrapped)$0; // ty("deref after later type evidence").in_lib("argument_coercions")
+    specify(wrapped);
+}
+"#,
+        expect![[r#"
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // vector deref
+            &nominal struct alloc[lib]::crate::vec::Vec<nominal struct argument_coercions[lib]::crate::Item, nominal struct alloc[lib]::crate::vec::Global> // original vector reference
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // array unsizing
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct argument_coercions[lib]::crate::Item> // mutable array unsizing
+            nominal enum core[lib]::crate::option::Option<&mut nominal struct argument_coercions[lib]::crate::Item> // mutable reference deref
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // deref after a generic call
+            &str // string deref through function pointer
+            &str // slice expectation reaches array elements
+            nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // deref after projection
+            nominal enum core[lib]::crate::option::Option<&u16> // deref after later type evidence
+        "#]],
+    );
+}
+
+#[test]
 fn infers_calls_through_saved_tuple_constructors() {
     check_analysis_with_fake_sysroot(
         r#"

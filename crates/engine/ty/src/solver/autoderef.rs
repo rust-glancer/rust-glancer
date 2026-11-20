@@ -80,6 +80,58 @@ impl<'s> InferenceTable<'s> {
         }
     }
 
+    /// Relate reference pointees after an exact match has failed. For example, `&Vec<Item>`
+    /// can satisfy `&[?T]` through Deref, which also learns `?T = Item`.
+    pub fn try_coerce_reference(&self, source: Ty<'s>, target: Ty<'s>) -> bool {
+        let (Some((source, source_mutability)), Some((target, target_mutability))) = (
+            self.resolve_root_var(source).reference_inner(),
+            self.resolve_root_var(target).reference_inner(),
+        ) else {
+            return false;
+        };
+        if source_mutability == Mutability::Shared && target_mutability == Mutability::Mutable {
+            return false;
+        }
+
+        let source = self.resolve_root_var(source);
+        let target = self.resolve_root_var(target);
+        if let (TyShape::Array { inner, .. }, TyShape::Slice(element)) =
+            (source.shape(), target.shape())
+        {
+            // Unsizing the original array reference relates the elements without using its length.
+            return self.try_unify(inner, element).is_ok();
+        }
+        // TODO: Mutable trait deref coercions need DerefMut selection.
+        if target_mutability == Mutability::Mutable {
+            let mut pointee = source;
+            for _ in 1..MAX_AUTODEREF_TYPES {
+                let Some((inner, Mutability::Mutable)) = pointee.reference_inner() else {
+                    break;
+                };
+                pointee = self.resolve_root_var(inner);
+                if self.try_unify(pointee, target).is_ok() {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if source_mutability == Mutability::Mutable && self.try_unify(source, target).is_ok() {
+            return true;
+        }
+
+        // Deref can register projections and refine variables. Keep that work only when a
+        // dereferenced pointee matches.
+        self.commit_if_some(|table| -> Result<_, std::convert::Infallible> {
+            let matched = table
+                .autoderef(source)
+                .skip(1)
+                .any(|pointee| table.try_unify(pointee, target).is_ok());
+            Ok(matched.then_some(()))
+        })
+        .expect("reference coercion is infallible")
+        .is_some()
+    }
+
     /// Try each autoderef type as a method receiver. If the chain ends at `[T; N]`, also try
     /// `[T]`; this unsizing step is available even when the array reached the autoderef limit.
     pub fn method_receivers(&self, ty: Ty<'s>) -> impl Iterator<Item = Ty<'s>> {
