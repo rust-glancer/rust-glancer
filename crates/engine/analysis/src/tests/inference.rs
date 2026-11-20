@@ -66,13 +66,14 @@ fn infers_generic_arguments_through_reference_coercions() {
     check_analysis_with_fake_sysroot(
         r#"
 //- /src/lib.rs crate:argument_coercions
-use std::{string::String, vec::Vec};
+use std::{boxed::Box, string::String, vec::Vec};
 
 pub struct Item;
 fn first<T>(_: &[T]) -> Option<&T> { None }
 fn first_mut<T>(_: &mut [T]) -> Option<&mut T> { None }
 fn first_in_array_mut<T>(_: &mut [T; 1]) -> Option<&mut T> { None }
 fn identity<T>(value: T) -> T { value }
+fn take_u16(_: &u16) {}
 
 pub fn use_it(items: Vec<Item>, mut array: [Item; 1], text: String, check_text: fn(&str)) {
     let items_ref = &items;
@@ -85,6 +86,11 @@ pub fn use_it(items: Vec<Item>, mut array: [Item; 1], text: String, check_text: 
     let text_ref = &text;
     check_text(text_ref$0); // ty("string deref through function pointer").in_lib("argument_coercions")
     first::<&str>(&{ [(&text)$0] }); // ty("slice expectation reaches array elements").in_lib("argument_coercions")
+}
+
+pub fn from_box() {
+    let boxed = Box::new(Default::default())$0; // ty("pointee inferred through a shared Box borrow").in_lib("argument_coercions")
+    take_u16(&boxed);
 }
 
 pub fn from_projection(items: Result<Vec<Item>, ()>) -> Result<(), ()> {
@@ -113,6 +119,7 @@ pub fn from_later_evidence() {
             nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // deref after a generic call
             &str // string deref through function pointer
             &str // slice expectation reaches array elements
+            nominal struct alloc[lib]::crate::boxed::Box<u16> // pointee inferred through a shared Box borrow
             nominal enum core[lib]::crate::option::Option<&nominal struct argument_coercions[lib]::crate::Item> // deref after projection
             nominal enum core[lib]::crate::option::Option<&u16> // deref after later type evidence
         "#]],
