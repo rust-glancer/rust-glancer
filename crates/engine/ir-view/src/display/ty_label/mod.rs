@@ -29,8 +29,8 @@ use rg_ir_model::{CrateRef, GenericParamRef, Mutability, TraitDefRef, TypeAliasR
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
-    AdtTy, AliasTy, ClosureTy, GenericArg, Lifetime, OpaqueTy, TraitApplication, TraitRefLowering,
-    Ty, signature::SemanticSignatureQuery,
+    AdtTy, AliasTy, ClosureTy, ConstructorRef, FnDefRef, GenericArg, Lifetime, OpaqueTy,
+    TraitApplication, TraitRefLowering, Ty, signature::SemanticSignatureQuery,
 };
 
 pub use self::output::TypePresentation;
@@ -257,10 +257,21 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 output.push('>');
                 Ok(true)
             }
-            Ty::FnDef(function) => {
-                if let Some(path) =
-                    PathView::new(self.db, self.syntax.edition()).function_path(function.def)?
-                {
+            Ty::FnDef(item) => {
+                let paths = PathView::new(self.db, self.syntax.edition());
+                let path = match item.def {
+                    FnDefRef::Function(function) => paths.function_path(function)?,
+                    FnDefRef::Constructor(ConstructorRef::Struct(def)) => {
+                        paths.type_def_path(def)?
+                    }
+                    FnDefRef::Constructor(ConstructorRef::Variant(variant)) => {
+                        match ItemStoreQuery::new(self.db).enum_variant_data(variant)? {
+                            Some(data) => paths.enum_variant_path(data)?,
+                            None => None,
+                        }
+                    }
+                };
+                if let Some(path) = path {
                     output.write(format_args!("{{fn {path}}}"));
                     Ok(true)
                 } else {

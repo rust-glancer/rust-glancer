@@ -7,12 +7,11 @@ use rg_arena::Arena;
 use rg_ir_model::{BindingId, BodyRef, EvaluatedConstValue, ExprBinaryOp, ExprId, ExprUnaryOp};
 use rg_ty::{
     AsyncCoroutineTyId, ClosureTyId, PrimitiveTy,
-    solver::{InferVarKind, InferenceTable, Ty, TyShape},
+    solver::{FnDefTy, InferVarKind, InferenceTable, Ty, TyShape},
 };
 
-use super::call::SelectedCall;
 use crate::{
-    BodyFacts, ExprFacts,
+    BodyFacts, CallFacts, ExprFacts,
     body::{ClosureKind, facts::BodyResolution},
 };
 
@@ -29,7 +28,8 @@ struct LiveExprFacts<'s> {
 /// The arenas keep those links alongside declaration resolutions; `finish` writes owned facts.
 pub(crate) struct InferenceState<'s> {
     pub(super) table: InferenceTable<'s>,
-    selected_calls: Vec<Option<SelectedCall<'s>>>,
+    // Keep each selected item's live arguments until later evidence has settled them.
+    selected_calls: Vec<Option<FnDefTy<'s>>>,
     exprs: Arena<ExprId, LiveExprFacts<'s>>,
     binding_tys: Arena<BindingId, Ty<'s>>,
 }
@@ -39,7 +39,7 @@ impl<'s> InferenceState<'s> {
         let unknown = table.interner().unknown();
         Self {
             table,
-            selected_calls: (0..expr_count).map(|_| None).collect(),
+            selected_calls: vec![None; expr_count],
             exprs: Arena::from_vec(vec![
                 LiveExprFacts {
                     resolution: BodyResolution::Unknown,
@@ -60,17 +60,11 @@ impl<'s> InferenceState<'s> {
     }
 
     pub(crate) fn selected_call_function(&self, call: ExprId) -> Option<rg_ir_model::FunctionRef> {
-        self.selected_calls[call.0]
-            .as_ref()
-            .map(SelectedCall::function)
+        self.selected_calls[call.0].and_then(|item| item.def.function())
     }
 
-    pub(super) fn set_selected_call(&mut self, call: ExprId, selected: SelectedCall<'s>) {
+    pub(super) fn set_selected_call(&mut self, call: ExprId, selected: FnDefTy<'s>) {
         self.selected_calls[call.0] = Some(selected);
-    }
-
-    pub(super) fn call_result_is_pending(&self, call: ExprId, ty: &Ty<'s>) -> bool {
-        self.selected_calls[call.0].is_none() && self.root_resolved_expr_ty(call) == *ty
     }
 
     pub(crate) fn expr_ty(&self, expr: ExprId) -> Ty<'s> {
@@ -226,7 +220,13 @@ impl<'s> InferenceState<'s> {
         let calls = selected_calls
             .into_iter()
             .enumerate()
-            .filter_map(|(index, selected)| selected.map(|s| (ExprId(index), s.finalize(&table))))
+            .filter_map(|(index, selected)| {
+                let item = selected?;
+                Some((
+                    ExprId(index),
+                    CallFacts::new(item.def.function()?, table.finalize_args(item.args)),
+                ))
+            })
             .collect();
         BodyFacts::new(binding_tys, exprs, calls, initializer)
     }

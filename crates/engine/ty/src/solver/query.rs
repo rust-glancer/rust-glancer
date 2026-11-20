@@ -13,13 +13,15 @@ use rg_item_tree::FunctionQualifiers;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rustc_type_ir::{
     self as ir, Interner as _, TypeVisitableExt as _, Upcast, inherent::IntoKind as _,
+    lang_items::SolverTraitLangItem,
 };
 
 use super::{
-    AliasTy, Clause, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, Outcome,
-    ProjectionTy, SolverInterner, Ty, TyShape,
+    AliasTy, Clause, DefId, FnDefTy, GenericArgs, InferVarKind, InferenceSubstitution,
+    InferenceTable, List, Outcome, ProjectionTy, SolverInterner, Ty, TyShape,
+    declarations::LangItem,
 };
-use crate::{Ty as StoredTy, signature};
+use crate::{FnDefRef, Ty as StoredTy, signature};
 
 /// A trait together with its live arguments. `args[0]` is `Self`: for `Vec<?T>: IntoIterator`,
 /// it holds `Vec<?T>`. Associated-type equalities such as `Item = u8` are separate clauses.
@@ -77,6 +79,35 @@ impl<'s> CallableSignature<'s> {
                 .map(|ty| Box::new(cx.raise_ty(ty).unwrap_or(StoredTy::Unknown))),
             qualifiers: self.qualifiers,
         }
+    }
+}
+
+impl<'s> FnDefTy<'s> {
+    /// Use the arguments fixed when this function item was formed. A later `f(...)` can
+    /// refine those variables, and another use of the same binding sees that refinement.
+    pub fn signature(self, cx: SolverInterner<'s>) -> Option<CallableSignature<'s>> {
+        let signature = cx.callable_signature(self.def)?;
+        let params = cx.params(self.def.into());
+        if params.is_empty() {
+            return Some(signature);
+        }
+        let subst = InferenceSubstitution::from_args(params.iter().copied(), self.args);
+        Some(CallableSignature {
+            params: subst.apply(cx, signature.params),
+            call_return: subst.apply(cx, signature.call_return),
+            async_output: signature.async_output.map(|ty| subst.apply(cx, ty)),
+            qualifiers: signature.qualifiers,
+        })
+    }
+
+    /// Reify a tuple constructor at a coercion site, keeping its live generic arguments.
+    pub fn constructor_pointer(self, cx: SolverInterner<'s>) -> Option<Ty<'s>> {
+        // TODO: Preserve safety and ABI in pointer types before reifying named functions.
+        if !matches!(self.def, FnDefRef::Constructor(_)) {
+            return None;
+        }
+        let signature = self.signature(cx)?;
+        Some(cx.fn_pointer(&signature.params, signature.call_return))
     }
 }
 
@@ -185,6 +216,69 @@ pub struct ImplSelection<'s> {
 }
 
 impl<'s> InferenceTable<'s> {
+    /// Recover a callable bound's arguments and project its output. For `F: Fn(u8) -> R`,
+    /// proving `F: FnOnce<(?Arg,)>` learns `?Arg = u8` before the body visits the argument.
+    pub fn callable_bound_signature(
+        &self,
+        callee: Ty<'s>,
+        arguments: impl Iterator<Item = Ty<'s>> + Clone,
+    ) -> Option<(List<'s, Ty<'s>>, Ty<'s>)> {
+        let cx = self.interner();
+        let DefId::Trait(def) = cx.lang_item(LangItem::Trait(SolverTraitLangItem::FnOnce))? else {
+            return None;
+        };
+        let DefId::TypeAlias(associated_ty) = cx.lang_item(LangItem::FnOnceOutput)? else {
+            return None;
+        };
+        let probe = |use_arguments| {
+            self.commit_if_some(|table| -> Result<_, std::convert::Infallible> {
+                if cx.metadata(DefId::TypeAlias(associated_ty)).parent != Some(DefId::Trait(def)) {
+                    return Ok(None);
+                }
+                let params = arguments
+                    .clone()
+                    .map(|arg| {
+                        if use_arguments && !arg.is_never() {
+                            table.instantiate_unknowns(arg)
+                        } else {
+                            table.new_type_var()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let args = List::new(cx, &[callee.into(), cx.tuple(&params).into()]);
+                if table.prove([TraitApplication { def, args }.clause(cx)]) != Outcome::Proven {
+                    return Ok(None);
+                }
+                let output = cx.projection(ProjectionTy {
+                    associated_ty,
+                    args,
+                });
+                Ok(Some((List::new(cx, &params), output)))
+            })
+            .expect("callable bound probe is infallible")
+        };
+
+        // Prefer the signature from the bound itself so its parameters can guide coercions.
+        // When `F` has both `Fn(u8)` and `Fn(u16)`, a typed argument can break the tie.
+        probe(false).or_else(|| {
+            let has_argument_evidence = arguments.clone().any(|arg| {
+                !matches!(
+                    arg.shape(),
+                    TyShape::Unknown
+                        | TyShape::Never
+                        | TyShape::InferVar {
+                            kind: InferVarKind::Type
+                        }
+                )
+            });
+            if has_argument_evidence {
+                probe(true)
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn has_trait_assumption(&self, trait_ref: TraitDefRef) -> bool {
         self.environment().clauses.iter().any(|clause| {
             matches!(
@@ -286,31 +380,31 @@ impl<'s> InferenceTable<'s> {
         }
     }
 
-    /// Instantiate the signature and register the function's requirements for this call.
+    /// Form a function item and register its requirements with the same substitution.
     ///
     /// For `fn copy<T: Clone>(value: T) -> T` with `T = ?T`, the parameter, return type, and queued
     /// `?T: Clone` goal all share that variable. Learning the argument type then gives the bound
     /// the same evidence without rebuilding the signature.
-    pub fn instantiate_function(
+    pub fn instantiate_function_item(
         &self,
         function: FunctionRef,
         subst: &InferenceSubstitution<'s>,
-    ) -> Option<CallableSignature<'s>> {
+    ) -> Option<FnDefTy<'s>> {
         let cx = self.interner();
         let callbacks = cx.track_callbacks();
-        let signature = cx.function_signature(function)?;
-        let clauses = subst.apply(cx, cx.predicates(DefId::Function(function)));
+        cx.callable_signature(function)?;
+        let owner = DefId::Function(function);
+        let args = subst.args_for(cx, cx.params(owner).iter().copied());
+        let clauses = subst.apply(cx, cx.predicates(owner));
         if callbacks.failure().is_some() {
             return None;
         }
         for clause in clauses {
             self.register(clause);
         }
-        Some(CallableSignature {
-            params: subst.apply(cx, signature.params),
-            call_return: subst.apply(cx, signature.call_return),
-            async_output: signature.async_output.map(|ty| subst.apply(cx, ty)),
-            qualifiers: signature.qualifiers,
+        Some(FnDefTy {
+            def: function.into(),
+            args,
         })
     }
 

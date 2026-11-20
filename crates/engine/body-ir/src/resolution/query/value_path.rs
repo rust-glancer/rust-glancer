@@ -17,13 +17,20 @@ use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
     lowering::TypeLoweringQuery,
-    solver::{self, AdtTy, InferenceTable, List, SolverInterner, Ty},
+    solver::{self, AdtTy, InferenceTable, List, SolverInterner, Ty, TyShape},
 };
 
+use super::LiveCallTarget;
 use crate::{
     BodyAssociatedPathPrefix, BodyPath, body::facts::BodyResolution,
     resolution::BodyResolutionContext,
 };
+
+pub(crate) struct LiveValuePath<'s> {
+    pub resolution: BodyResolution,
+    pub ty: Ty<'s>,
+    pub function: Option<LiveCallTarget<'s>>,
+}
 
 /// Resolves paths used by expressions without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {
@@ -80,30 +87,25 @@ where
         expr: ExprId,
         path: &BodyPath,
         table: &InferenceTable<'s>,
-    ) -> Result<(BodyResolution, Ty<'s>), ReadError> {
-        let cx = table.interner();
+    ) -> Result<LiveValuePath<'s>, ReadError> {
         let expr_data = self.context.body().expr_unchecked(expr);
+        let cx = table.interner();
         // Preserve associated-item syntax such as `<T as Trait>::VALUE` before trying ordinary
         // lexical lookup, which only understands a DefMap path and its visible local bindings.
-        // This is declaration discovery: its independent result has no body inference variables.
-        // Calls subsequently instantiate the selected declaration in the caller's live table.
-        if let Some(result) = self
-            .context
-            .associated_items()
-            .resolve_body_path(expr_data.scope, path)?
+        if let Some(result) =
+            self.context
+                .associated_items()
+                .resolve_body_path(expr_data.scope, path, table)?
         {
-            let (resolution, ty) = result;
-            return Ok((
-                resolution,
-                cx.lower_ty(
-                    &ty,
-                    cx.params(self.context.body().owner().generic_def().into()),
-                ),
-            ));
+            return Ok(result);
         }
 
         let Some(def_map_path) = path.as_def_map_path() else {
-            return Ok((BodyResolution::Unknown, cx.unknown()));
+            return Ok(LiveValuePath {
+                resolution: BodyResolution::Unknown,
+                ty: cx.unknown(),
+                function: None,
+            });
         };
         let scope = expr_data.scope;
         if def_map_path.is_self_type()
@@ -118,10 +120,11 @@ where
                     .type_def_has_value_constructor(adt.def)?
             {
                 let declaration = DeclarationRef::from(adt.def);
-                return Ok((
-                    BodyResolution::Declarations([declaration].into_iter().collect()),
+                return Ok(LiveValuePath {
+                    resolution: BodyResolution::Declarations([declaration].into_iter().collect()),
                     ty,
-                ));
+                    function: None,
+                });
             }
         }
 
@@ -133,7 +136,18 @@ where
         {
             ty = cx.adt(self.nominal_expr_ty(scope, path, *def, table)?);
         }
-        Ok((resolution, ty))
+        let function = if matches!(ty.shape(), TyShape::FnDef(_) | TyShape::Unknown) {
+            LiveCallTarget::unique_usable(
+                self.context.live().declared_function_targets(&resolution)?,
+            )
+        } else {
+            None
+        };
+        Ok(LiveValuePath {
+            resolution,
+            ty,
+            function,
+        })
     }
 
     /// Record constructors use type names, independently of ordinary local value bindings.

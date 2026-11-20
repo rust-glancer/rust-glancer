@@ -34,12 +34,13 @@ impl Client {
     fn send(&self, payload: u8, retry: bool) {}
     fn ping(&self) {}
 }
-fn demo(client: Client) {
+fn demo(client: Client, make_client: fn() -> Client) {
     send((1, $tuple$2), $after_tuple$true);
     send(𐐀("", $inner$"")$after_inner$, $outer$true);
     send(#[cfg(any())] (), $cfg$42, true);
     send(, $missing_argument$true);
     Client::send($explicit_self$&client, 1, false);
+    make_client().send(1, $inferred_receiver$false);
     client.ping($no_arguments$);
     unsafe { print(2, 42, $variadic$43); }
 }
@@ -63,6 +64,7 @@ fn unfinished_method(client: Client) {
         ("cfg", free, 0, "payload: T"),
         ("missing_argument", free, 1, "retry: bool"),
         ("explicit_self", method, 0, "&self"),
+        ("inferred_receiver", method, 1, "retry: bool"),
         ("after_comma", method, 1, "retry: bool"),
         ("variadic", "fn print(count: u8, ...)", 1, "..."),
     ] {

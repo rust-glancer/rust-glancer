@@ -228,7 +228,7 @@ where
                 Some(cx.reference(mutability, self_ty))
             }
             ParamKind::SelfParam(SelfParamKind::Explicit) => {
-                let signature = cx.function_signature(function)?;
+                let signature = cx.callable_signature(function)?;
                 Some(subst.apply(cx, *signature.params.first()?))
             }
             ParamKind::Normal | ParamKind::Variadic => None,

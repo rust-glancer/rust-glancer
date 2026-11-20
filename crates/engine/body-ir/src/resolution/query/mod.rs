@@ -23,7 +23,7 @@ pub(crate) use self::{
     body_items::BodyLocalItemQuery,
     generics::BodyGenericsQuery,
     impls::{BodyImplQuery, BodyReceiverImplMatches},
-    live::LiveBodyQuery,
+    live::{LiveBodyQuery, LiveCallTarget},
     traits::BodyTraitQuery,
     type_context::BodyTypeContextQuery,
     type_ref::TypeRefResolutionQuery,

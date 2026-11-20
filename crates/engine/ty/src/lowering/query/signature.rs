@@ -8,20 +8,21 @@ use rg_ir_model::{
     ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
     ItemOwner, StaticRef, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
-use rg_item_tree::{ParamKind, SelfParamKind, TypeRef};
+use rg_item_tree::{FieldList, ParamKind, SelfParamKind, TypeRef};
 use rg_semantic_ir::{GenericParamSource, SelfTypeOwner, SemanticItemSource, TypePathContext};
 use rg_source::ReadError;
 use rustc_type_ir::{
     ClauseKind,
-    inherent::{IntoKind as _, Term as _},
+    inherent::{GenericArgs as _, IntoKind as _, Term as _},
 };
 
 use super::TypeLoweringQuery;
 use crate::{
+    ConstructorRef,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypePathResolver, session::ImplTraitMode},
     solver::{
-        AssocTypeBinding, CallableSignature, Clause, DefId, ImplHeader, List, OpaqueTy,
-        SolverInterner, TraitApplication, TraitRefLowering, Ty,
+        AdtTy, AssocTypeBinding, CallableSignature, Clause, DefId, GenericArgs, ImplHeader, List,
+        OpaqueTy, SolverInterner, TraitApplication, TraitRefLowering, Ty,
     },
 };
 
@@ -109,6 +110,59 @@ where
             call_return,
             async_output,
             qualifiers,
+        }))
+    }
+
+    /// `Wrapper<T>` as a value takes the tuple fields and returns `Wrapper<T>`. Use the
+    /// nominal owner's generic parameters in both places so one substitution applies to both.
+    pub(crate) fn constructor<'s>(
+        &self,
+        cx: SolverInterner<'s>,
+        constructor: ConstructorRef,
+    ) -> Result<Option<CallableSignature<'s>>, ReadError> {
+        let items = self.item_paths.items();
+        let (module, fields) = match constructor {
+            ConstructorRef::Struct(def) => {
+                let Some(data) = items
+                    .semantic_item_view(def.into())?
+                    .and_then(|item| item.struct_data())
+                else {
+                    return Ok(None);
+                };
+                (data.owner, &data.fields)
+            }
+            ConstructorRef::Variant(variant) => {
+                let Some(data) = items.enum_variant_data(variant)? else {
+                    return Ok(None);
+                };
+                (data.owner_module, &data.variant.fields)
+            }
+        };
+        let FieldList::Tuple(fields) = fields else {
+            return Ok(None);
+        };
+
+        let def = constructor.owner();
+        let mut session = self.session(
+            cx,
+            TypeLoweringEnv::new(
+                def.into(),
+                TypeLoweringAnchor::Context(TypePathContext::module(module)),
+            ),
+        )?;
+        let params = fields
+            .iter()
+            .map(|field| session.lower_type_ref(&field.ty))
+            .collect::<Result<Vec<_>, _>>()?;
+        let call_return = cx.adt(AdtTy {
+            def,
+            args: GenericArgs::identity_for_item(cx, DefId::Adt(def)),
+        });
+        Ok(Some(CallableSignature {
+            params: List::new(cx, &params),
+            call_return,
+            async_output: None,
+            qualifiers: Default::default(),
         }))
     }
 

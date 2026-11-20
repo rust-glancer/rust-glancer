@@ -925,7 +925,7 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
                         associated_ty: item,
                         args: solver::List::new(cx, &[boolean.into()]),
                     }));
-                    Ok::<_, std::convert::Infallible>(preparing.instantiate_function(
+                    Ok::<_, std::convert::Infallible>(preparing.instantiate_function_item(
                         missing_function,
                         &solver::InferenceSubstitution::new(),
                     ))

@@ -76,8 +76,8 @@ impl ManagedServer {
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
 
-        // The pin determines the GitHub tag, asset name, and cache directory together. We never
-        // ask GitHub for "latest", so one extension build always resolves to the same server.
+        // The pin selects both the GitHub tag and the cache directory, so one extension build
+        // always resolves to the same server.
         let release_tag = format!("v{MANAGED_SERVER_VERSION}");
         let release =
             zed::github_release_by_tag_name(GITHUB_REPOSITORY, &release_tag).map_err(|error| {
@@ -86,8 +86,20 @@ impl ManagedServer {
         let asset_name = platform.asset_name();
         let asset = release
             .assets
-            .into_iter()
+            .iter()
             .find(|asset| asset.name == asset_name)
+            .or_else(|| {
+                // TODO: Remove once v0.5.0 is released
+                // A source build may still pin a release published before the filename change.
+                let legacy_asset_name = format!(
+                    "rust-glancer-{MANAGED_SERVER_VERSION}-{}.tar.gz",
+                    platform.target
+                );
+                release
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name == legacy_asset_name)
+            })
             .ok_or_else(|| {
                 format!("Rust Glancer release {release_tag} does not contain asset {asset_name}")
             })?;
@@ -97,7 +109,7 @@ impl ManagedServer {
             &zed::LanguageServerInstallationStatus::Downloading,
         );
 
-        platform.install(&asset.download_url, &asset_name)
+        platform.install(&asset.download_url, &asset.name)
     }
 }
 
@@ -143,10 +155,7 @@ impl ServerPlatform {
     }
 
     fn asset_name(self) -> String {
-        format!(
-            "rust-glancer-{MANAGED_SERVER_VERSION}-{}.tar.gz",
-            self.target
-        )
+        format!("rust-glancer-{}.tar.gz", self.target)
     }
 
     fn version_dir(self) -> PathBuf {
@@ -298,7 +307,7 @@ mod tests {
             assert_eq!(platform.target, expected_target);
             assert_eq!(
                 platform.asset_name(),
-                format!("rust-glancer-{MANAGED_SERVER_VERSION}-{expected_target}.tar.gz")
+                format!("rust-glancer-{expected_target}.tar.gz")
             );
             assert_eq!(
                 platform.binary_path(),

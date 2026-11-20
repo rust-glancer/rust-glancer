@@ -42,7 +42,7 @@ pub use self::{
     substitution::Substitution,
     ty::{
         AdtTy, AliasTy, AsyncCoroutineTy, AsyncCoroutineTyId, ClosureTy, ClosureTyId,
-        DynAssocTypeBinding, DynTy, ExpectedAdtTyExt, ExpectedTyExt, FnDefTy, OpaqueTy,
-        ProjectionTy, Ty,
+        ConstructorRef, DynAssocTypeBinding, DynTy, ExpectedAdtTyExt, ExpectedTyExt, FnDefRef,
+        FnDefTy, OpaqueTy, ProjectionTy, Ty,
     },
 };

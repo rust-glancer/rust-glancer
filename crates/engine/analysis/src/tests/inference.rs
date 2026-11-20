@@ -12,6 +12,178 @@ use super::utils::{
 };
 
 #[test]
+fn infers_calls_through_callable_values() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:callable_values
+fn identity<T>(value: T) -> T { value }
+
+pub fn demo<F: Fn() -> u32>(pointer: fn(u16) -> bool, generic: F) {
+    let closure = |arg| arg;
+    let from_closure = closure(1u8)$0; // ty("local closure").in_lib("callable_values")
+    let from_pointer = pointer(2$0)$1; // ty("pointer argument").in_lib("callable_values"), ty("pointer result").in_lib("callable_values")
+    let from_bound = generic()$0; // ty("Fn bound result").in_lib("callable_values")
+    let item = identity::<u64>;
+    let from_item = item(3$0)$1; // ty("function item argument").in_lib("callable_values"), ty("function item result").in_lib("callable_values")
+}
+
+pub fn call_mut<F: FnMut(u128) -> char>(mut generic: F) {
+    let from_bound = generic(4$0)$1; // ty("FnMut bound argument").in_lib("callable_values"), ty("FnMut bound result").in_lib("callable_values")
+}
+
+pub fn call_overloaded<F: Fn(u8) -> u32 + Fn(u16) -> u64>(generic: F) {
+    let first = generic(1u8)$0; // ty("first callable bound").in_lib("callable_values")
+    let second = generic(1u16)$0; // ty("second callable bound").in_lib("callable_values")
+}
+
+pub struct Pair(u8);
+
+impl Pair {
+    pub fn new() -> Self {
+        let result = Self(1u8)$0; // ty("Self constructor").in_lib("callable_values")
+        result
+    }
+}
+"#,
+        expect![[r#"
+            u8 // local closure
+            u16 // pointer argument
+            bool // pointer result
+            u32 // Fn bound result
+            u64 // function item argument
+            u64 // function item result
+            u128 // FnMut bound argument
+            char // FnMut bound result
+            u32 // first callable bound
+            u64 // second callable bound
+            nominal struct callable_values[lib]::crate::Pair // Self constructor
+        "#]],
+    );
+}
+
+#[test]
+fn infers_calls_through_saved_tuple_constructors() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:saved_constructors
+struct Pair(u8);
+struct Wrapper<T>(T);
+enum Event<T> { Received(T) }
+
+struct Callable(fn() -> u16);
+
+impl core::ops::Deref for Callable {
+    type Target = fn() -> u16;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+pub fn demo(pointer: fn() -> u16) {
+    let make_pair = Pair;
+    let pair = make_pair(1$0)$1; // ty("saved constructor argument").in_lib("saved_constructors"), ty("saved constructor result").in_lib("saved_constructors")
+    let payload = pair.0$0; // ty("field on constructed struct").in_lib("saved_constructors")
+    let wrap = Wrapper;
+    let wrapped = wrap(false)$0; // ty("saved generic constructor").in_lib("saved_constructors")
+    let receive = Event::Received;
+    let event = receive(2u32)$0; // ty("saved variant constructor").in_lib("saved_constructors")
+    let callable = Callable(pointer);
+    let value = callable()$0; // ty("callable struct result").in_lib("saved_constructors")
+}
+"#,
+        expect![[r#"
+            u8 // saved constructor argument
+            nominal struct saved_constructors[lib]::crate::Pair // saved constructor result
+            u8 // field on constructed struct
+            nominal struct saved_constructors[lib]::crate::Wrapper<bool> // saved generic constructor
+            nominal enum saved_constructors[lib]::crate::Event<u32> // saved variant constructor
+            u16 // callable struct result
+        "#]],
+    );
+}
+
+#[test]
+fn preserves_constructor_identity_until_pointer_coercion() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:constructor_identity
+struct Wrapper<T>(T);
+enum Event { Started(u8), Stopped(u8) }
+fn identity<T>(value: T) -> T { value }
+
+pub fn demo(flag: bool, values: &[u8]) {
+    let start = Event::Started$0; // ty("first constructor").in_lib("constructor_identity")
+    let stop = Event::Stopped$0; // ty("second constructor").in_lib("constructor_identity")
+    let same = if flag { start } else { start }$0; // ty("same item in both branches").in_lib("constructor_identity")
+    let chosen = identity(if flag { start } else { stop })$0; // ty("branch join through generic call").in_lib("constructor_identity")
+    let both = [start, stop]$0; // ty("array element join").in_lib("constructor_identity")
+    let cast_item = Wrapper;
+    let cast = (cast_item as fn(u16) -> Wrapper<u16>)$0; // ty("explicit pointer cast").in_lib("constructor_identity")
+    let cast_value = cast_item(1)$0; // ty("cast constrains item generic").in_lib("constructor_identity")
+    let make = Wrapper;
+    let pointer: fn(u32) -> Wrapper<u32> = make$0; // ty("explicit pointer expectation").in_lib("constructor_identity")
+    let wrapped = make(1$0)$1; // ty("coercion constrains item generic").in_lib("constructor_identity"), ty("item remains callable").in_lib("constructor_identity")
+    let mapped = values.iter().map(Wrapper).collect::<Vec<_>>()$0; // ty("constructor signature in adapter").in_lib("constructor_identity")
+}
+"#,
+        expect![[r#"
+            function item enum constructor_identity[lib]::crate::Event::Started // first constructor
+            function item enum constructor_identity[lib]::crate::Event::Stopped // second constructor
+            function item enum constructor_identity[lib]::crate::Event::Started // same item in both branches
+            fn(u8) -> nominal enum constructor_identity[lib]::crate::Event // branch join through generic call
+            [fn(u8) -> nominal enum constructor_identity[lib]::crate::Event; 2] // array element join
+            fn(u16) -> nominal struct constructor_identity[lib]::crate::Wrapper<u16> // explicit pointer cast
+            nominal struct constructor_identity[lib]::crate::Wrapper<u16> // cast constrains item generic
+            fn(u32) -> nominal struct constructor_identity[lib]::crate::Wrapper<u32> // explicit pointer expectation
+            u32 // coercion constrains item generic
+            nominal struct constructor_identity[lib]::crate::Wrapper<u32> // item remains callable
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct constructor_identity[lib]::crate::Wrapper<&u8>, nominal struct alloc[lib]::crate::vec::Global> // constructor signature in adapter
+        "#]],
+    );
+}
+
+#[test]
+fn coerces_constructor_to_projected_function_pointer() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:projected_constructor
+struct Wrapper<T>(T);
+trait Family { type Factory; }
+struct U64Family;
+impl Family for U64Family { type Factory = fn(u64) -> Wrapper<u64>; }
+fn accept<F: Family>(_: F::Factory, _: F) {}
+
+fn demo() {
+    let make = Wrapper;
+    accept(make$0, U64Family); // ty("projected pointer expectation")
+    let wrapped = make(1)$0; // ty("projection constrains item generic")
+}
+"#,
+        expect![[r#"
+            fn(u64) -> nominal struct projected_constructor[lib]::crate::Wrapper<u64> // projected pointer expectation
+            nominal struct projected_constructor[lib]::crate::Wrapper<u64> // projection constrains item generic
+        "#]],
+    );
+}
+
+#[test]
+fn projects_function_items_through_iterator_map() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:callable_adapters
+fn identity<T>(value: T) -> T { value }
+
+pub fn demo(values: &[&str]) {
+    let lengths = values.iter().map(|value| *value).map(str::len).collect::<Vec<_>>()$0; // ty("associated function item").in_lib("callable_adapters")
+    let same = values.iter().map(identity).collect::<Vec<_>>()$0; // ty("generic function item").in_lib("callable_adapters")
+}
+"#,
+        expect![[r#"
+            nominal struct alloc[lib]::crate::vec::Vec<usize, nominal struct alloc[lib]::crate::vec::Global> // associated function item
+            nominal struct alloc[lib]::crate::vec::Vec<&&str, nominal struct alloc[lib]::crate::vec::Global> // generic function item
+        "#]],
+    );
+}
+
+#[test]
 fn infers_future_outputs_from_async_closures_and_diverging_blocks() {
     check_analysis_with_fake_sysroot(
         r#"
