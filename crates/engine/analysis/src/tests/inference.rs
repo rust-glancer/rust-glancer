@@ -2397,6 +2397,49 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn infers_tuple_struct_constructor_generics() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:tuple_constructors
+mod model {
+    pub struct Wrapper<T>(pub T);
+
+    impl<T> Wrapper<T> {
+        fn new() -> Self { Self(super::make()$0) } // ty("Self constructor payload")
+    }
+}
+
+use model::Wrapper as Renamed;
+
+pub struct User;
+impl User {
+    fn code(&self) -> u8 { 0 }
+}
+
+struct Bytes<const N: usize>([u8; N]);
+fn make<T>() -> T { loop {} }
+
+pub fn use_it(user: User) {
+    let wrapped = Renamed(user)$0; // ty("imported constructor result")
+    wrapped.0.code()$0; // ty("method on the wrapped value")
+    let _ = model::Wrapper::<u16>(1$0)$1; // ty("explicit constructor payload"), ty("explicit constructor result")
+    let _: Renamed<u32> = Renamed(make()$0); // ty("expected type reaches the payload")
+    let _ = Bytes([0u8; 3])$0; // ty("inferred const argument")
+}
+"#,
+        expect![[r#"
+            param T // Self constructor payload
+            nominal struct tuple_constructors[lib]::crate::model::Wrapper<nominal struct tuple_constructors[lib]::crate::User> // imported constructor result
+            u8 // method on the wrapped value
+            u16 // explicit constructor payload
+            nominal struct tuple_constructors[lib]::crate::model::Wrapper<u16> // explicit constructor result
+            u32 // expected type reaches the payload
+            nominal struct tuple_constructors[lib]::crate::Bytes<3> // inferred const argument
+        "#]],
+    );
+}
+
+#[test]
 fn infers_enum_variant_payload_generics_bidirectionally() {
     check_analysis(
         r#"
