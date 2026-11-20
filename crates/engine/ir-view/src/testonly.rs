@@ -6,7 +6,7 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
+    AdtTy, AliasTy, ConstructorRef, FnDefRef, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
     signature::SemanticSignatureQuery,
 };
 
@@ -127,11 +127,29 @@ impl TypeRenderer<'_, '_> {
                     self.render_ty(&coroutine.output)
                 )
             }
-            Ty::FnDef(function) => format!(
-                "function item {:?}{}",
-                function.def,
-                self.render_generic_args(&function.args)
-            ),
+            Ty::FnDef(item) => {
+                let def = match item.def {
+                    FnDefRef::Function(function) => format!("{function:?}"),
+                    FnDefRef::Constructor(ConstructorRef::Struct(def)) => {
+                        self.render_type_def_ref(def)
+                    }
+                    FnDefRef::Constructor(ConstructorRef::Variant(variant)) => {
+                        let data = ItemStoreQuery::new(self.db)
+                            .enum_variant_data(variant)
+                            .expect("fixture variant should load")
+                            .expect("fixture variant should exist");
+                        format!(
+                            "{}::{}",
+                            self.render_type_def_ref(data.owner),
+                            data.variant.name
+                        )
+                    }
+                };
+                format!(
+                    "function item {def}{}",
+                    self.render_generic_args(&item.args)
+                )
+            }
             Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::Dyn(object) => {
                 let mut args = object

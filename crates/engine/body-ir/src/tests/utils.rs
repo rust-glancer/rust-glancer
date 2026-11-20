@@ -12,7 +12,7 @@ use rg_item_tree::{FieldItem, SourceLocations as _};
 use rg_parse::SourceReader;
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
+    AdtTy, AliasTy, ConstructorRef, FnDefRef, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
     signature::SemanticSignatureQuery,
 };
 use rg_workspace::{CargoTarget, Package, WorkspaceMetadata};
@@ -1109,11 +1109,20 @@ impl CrateBodyIrSnapshot<'_> {
                     self.render_ty(&coroutine.output)
                 )
             }
-            Ty::FnDef(function) => {
+            Ty::FnDef(item) => {
+                let def = match item.def {
+                    FnDefRef::Function(function) => self.render_function_ref(function),
+                    FnDefRef::Constructor(ConstructorRef::Struct(def)) => {
+                        self.render_type_def_ref(def)
+                    }
+                    FnDefRef::Constructor(ConstructorRef::Variant(variant)) => {
+                        self.render_enum_variant_ref(variant)
+                    }
+                };
                 format!(
                     "function item {}{}",
-                    self.render_function_ref(function.def),
-                    self.render_generic_args(&function.args)
+                    def,
+                    self.render_generic_args(&item.args)
                 )
             }
             Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),

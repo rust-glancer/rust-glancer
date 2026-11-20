@@ -101,6 +101,70 @@ pub fn demo(pointer: fn() -> u16) {
 }
 
 #[test]
+fn preserves_constructor_identity_until_pointer_coercion() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:constructor_identity
+struct Wrapper<T>(T);
+enum Event { Started(u8), Stopped(u8) }
+fn identity<T>(value: T) -> T { value }
+
+pub fn demo(flag: bool, values: &[u8]) {
+    let start = Event::Started$0; // ty("first constructor").in_lib("constructor_identity")
+    let stop = Event::Stopped$0; // ty("second constructor").in_lib("constructor_identity")
+    let same = if flag { start } else { start }$0; // ty("same item in both branches").in_lib("constructor_identity")
+    let chosen = identity(if flag { start } else { stop })$0; // ty("branch join through generic call").in_lib("constructor_identity")
+    let both = [start, stop]$0; // ty("array element join").in_lib("constructor_identity")
+    let cast_item = Wrapper;
+    let cast = (cast_item as fn(u16) -> Wrapper<u16>)$0; // ty("explicit pointer cast").in_lib("constructor_identity")
+    let cast_value = cast_item(1)$0; // ty("cast constrains item generic").in_lib("constructor_identity")
+    let make = Wrapper;
+    let pointer: fn(u32) -> Wrapper<u32> = make$0; // ty("explicit pointer expectation").in_lib("constructor_identity")
+    let wrapped = make(1$0)$1; // ty("coercion constrains item generic").in_lib("constructor_identity"), ty("item remains callable").in_lib("constructor_identity")
+    let mapped = values.iter().map(Wrapper).collect::<Vec<_>>()$0; // ty("constructor signature in adapter").in_lib("constructor_identity")
+}
+"#,
+        expect![[r#"
+            function item enum constructor_identity[lib]::crate::Event::Started // first constructor
+            function item enum constructor_identity[lib]::crate::Event::Stopped // second constructor
+            function item enum constructor_identity[lib]::crate::Event::Started // same item in both branches
+            fn(u8) -> nominal enum constructor_identity[lib]::crate::Event // branch join through generic call
+            [fn(u8) -> nominal enum constructor_identity[lib]::crate::Event; 2] // array element join
+            fn(u16) -> nominal struct constructor_identity[lib]::crate::Wrapper<u16> // explicit pointer cast
+            nominal struct constructor_identity[lib]::crate::Wrapper<u16> // cast constrains item generic
+            fn(u32) -> nominal struct constructor_identity[lib]::crate::Wrapper<u32> // explicit pointer expectation
+            u32 // coercion constrains item generic
+            nominal struct constructor_identity[lib]::crate::Wrapper<u32> // item remains callable
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct constructor_identity[lib]::crate::Wrapper<&u8>, nominal struct alloc[lib]::crate::vec::Global> // constructor signature in adapter
+        "#]],
+    );
+}
+
+#[test]
+fn coerces_constructor_to_projected_function_pointer() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:projected_constructor
+struct Wrapper<T>(T);
+trait Family { type Factory; }
+struct U64Family;
+impl Family for U64Family { type Factory = fn(u64) -> Wrapper<u64>; }
+fn accept<F: Family>(_: F::Factory, _: F) {}
+
+fn demo() {
+    let make = Wrapper;
+    accept(make$0, U64Family); // ty("projected pointer expectation")
+    let wrapped = make(1)$0; // ty("projection constrains item generic")
+}
+"#,
+        expect![[r#"
+            fn(u64) -> nominal struct projected_constructor[lib]::crate::Wrapper<u64> // projected pointer expectation
+            nominal struct projected_constructor[lib]::crate::Wrapper<u64> // projection constrains item generic
+        "#]],
+    );
+}
+
+#[test]
 fn projects_function_items_through_iterator_map() {
     check_analysis_with_fake_sysroot(
         r#"
