@@ -363,7 +363,7 @@ impl MacroExpansionAttempt {
         let Some(args) = call.args.as_ref() else {
             return Ok(Self::skipped(call_id, call));
         };
-        let Some(path) = Path::from_macro_path_text(path_text, call.dollar_crate) else {
+        let Some(path) = Path::from_text(path_text, call.dollar_crate) else {
             return Ok(Self::skipped(call_id, call));
         };
 

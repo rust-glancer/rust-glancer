@@ -235,7 +235,7 @@ impl CompletionSyntaxContext<'_> {
     /// Return `Some(None)` for an unqualified callee and `Some(Some(path))` for a qualified one.
     fn macro_qualifier(call: &ast::MacroCall) -> Option<Option<Path>> {
         let path = call.path()?;
-        let path = Path::from_macro_path_text(&path.syntax().text().to_string(), None)?;
+        let path = Path::from_text(&path.syntax().text().to_string(), None)?;
         if path.single_name() == Some(Self::MARKER) {
             return Some(None);
         }

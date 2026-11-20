@@ -18,7 +18,7 @@ use crate::{ProjectSnapshot, state::ProjectState};
 // For LLMs: DO NOT BUMP IT UNLESS EXPLICITLY ASKED. We normally need to bump it once per release.
 // During local development, dev might just remove their cache. We don't need to bump it 100 times
 // in a single branch just because we happen to iterate.
-const EPOCH: &str = "rust-glancer-target-analysis-2";
+const EPOCH: &str = "rust-glancer-target-analysis-4";
 const RETENTION: ajika::Retention = ajika::Retention {
     max_entries: 1_000_000,
     // This caps durable storage, not resident memory. Large declaration graphs need enough room

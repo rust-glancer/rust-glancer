@@ -20,10 +20,11 @@ use gen_lsp_types::{
 };
 use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
-    DocumentPositionSnapshot, DocumentRevision, DocumentSnapshot, EditorDocumentSnapshot,
-    EditorSnapshot, EngineConfig, EngineResult, EngineService, FoldingClientCapabilities,
-    OpenDocumentSession, OpenDocumentsRevision, QueryError, QueryScope, QueryValue, SaveProposal,
-    SavedProjectChanges, ServiceNotification, SysrootDiscovery, file_uri_to_path, path_to_file_uri,
+    CompletionImport, CompletionImportCandidate, CompletionImportSite, DocumentPositionSnapshot,
+    DocumentRevision, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
+    EngineResult, EngineService, FoldingClientCapabilities, OpenDocumentSession,
+    OpenDocumentsRevision, QueryError, QueryScope, QueryValue, SaveProposal, SavedProjectChanges,
+    ServiceNotification, SysrootDiscovery, file_uri_to_path, path_to_file_uri,
     semantic_tokens_legend,
 };
 use rg_parse::LineIndex;
@@ -42,6 +43,12 @@ use crate::{
     MemoryControl, Service, ServiceNotificationsSink, engine::ProjectConfiguration,
     proto::position, service::ServiceNotificationPublisher,
 };
+
+pub(super) struct SelectedAutoImport {
+    pub(super) item: CompletionItem,
+    import: CompletionImport,
+    site: CompletionImportSite,
+}
 
 pub(super) struct LspEngineFixture {
     fixture: CrateFixture,
@@ -593,6 +600,134 @@ impl LspEngineFixture {
         expect.assert_eq(&render_responses([(title, rendered)]));
     }
 
+    pub(super) async fn check_auto_import(
+        &self,
+        marker: &str,
+        label: &str,
+        expected_edit: &str,
+    ) -> SelectedAutoImport {
+        let markers = QueryMarkers::Saved;
+        let input = self.position_snapshot(
+            self.marker_path(markers, marker),
+            self.marker_position(markers, marker),
+        );
+        let list = self
+            .service
+            .clone()
+            .completion(
+                context::current(),
+                input.clone(),
+                CompletionClientCapabilities {
+                    resolve_additional_text_edits: true,
+                    snippet_support: true,
+                },
+            )
+            .await
+            .expect("completion list")
+            .into_value();
+        assert!(list.is_incomplete);
+        let candidate = list
+            .items
+            .into_iter()
+            .find(|candidate| candidate.item.label == label)
+            .unwrap_or_else(|| panic!("missing auto-import completion {label}"));
+        let site = list.import_site.expect("original completion site");
+        let import = candidate.import.expect("auto-import payload");
+        assert!(candidate.item.additional_text_edits.is_none());
+
+        let edit = self
+            .service
+            .clone()
+            .resolve_completion_import(context::current(), input.clone(), import.clone(), None)
+            .await
+            .expect("resolve completion import")
+            .into_value()
+            .expect("import edit");
+        Self::assert_completion_edits_fit_source(
+            input.document().text(),
+            &[CompletionItem {
+                additional_text_edits: Some(vec![edit.clone()]),
+                ..candidate.item.clone()
+            }],
+        );
+        assert_eq!(edit.new_text.trim(), expected_edit);
+        SelectedAutoImport {
+            item: candidate.item,
+            import,
+            site,
+        }
+    }
+
+    pub(super) async fn check_revalidated_auto_import(
+        &self,
+        path: &str,
+        original: &SelectedAutoImport,
+        expected_edit: Option<&str>,
+    ) {
+        let snapshot = self.document_snapshot(self.fixture.path(path));
+        let text = snapshot.document().text();
+        let offset = original
+            .site
+            .offset_in(text, &original.item.label)
+            .expect("completion site in edited text");
+        let position = position::position(
+            &LineIndex::new(text),
+            offset.try_into().expect("fixture offset"),
+        );
+        let input = snapshot.with_position(position);
+        let candidate = CompletionImportCandidate {
+            label: original.item.label.clone(),
+            kind: original.item.kind.expect("auto-import kind"),
+            inline_module_path: Some(original.site.inline_module_path.clone()),
+        };
+        let edit = self
+            .service
+            .clone()
+            .resolve_completion_import(
+                context::current(),
+                input.clone(),
+                original.import.clone(),
+                Some(candidate),
+            )
+            .await
+            .expect("revalidate completion import")
+            .into_value();
+        assert_eq!(
+            edit.as_ref().map(|edit| edit.new_text.trim()),
+            expected_edit
+        );
+        Self::assert_completion_edits_fit_source(
+            input.document().text(),
+            &[CompletionItem {
+                additional_text_edits: edit.map(|edit| vec![edit]),
+                ..Default::default()
+            }],
+        );
+    }
+
+    pub(super) fn accept_completion(&self, path: &str, version: i32, item: &CompletionItem) {
+        let path = self.fixture.path(path);
+        let snapshot = self.document_snapshot(path.clone());
+        let mut text = snapshot.document().text().to_owned();
+        let Some(CompletionItemTextEdit::TextEdit(edit)) = &item.text_edit else {
+            panic!("completion should have a primary edit");
+        };
+        let line_index = LineIndex::new(&text);
+        let offset = |position| {
+            line_index
+                .offset_from_utf16_position(position::parse_position(position))
+                .expect("completion position in fixture") as usize
+        };
+        // These fixtures use only a final cursor stop, so the editor inserts the rest verbatim.
+        let new_text = edit.new_text.trim_end_matches("$0");
+        assert!(
+            !new_text.contains('$'),
+            "fixture uses an unsupported snippet"
+        );
+        text.replace_range(offset(edit.range.start)..offset(edit.range.end), new_text);
+        self.record_document(path, Some(version), text);
+    }
+
     pub(super) async fn check_dirty_completion_error(
         &self,
         document: &DirtyDocument,
@@ -804,7 +939,12 @@ impl LspEngineFixture {
                     )
                     .await
                     .expect("completion query should succeed");
-                let completions = outcome.into_value();
+                let completions = outcome
+                    .into_value()
+                    .items
+                    .into_iter()
+                    .map(|candidate| candidate.item)
+                    .collect::<Vec<_>>();
                 Self::assert_completion_edits_fit_source(&current_text, &completions);
 
                 self.render_completions(rendered, path.as_path(), &completions);

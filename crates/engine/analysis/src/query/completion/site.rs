@@ -418,6 +418,12 @@ pub(crate) enum NameCompletionContext {
     Import,
 }
 
+impl NameCompletionContext {
+    pub(crate) fn supports_auto_import(self) -> bool {
+        matches!(self, Self::Type | Self::Value)
+    }
+}
+
 /// Request-local qualifier retained when a trailing `::` has no lowered final segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct QualifiedPathCompletionSyntax {

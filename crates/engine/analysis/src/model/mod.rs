@@ -15,9 +15,9 @@ mod symbols;
 pub use self::{
     code_action::{CodeAction, CodeActionEdit, CodeActionKind},
     completion::{
-        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
-        CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
-        SyntheticCompletionTarget,
+        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionImport,
+        CompletionInsertText, CompletionItem, CompletionKind, CompletionResult, CompletionTarget,
+        KeywordCompletion, SyntheticCompletionTarget,
     },
     folding::{Fold, FoldKind},
     highlight::{Highlight, HighlightKind},

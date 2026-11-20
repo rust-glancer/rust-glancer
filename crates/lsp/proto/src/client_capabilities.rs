@@ -56,7 +56,10 @@ mod tests {
                         "isPreferredSupport": true
                     },
                     "completion": {
-                        "completionItem": { "snippetSupport": true }
+                        "completionItem": {
+                            "snippetSupport": true,
+                            "resolveSupport": { "properties": ["additionalTextEdits"] }
+                        }
                     }
                 }
             }))
@@ -69,11 +72,13 @@ mod tests {
         assert!(actual.code_action.preferred_support);
         assert!(actual.supports_eager_actions());
         assert!(actual.completion.snippet_support);
+        assert!(actual.completion.resolve_additional_text_edits);
 
         let defaults = ClientCapabilities::from_lsp_client_capabilities(
             &gen_lsp_types::ClientCapabilities::default(),
         );
         assert!(!defaults.supports_eager_actions());
         assert!(!defaults.completion.snippet_support);
+        assert!(!defaults.completion.resolve_additional_text_edits);
     }
 }

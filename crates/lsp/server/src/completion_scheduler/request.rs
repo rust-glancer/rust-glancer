@@ -14,8 +14,8 @@ use std::{
     },
 };
 
-use rg_lsp_proto::{DocumentPositionSnapshot, QueryError, QueryValue};
-use tower_lsp_server::gen_lsp_types::{CompletionItem, Position};
+use rg_lsp_proto::{CompletionResult, DocumentPositionSnapshot, QueryError, QueryValue};
+use tower_lsp_server::gen_lsp_types::Position;
 
 use super::{
     attempt::{AttemptKey, AttemptWaiter},
@@ -24,13 +24,13 @@ use super::{
 use crate::ingress::{CapturedDocument, EditorRevisionWatch};
 
 pub(super) type CompletionFuture =
-    Pin<Box<dyn Future<Output = Result<QueryValue<Vec<CompletionItem>>, QueryError>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<QueryValue<CompletionResult>, QueryError>> + Send>>;
 
 /// What happened to one engine query made for a still-live completion request.
 #[derive(Clone, Debug)]
 pub(crate) enum CompletionAttemptOutcome {
     /// The engine query finished; the handler must still validate its tagged target document.
-    Completed(Result<QueryValue<Vec<CompletionItem>>, QueryError>),
+    Completed(Result<QueryValue<CompletionResult>, QueryError>),
     /// The target document changed, so this request may take a newer capture and try again.
     DocumentAdvanced,
     /// A newer completion message replaced this request.
@@ -75,7 +75,7 @@ impl CompletionRequest {
     ) -> CompletionAttemptOutcome
     where
         Run: FnOnce(DocumentPositionSnapshot) -> Fut,
-        Fut: Future<Output = Result<QueryValue<Vec<CompletionItem>>, QueryError>> + Send + 'static,
+        Fut: Future<Output = Result<QueryValue<CompletionResult>, QueryError>> + Send + 'static,
     {
         let key = AttemptKey::for_input(&input);
         self.enqueue_attempt(key, invalidation, Box::pin(run(input)))

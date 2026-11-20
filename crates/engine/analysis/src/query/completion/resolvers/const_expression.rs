@@ -138,7 +138,7 @@ impl<'a, 'db, 'source> ConstExpressionCompletionResolver<'a, 'db, 'source> {
         if let Some(site) = site {
             completions.extend(
                 UnqualifiedCompletionResolver::new(self.analysis, self.query)
-                    .completions(UnqualifiedCompletionSite::new(site), Some(syntax))
+                    .completions(UnqualifiedCompletionSite::new(site))
                     .context("collect unqualified const completions")?,
             );
         }

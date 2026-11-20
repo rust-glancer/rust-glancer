@@ -94,7 +94,7 @@ impl<'a> SyntheticCompletionRenderer<'a> {
                 documentation: None,
                 insert_text: candidate.insert_text,
                 edit: Some(self.edit),
-                additional_edits: Vec::new(),
+                import: None,
             })
             .collect::<Vec<_>>();
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));

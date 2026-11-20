@@ -5,17 +5,21 @@
 //! algorithms still live in Body IR; this adapter constructs their shared context in one place and
 //! preserves body-local modules and impl overlays for `ir-view` callers.
 
+use std::time::Instant;
+
 use anyhow::Context as _;
 use rg_body_ir::{
     BodyAssociatedPathPrefix, BodyResolutionContext, BodyView, ExprKind, ExprWrapperKind,
 };
 use rg_def_map::NamespaceSet;
 use rg_ir_model::{
-    BodyRef, DefMapRef, EnumVariantRef, FieldRef, ModuleId, ModuleRef, Path, ScopeId,
-    identity::{DeclarationRef, ExprRef},
+    BodyRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ModuleId, ModuleRef, Path, ScopeId,
+    TraitDefRef,
+    identity::{DeclarationRef, ExprRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemLookupQuery, TypePathResolution};
+use rg_text::Name;
 use rg_ty::{
     Ty,
     lookup::{AssociatedItemCandidateRef, ItemPathQuery, MemberMethodCandidateRef},
@@ -314,6 +318,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         ty: &Ty,
+        name: Option<&str>,
     ) -> anyhow::Result<Option<Vec<MemberMethodCandidateRef>>> {
         let Some((body, item_lookup_query)) = self
             .body_with_lookup(body_ref)
@@ -332,9 +337,33 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db.cancellation().clone(),
             )
             .methods()
-            .method_candidates_for_ty(scope, ty)
+            .method_candidates_for_ty(scope, ty, name)
             .context("resolve body method candidates")?,
         ))
+    }
+
+    pub(crate) fn extension_methods_for_ty<'name>(
+        &self,
+        scope: LexicalScopeRef,
+        ty: &Ty,
+        names: impl Iterator<Item = &'name (Name, TraitDefRef)>,
+        budget: Option<(&mut usize, Instant)>,
+    ) -> anyhow::Result<Vec<FunctionRef>> {
+        let body_ref = scope.body_ir();
+        let Some((body, item_lookup_query)) = self.body_with_lookup(body_ref)? else {
+            return Ok(Vec::new());
+        };
+        BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &item_lookup_query,
+            self.db.cancellation().clone(),
+        )
+        .methods()
+        .extension_methods_for_ty(scope.scope_id(), ty, names, budget)
+        .context("resolve extension methods")
     }
 
     /// Resolve all associated declarations that may follow a body-owned type-shaped qualifier.

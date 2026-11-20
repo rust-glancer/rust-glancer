@@ -30,7 +30,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         })),
         completion_provider: Some(CompletionOptions {
-            resolve_provider: Some(false),
+            resolve_provider: Some(true),
             trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
             ..Default::default()
         }),
@@ -121,6 +121,8 @@ mod tests {
             completion.trigger_characters.as_deref(),
             Some(&[".".to_string(), ":".to_string()][..])
         );
+
+        assert_eq!(completion.resolve_provider, Some(true));
 
         let Some(RenameProvider::RenameOptions(rename)) = capabilities.rename_provider.as_ref()
         else {

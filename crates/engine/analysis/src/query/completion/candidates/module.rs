@@ -234,8 +234,6 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             documentation: name.documentation().map(ToString::to_string),
             function,
             macro_kind: name.macro_kind(),
-            import_path: None,
-            import_path_len: None,
         }))
     }
 

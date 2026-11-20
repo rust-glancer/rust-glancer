@@ -7,7 +7,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use futures::StreamExt as _;
 use rg_lsp_proto::{
-    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
+    CodeActionRequestContext, CompletionCandidate, CompletionClientCapabilities, CompletionImport,
+    CompletionImportCandidate, CompletionImportData, CompletionResult, DocumentPositionSnapshot,
     DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
     EngineResult, EngineService, EngineServiceClient, FoldingClientCapabilities,
     OpenDocumentsRevision, ProjectInitialization, QueryError, QueryScope, QueryValue, SaveProposal,
@@ -159,20 +160,15 @@ async fn did_change_retries_completion_at_rebased_position() {
         primary_edit.range,
         Range::new(Position::new(0, 5), Position::new(0, 11))
     );
-    let [additional_edit] = item
-        .additional_text_edits
-        .as_deref()
-        .expect("completion item should add its import")
-    else {
-        panic!("completion item should contain one additional edit");
-    };
-
-    // Both edits must describe the final target document revision, not the shorter text from the
-    // first attempt. Applying them in source order produces the expected final document.
-    let mut applied = "impl RwLock".to_string();
-    applied.replace_range(5..11, &primary_edit.new_text);
-    applied.insert_str(0, &additional_edit.new_text);
-    assert_eq!(applied, "use std::sync::RwLock;\nimpl RwLock");
+    let import: CompletionImportData = serde_json::from_value(
+        item.data
+            .clone()
+            .expect("completion should carry a pending import"),
+    )
+    .expect("pending import data");
+    assert_eq!(import.position, primary_edit.range.end);
+    assert_eq!(import.import.path, "std::sync::RwLock");
+    assert!(item.additional_text_edits.is_none());
 
     lsp.shutdown().await;
 }
@@ -767,7 +763,7 @@ impl EngineService for GatedEditorEngine {
         _: context::Context,
         input: DocumentPositionSnapshot,
         _: CompletionClientCapabilities,
-    ) -> Result<QueryValue<Vec<CompletionItem>>, QueryError> {
+    ) -> Result<QueryValue<CompletionResult>, QueryError> {
         let (release, released) = oneshot::channel();
         self.attempts
             .send(ObservedCompletionAttempt {
@@ -782,21 +778,36 @@ impl EngineService for GatedEditorEngine {
             open_documents_revision: input.snapshot().editor().revision(),
         };
         Ok(QueryValue::new(
-            vec![CompletionItem {
-                label: "RwLock".to_string(),
-                kind: Some(CompletionItemKind::Struct),
-                text_edit: Some(CompletionItemTextEdit::TextEdit(TextEdit::new(
-                    Range::new(Position::new(0, 5), input.position()),
-                    "RwLock".to_string(),
-                ))),
-                additional_text_edits: Some(vec![TextEdit::new(
-                    Range::new(Position::new(0, 0), Position::new(0, 0)),
-                    "use std::sync::RwLock;\n".to_string(),
-                )]),
-                ..CompletionItem::default()
-            }],
+            CompletionResult {
+                items: vec![CompletionCandidate {
+                    item: CompletionItem {
+                        label: "RwLock".to_string(),
+                        kind: Some(CompletionItemKind::Struct),
+                        text_edit: Some(CompletionItemTextEdit::TextEdit(TextEdit::new(
+                            Range::new(Position::new(0, 5), input.position()),
+                            "RwLock".to_string(),
+                        ))),
+                        ..CompletionItem::default()
+                    },
+                    import: Some(CompletionImport {
+                        path: "std::sync::RwLock".to_string(),
+                        anonymous: false,
+                    }),
+                }],
+                ..Default::default()
+            },
             scope,
         ))
+    }
+
+    async fn resolve_completion_import(
+        self,
+        _: context::Context,
+        _: DocumentPositionSnapshot,
+        _: CompletionImport,
+        _: Option<CompletionImportCandidate>,
+    ) -> Result<QueryValue<Option<TextEdit>>, QueryError> {
+        panic!("test engine only supports editor query scenarios")
     }
 
     // This deliberately narrow test engine implements the remaining RPC surface only so the

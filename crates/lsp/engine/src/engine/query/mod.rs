@@ -13,17 +13,18 @@ use std::{sync::Arc, time::Instant};
 
 use anyhow::Context as _;
 use gen_lsp_types::{
-    CodeAction, CompletionItem, DocumentSymbol, FoldingRange, Hover, InlayHint, Position, Range,
-    TextEdit, WorkspaceSymbol,
+    CodeAction, DocumentSymbol, FoldingRange, Hover, InlayHint, Position, Range, TextEdit,
+    WorkspaceSymbol,
 };
 use rg_analysis::{
     Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger,
-    CompletionClientCapabilities as AnalysisCompletionClientCapabilities, CompletionQuery,
-    CompletionSource,
+    CompletionClientCapabilities as AnalysisCompletionClientCapabilities,
+    CompletionImport as AnalysisCompletionImport, CompletionQuery, CompletionSource,
 };
-use rg_ir_model::Span;
+use rg_ir_model::{Path, Span};
 use rg_lsp_proto::{
     CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
+    CompletionImport, CompletionImportCandidate, CompletionImportSite, CompletionResult,
     DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot,
     EditorSnapshot, FoldingClientCapabilities,
 };
@@ -114,7 +115,7 @@ impl<'a> QueryRunner<'a> {
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
+    ) -> anyhow::Result<CompletionResult> {
         let document = input.document();
         let position = input.position();
         let path = document.source_path().to_path_buf();
@@ -128,7 +129,7 @@ impl<'a> QueryRunner<'a> {
             cancellation,
             |current| {
                 let Some(current) = current else {
-                    return Ok(Vec::new());
+                    return Ok(CompletionResult::default());
                 };
                 let document_analysis_us = document_analysis_started.elapsed().as_micros();
                 let offset = current.selection.start;
@@ -144,13 +145,20 @@ impl<'a> QueryRunner<'a> {
                 let mut query = CompletionQuery::new(target.crate_ref, target.file, offset)
                     .with_client_capabilities(AnalysisCompletionClientCapabilities {
                         snippet_support: client_capabilities.snippet_support,
+                        auto_import: client_capabilities.resolve_additional_text_edits,
                     });
                 query = match completion_source.as_ref() {
                     Some(source) => query.with_completion_source(source),
                     None => query.with_source_text(source_text),
                 };
+                // Engine tests assert which imports are returned. Give them enough time
+                // for the same search to finish on slower CI runners.
+                #[cfg(test)]
+                {
+                    query.auto_import_budget = std::time::Duration::from_secs(30);
+                }
                 let analysis_compute_started = Instant::now();
-                let items = current
+                let result = current
                     .analysis
                     .completions_at(query)
                     .context("compute completions")?;
@@ -159,11 +167,25 @@ impl<'a> QueryRunner<'a> {
                 // Discard cancelled work before converting its result.
                 rg_std::check_cancel!(cancellation, "after semantic completion");
                 let protocol_conversion_started = Instant::now();
-                for (index, item) in items.into_iter().enumerate() {
+                // The import rows share a cursor and replacement span. Keep their source anchor
+                // on the list until the server hands each row to the editor.
+                let import_site = result
+                    .items
+                    .iter()
+                    .find_map(|item| item.edit.filter(|_| item.import.is_some()))
+                    .and_then(|edit| {
+                        CompletionImportSite::capture(
+                            source_text,
+                            offset as usize,
+                            edit.replace.start as usize..edit.replace.end as usize,
+                            completion_source.as_ref()?.inline_module_path(),
+                        )
+                    });
+                for (index, item) in result.items.into_iter().enumerate() {
                     if index % 64 == 0 {
                         rg_std::check_cancel!(cancellation, "completion conversion");
                     }
-                    completions.push(completion::completion_item(item, current.line_index));
+                    completions.push(completion::completion_candidate(item, current.line_index));
                 }
                 let protocol_conversion_us = protocol_conversion_started.elapsed().as_micros();
 
@@ -185,10 +207,67 @@ impl<'a> QueryRunner<'a> {
                     "completion query finished"
                 );
 
-                Ok(completions)
+                Ok(CompletionResult {
+                    items: completions,
+                    is_incomplete: result.is_incomplete,
+                    import_site,
+                })
             },
         )
         .context("prepare completion analysis")
+    }
+
+    /// Plan a selected import using one captured editor snapshot.
+    ///
+    /// A sibling edit can change the receiver type even if the cursor has not moved.
+    pub(super) fn resolve_completion_import(
+        &self,
+        input: DocumentPositionSnapshot,
+        import: &CompletionImport,
+        candidate: Option<&CompletionImportCandidate>,
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<Option<TextEdit>> {
+        let Some(path) = Path::from_text(&import.path, None) else {
+            return Ok(None);
+        };
+        self.with_document_analysis(
+            "resolve_completion_import",
+            input.snapshot(),
+            DocumentSelection::Position(input.position()),
+            cancellation,
+            |current| {
+                let Some(current) = current else {
+                    return Ok(None);
+                };
+                let query = CompletionQuery::new(
+                    current.target.crate_ref,
+                    current.target.file,
+                    current.selection.start,
+                )
+                .with_source_text(input.document().text());
+                let import = AnalysisCompletionImport {
+                    path,
+                    anonymous: import.anonymous,
+                };
+                let selected = if let Some(candidate) = candidate {
+                    let Some(kind) = completion::import_kind(candidate.kind) else {
+                        return Ok(None);
+                    };
+                    Some((candidate.label.as_str(), kind))
+                } else {
+                    None
+                };
+                Ok(current
+                    .analysis
+                    .resolve_completion_import(
+                        query,
+                        &import,
+                        selected,
+                        candidate.and_then(|row| row.inline_module_path.as_deref()),
+                    )?
+                    .map(|edit| completion::import_edit(edit, current.line_index)))
+            },
+        )
     }
 
     /// Return source actions with complete edits for the captured document and selected range.

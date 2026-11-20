@@ -14,9 +14,9 @@ use rg_ir_view::{
     IndexedViewDb,
     lookup::name::NameNamespace,
     source::{
-        IndexedQualifiedPathContext, IndexedQualifiedPathScope, IndexedQualifiedPathSite,
-        IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
-        SourceCompletionView,
+        IndexedMemberAccessSite, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
+        IndexedQualifiedPathSite, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
+        IndexedUnqualifiedNameSite, SourceCompletionView,
     },
     ty::locals::BodyView,
 };
@@ -145,6 +145,15 @@ impl ImportContext {
             return Ok(None);
         };
         Ok(Some(Self::new(module_site.module(), NameNamespace::Types)))
+    }
+
+    /// A method call is in a body scope, but the new `use Trait as _` goes in the enclosing
+    /// module. Use the receiver's body to find that module.
+    pub(crate) fn for_dot_site(
+        db: &IndexedViewDb<'_>,
+        site: IndexedMemberAccessSite,
+    ) -> anyhow::Result<Option<Self>> {
+        Self::for_body(db, site.receiver().body_ir(), NameNamespace::Types)
     }
 
     pub(crate) fn module(self) -> ModuleRef {

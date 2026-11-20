@@ -907,7 +907,7 @@ mod tests {
                 Some(SyntaxCompletionContext::Specialized(
                     SpecializedCompletionContext::RestrictedVisibility(
                         RestrictedVisibilityCompletionContext::new(
-                            Path::from_macro_path_text("crate", None),
+                            Path::from_text("crate", None),
                             false,
                         ),
                     ),
@@ -1006,7 +1006,7 @@ mod tests {
             actual,
             Some(SyntaxCompletionContext::BodyMacro(
                 BodyMacroCompletionContext::new(Some(
-                    Path::from_macro_path_text("crate::macros", None)
+                    Path::from_text("crate::macros", None)
                         .expect("qualified macro path should parse"),
                 )),
             )),

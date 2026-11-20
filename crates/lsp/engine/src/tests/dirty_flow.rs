@@ -4,6 +4,175 @@ use rg_lsp_proto::QueryError;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
+async fn resolves_named_and_extension_trait_completion_imports() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_completion_imports"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod consumer;
+        mod sibling;
+        pub mod collections {
+            pub struct Widget;
+        }
+        pub use sibling::RenderExt as WidgetRenderer;
+
+        //- /src/consumer.rs
+        fn render_widget(value: u32) {
+            let _: Wid$type$;
+            value.render_wi$method$;
+        }
+        #[cfg(any())]
+        use crate::collections::Widget;
+
+        //- /src/sibling.rs
+        pub trait RenderExt { fn render_widget(&self); }
+        impl RenderExt for u32 { fn render_widget(&self) {} }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/consumer.rs", 1).await;
+    let widget = fixture
+        .check_auto_import("type", "Widget", "use crate::collections::Widget;")
+        .await;
+    let method = fixture
+        .check_auto_import("method", "render_widget", "use crate::WidgetRenderer as _;")
+        .await;
+
+    // The displayed return type changes, but the same method still needs the same import.
+    fixture
+        .did_change_full(
+            "src/sibling.rs",
+            2,
+            "pub trait RenderExt { fn render_widget(&self) -> u32; }\n\
+             impl RenderExt for u32 { fn render_widget(&self) -> u32 { *self } }\n",
+        )
+        .await;
+    fixture
+        .check_revalidated_auto_import(
+            "src/consumer.rs",
+            &widget,
+            Some("use crate::collections::Widget;"),
+        )
+        .await;
+
+    fixture.accept_completion("src/consumer.rs", 3, &method.item);
+    fixture
+        .check_revalidated_auto_import(
+            "src/consumer.rs",
+            &method,
+            Some("use crate::WidgetRenderer as _;"),
+        )
+        .await;
+    fixture.accept_completion("src/consumer.rs", 4, &widget.item);
+    fixture
+        .check_revalidated_auto_import(
+            "src/consumer.rs",
+            &widget,
+            Some("use crate::collections::Widget;"),
+        )
+        .await;
+
+    // The accepted name still follows the saved text, but now that text is inside a
+    // different module. Resolving the old row must leave that module alone.
+    fixture
+        .did_change_full(
+            "src/consumer.rs",
+            5,
+            "mod elsewhere {\nfn render_widget(value: u32) {\n    let _: Widget;\n}\n}\n",
+        )
+        .await;
+    fixture
+        .check_revalidated_auto_import("src/consumer.rs", &widget, None)
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn completes_applicable_extension_methods_across_crates() {
+    // These names sort before the applicable methods and would otherwise fill the shortlist.
+    let decoys = (0..17)
+        .map(|i| {
+            format!(
+                "pub trait Decoy{i} {{ fn render_a{i}(&self) {{}} }}\n            impl Decoy{i} for bool {{}}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n            ");
+    let fixture = LspEngineFixture::initialized(&format!(
+        r#"
+        //- /Cargo.toml
+        [workspace]
+        members = ["app", "catalog"]
+        resolver = "3"
+
+        //- /catalog/Cargo.toml
+        [package]
+        name = "catalog"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /catalog/src/lib.rs
+        pub trait RemoteExt {{ fn render_remote(&self) {{}} }}
+        impl RemoteExt for u32 {{}}
+        pub trait CatalogExt {{ fn render_catalog(&self) {{}} }}
+        impl CatalogExt for u32 {{}}
+        pub trait BorrowedExt {{ fn borrowed(self); }}
+        impl BorrowedExt for &u32 {{ fn borrowed(self) {{}} }}
+
+        //- /app/Cargo.toml
+        [package]
+        name = "app"
+        version = "0.1.0"
+        edition = "2024"
+
+        [dependencies]
+        catalog = {{ path = "../catalog" }}
+
+        //- /app/src/lib.rs
+        mod consumer;
+        mod decoys {{
+            {decoys}
+        }}
+        mod render {{
+            pub trait LocalExt {{ fn render_local(&self) {{}} }}
+            impl<T> LocalExt for T {{}}
+        }}
+        pub use render::LocalExt as LocalRenderer;
+        pub use catalog::RemoteExt as RemoteRenderer;
+
+        //- /app/src/consumer.rs
+        fn demo(value: &u32) {{
+            value.render_$method$;
+        }}
+        fn borrowed(value: u32) {{
+            value.bor$borrow$;
+        }}
+        "#,
+    ))
+    .await;
+
+    fixture.did_open_saved("app/src/consumer.rs", 1).await;
+    for (label, edit) in [
+        ("render_local", "use crate::LocalRenderer as _;"),
+        ("render_remote", "use crate::RemoteRenderer as _;"),
+        ("render_catalog", "use catalog::CatalogExt as _;"),
+    ] {
+        fixture.check_auto_import("method", label, edit).await;
+    }
+    fixture
+        .check_auto_import("borrow", "borrowed", "use catalog::BorrowedExt as _;")
+        .await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn unsaved_global_declarations_support_semantic_queries() {
     let fixture = LspEngineFixture::initialized(
         r#"

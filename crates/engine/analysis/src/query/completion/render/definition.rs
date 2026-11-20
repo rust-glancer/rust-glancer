@@ -104,7 +104,7 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
             ),
             insert_text: self.insert_text(kind, &label, request.call_completion, request.edit),
             edit: Some(request.edit),
-            additional_edits: Vec::new(),
+            import: None,
         }))
     }
 
