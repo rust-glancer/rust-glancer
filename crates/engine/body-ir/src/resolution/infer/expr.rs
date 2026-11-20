@@ -452,7 +452,7 @@ where
                     .unwrap_or(self.cx.unknown());
                 for arm in arms {
                     if let Some(pat) = arm.pat {
-                        self.infer_pattern(pat, &scrutinee)
+                        self.infer_pattern(pat, arm.scope, &scrutinee)
                             .context("infer match pattern")?;
                     }
                     self.infer_optional(arm.guard, &self.cx.unknown())
@@ -487,7 +487,10 @@ where
                 }
             }
             ExprKind::Let {
-                pat, initializer, ..
+                scope,
+                pat,
+                initializer,
+                ..
             } => {
                 self.infer_optional(initializer, &self.cx.unknown())
                     .context("infer optional expression")?;
@@ -495,7 +498,8 @@ where
                     .map(|expr| self.inference.expr_slot(expr))
                     .unwrap_or(self.cx.unknown());
                 if let Some(pat) = pat {
-                    self.infer_pattern(pat, &ty).context("infer let pattern")?;
+                    self.infer_pattern(pat, scope, &ty)
+                        .context("infer let pattern")?;
                 }
                 self.inference
                     .set_expr_ty(expr, self.cx.primitive(rg_ty::PrimitiveTy::Bool));
@@ -561,6 +565,7 @@ where
             }
             ExprKind::For {
                 ref label,
+                scope,
                 pat,
                 iterable,
                 body,
@@ -574,7 +579,7 @@ where
                     let item = self.inference.table_mut().new_type_var();
                     self.run_or_defer(DeferredKind::IteratorItem { iterable, item })
                         .context("register pending inference")?;
-                    self.infer_pattern(pat, &item)
+                    self.infer_pattern(pat, scope, &item)
                         .context("infer iterator pattern")?;
                 }
                 self.break_targets.push(BreakTarget {
@@ -874,7 +879,7 @@ where
                     expected
                 };
                 if let Some(pat) = pat {
-                    self.infer_pattern(pat, &ty)
+                    self.infer_pattern(pat, scope, &ty)
                         .context("infer binding pattern")?;
                 }
                 self.infer_optional(else_branch, &self.cx.unknown())

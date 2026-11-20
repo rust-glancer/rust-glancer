@@ -2397,6 +2397,43 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn infers_payloads_from_scoped_variant_aliases() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:variant_pattern_aliases
+struct Flag;
+impl Flag { fn is_ready(&self) -> bool { true } }
+struct User { flag: Flag }
+
+pub enum Event<T> {
+    Payload(bool, u16, T),
+    Present(bool, u16, u32),
+    Named { value: T },
+}
+
+use Event::Payload as Present;
+
+fn inspect(tuple: Event<User>, record: Event<User>) {
+    match tuple {
+        Present(.., user) if user.flag.is_ready()$0 => { user$1; } // ty("guard method"), ty("aliased tuple payload after rest")
+        _ => {}
+    }
+
+    use crate::Event::Named as Local;
+    if let Local { value: user } = record {
+        user.flag.is_ready()$0; // ty("block-local record alias")
+    }
+}
+"#,
+        expect![[r#"
+            bool // guard method
+            nominal struct variant_pattern_aliases[lib]::crate::User // aliased tuple payload after rest
+            bool // block-local record alias
+        "#]],
+    );
+}
+
+#[test]
 fn infers_tuple_patterns_with_rest() {
     check_analysis(
         r#"

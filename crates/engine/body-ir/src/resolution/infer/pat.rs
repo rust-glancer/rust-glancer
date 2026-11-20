@@ -6,7 +6,7 @@
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
-use rg_ir_model::{FieldKey, Mutability, PatId};
+use rg_ir_model::{FieldKey, Mutability, PatId, ScopeId};
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::solver::{Ty, TyShape};
@@ -59,7 +59,7 @@ where
             // while pending trait goals and pattern projection pass evidence to each other.
             let ty = self.inference.table().normalize(ty);
             if let Some(pat) = param.pat {
-                self.infer_pattern(pat, &ty)
+                self.infer_pattern(pat, self.body.param_scope(), &ty)
                     .context("infer parameter pattern")?;
             } else {
                 // `self` and incomplete ordinary parameters can have bindings without a pattern.
@@ -74,10 +74,15 @@ where
 
     /// Patterns can own expressions even when no type shape is available, as in `const { KEY }`.
     /// Visit those expressions at the introduction site, independently of deferred projection.
-    pub(super) fn infer_pattern(&mut self, pat: PatId, expected: &Ty<'s>) -> anyhow::Result<()> {
+    pub(super) fn infer_pattern(
+        &mut self,
+        pat: PatId,
+        scope: ScopeId,
+        expected: &Ty<'s>,
+    ) -> anyhow::Result<()> {
         self.infer_pattern_exprs(pat)
             .context("infer pattern expressions")?;
-        self.infer_pat(pat, expected, None)
+        self.infer_pat(pat, scope, expected, None)
             .context("infer pattern type")
     }
 
@@ -103,13 +108,15 @@ where
     fn infer_pat(
         &mut self,
         pat: PatId,
+        scope: ScopeId,
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), ReadError> {
-        if !self.try_infer_pat(pat, expected_ty, default_ref)? {
+        if !self.try_infer_pat(pat, scope, expected_ty, default_ref)? {
             self.defer(
                 DeferredKind::Pattern {
                     pat,
+                    scope,
                     expected: *expected_ty,
                     default_ref,
                 },
@@ -127,6 +134,7 @@ where
     pub(super) fn try_infer_pat(
         &mut self,
         pat: PatId,
+        scope: ScopeId,
         expected_ty: &Ty<'s>,
         mut default_ref: Option<Mutability>,
     ) -> Result<bool, ReadError> {
@@ -197,29 +205,37 @@ where
                     self.inference.set_binding_ty(binding, binding_ty);
                 }
                 if let Some(subpat) = subpat {
-                    self.infer_pat(subpat, &expected_ty, default_ref)?;
+                    self.infer_pat(subpat, scope, &expected_ty, default_ref)?;
                 }
                 Ok(())
             }
             PatKind::TupleStruct {
                 ref path,
                 ref fields,
-            } => self.link_tuple_struct_pat(path.as_ref(), fields, &expected_ty, default_ref),
+            } => {
+                self.link_tuple_struct_pat(path.as_ref(), fields, scope, &expected_ty, default_ref)
+            }
             PatKind::Record {
                 ref path,
                 ref fields,
                 ..
-            } => self.link_record_pat(path.as_ref(), fields, &expected_ty, default_ref),
-            PatKind::Tuple { ref fields } => self.link_tuple_pat(fields, &expected_ty, default_ref),
-            PatKind::Slice { ref fields } => self.link_slice_pat(fields, &expected_ty, default_ref),
+            } => self.link_record_pat(path.as_ref(), fields, scope, &expected_ty, default_ref),
+            PatKind::Tuple { ref fields } => {
+                self.link_tuple_pat(fields, scope, &expected_ty, default_ref)
+            }
+            PatKind::Slice { ref fields } => {
+                self.link_slice_pat(fields, scope, &expected_ty, default_ref)
+            }
             PatKind::Or { ref pats } => {
                 for pat in pats {
-                    self.infer_pat(*pat, &expected_ty, default_ref)?;
+                    self.infer_pat(*pat, scope, &expected_ty, default_ref)?;
                 }
                 Ok(())
             }
-            PatKind::Ref { mutability, pat } => self.link_ref_pat(pat, mutability, &expected_ty),
-            PatKind::Box { pat } => self.infer_pat(pat, &expected_ty, default_ref),
+            PatKind::Ref { mutability, pat } => {
+                self.link_ref_pat(pat, scope, mutability, &expected_ty)
+            }
+            PatKind::Box { pat } => self.infer_pat(pat, scope, &expected_ty, default_ref),
             PatKind::Path { .. }
             | PatKind::Rest
             | PatKind::Literal { .. }
@@ -235,6 +251,7 @@ where
     fn link_tuple_pat(
         &mut self,
         fields: &[PatId],
+        scope: ScopeId,
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), ReadError> {
@@ -246,7 +263,7 @@ where
             field_query.tuple_pattern_fields(fields, || Ok(Some(field_tys.len())))?
         {
             if let Some(field_ty) = field_tys.get(index) {
-                self.infer_pat(pat, field_ty, default_ref)?;
+                self.infer_pat(pat, scope, field_ty, default_ref)?;
             }
         }
         Ok(())
@@ -256,6 +273,7 @@ where
     fn link_slice_pat(
         &mut self,
         fields: &[PatId],
+        scope: ScopeId,
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), ReadError> {
@@ -272,7 +290,7 @@ where
             {
                 continue;
             }
-            self.infer_pat(*field, &element_ty, default_ref)?;
+            self.infer_pat(*field, scope, &element_ty, default_ref)?;
         }
         Ok(())
     }
@@ -281,6 +299,7 @@ where
     fn link_ref_pat(
         &mut self,
         pat: PatId,
+        scope: ScopeId,
         pat_mutability: Mutability,
         expected_ty: &Ty<'s>,
     ) -> Result<(), ReadError> {
@@ -291,7 +310,7 @@ where
             return Ok(());
         }
 
-        self.infer_pat(pat, &inner_ty, None)
+        self.infer_pat(pat, scope, &inner_ty, None)
     }
 
     /// Project positional fields from the expected struct or enum instantiation.
@@ -299,23 +318,23 @@ where
         &mut self,
         path: Option<&BodyPath>,
         fields: &[PatId],
+        scope: ScopeId,
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), ReadError> {
-        let field_query = self.context.fields();
-        let arity = || match expected_ty.as_adt() {
-            Some(owner) => field_query.tuple_pattern_arity(path, owner.def),
-            None => Ok(None),
+        let Some(owner) = expected_ty.as_adt() else {
+            return Ok(());
         };
+        let field_query = self.context.fields();
+        let variant = field_query.pattern_variant(scope, path, owner.def)?;
+        let arity = || field_query.tuple_pattern_arity(owner.def, variant);
+        let live = self.context.live();
         for (index, field_pat) in field_query.tuple_pattern_fields(fields, arity)? {
             let field_key = FieldKey::Tuple(index);
-            if let Some(field_ty) = self.context.live().pattern_field(
-                path,
-                *expected_ty,
-                &field_key,
-                self.inference.table(),
-            )? {
-                self.infer_pat(field_pat, &field_ty, default_ref)?;
+            if let Some(field_ty) =
+                live.pattern_field(owner, variant, &field_key, self.inference.table())?
+            {
+                self.infer_pat(field_pat, scope, &field_ty, default_ref)?;
             }
         }
         Ok(())
@@ -326,17 +345,23 @@ where
         &mut self,
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
+        scope: ScopeId,
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), ReadError> {
+        let Some(owner) = expected_ty.as_adt() else {
+            return Ok(());
+        };
+        let variant = self
+            .context
+            .fields()
+            .pattern_variant(scope, path, owner.def)?;
+        let live = self.context.live();
         for field in fields {
-            if let Some(field_ty) = self.context.live().pattern_field(
-                path,
-                *expected_ty,
-                &field.key,
-                self.inference.table(),
-            )? {
-                self.infer_pat(field.pat, &field_ty, default_ref)?;
+            if let Some(field_ty) =
+                live.pattern_field(owner, variant, &field.key, self.inference.table())?
+            {
+                self.infer_pat(field.pat, scope, &field_ty, default_ref)?;
             }
         }
         Ok(())

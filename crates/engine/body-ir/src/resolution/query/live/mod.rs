@@ -19,7 +19,7 @@ use rg_ty::{
 };
 
 pub(crate) use self::member::FunctionLookup;
-use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
+use crate::{body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Looks up declarations without turning the body's live types into saved types along the way.
 /// For a field on `Wrapper<?T>`, its declared `T` must become that same `?T`, so later assignments
@@ -186,23 +186,19 @@ where
 
     pub(crate) fn pattern_field<'s>(
         &self,
-        path: Option<&BodyPath>,
-        mut ty: Ty<'s>,
+        owner: AdtTy<'s>,
+        variant: Option<EnumVariantRef>,
         field: &FieldKey,
         table: &InferenceTable<'s>,
     ) -> Result<Option<Ty<'s>>, ReadError> {
-        while let TyShape::Reference { inner, .. } = table.resolve_root_var(ty).shape() {
-            ty = inner;
+        match (owner.def.id, variant) {
+            (TypeDefId::Enum(_), Some(variant)) => {
+                self.enum_variant_field(owner, variant, field, table)
+            }
+            (TypeDefId::Enum(_), None) => Ok(None),
+            (TypeDefId::Struct(_) | TypeDefId::Union(_), _) => Ok(self
+                .field(table.interner().adt(owner), field, table)?
+                .map(|(_, ty)| ty)),
         }
-        let Some(adt) = table.resolve_root_var(ty).as_adt() else {
-            return Ok(None);
-        };
-        if matches!(adt.def.id, TypeDefId::Enum(_)) {
-            let Some(variant) = self.context.fields().pattern_variant(path, adt.def)? else {
-                return Ok(None);
-            };
-            return self.enum_variant_field(adt, variant, field, table);
-        }
-        Ok(self.field(ty, field, table)?.map(|(_, ty)| ty))
     }
 }

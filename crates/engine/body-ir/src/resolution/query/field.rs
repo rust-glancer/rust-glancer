@@ -1,17 +1,16 @@
 //! Field types for owned receivers and pattern bindings.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, PatId, TypeDefId, TypeDefRef};
+use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, PatId, ScopeId, TypeDefId, TypeDefRef};
 use rg_item_tree::FieldList;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
-use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, Ty, solver::SemanticDeclarations};
 
 use crate::{BodyPath, PatKind, resolution::BodyResolutionContext};
 
 /// Reads field declarations and substitutes the owner type's arguments into them.
-/// Enum patterns also supply a variant name so the same field position is read from the right
+/// Enum patterns also supply a variant identity so the same field position is read from the right
 /// variant. Results use owned types and can be used before live body inference starts.
 pub struct BodyFieldQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -75,8 +74,8 @@ where
 
     pub(crate) fn tuple_pattern_arity(
         &self,
-        path: Option<&BodyPath>,
         owner: TypeDefRef,
+        variant: Option<EnumVariantRef>,
     ) -> Result<Option<usize>, ReadError> {
         let items = self.context.item_query();
         let fields = match owner.id {
@@ -85,7 +84,7 @@ where
                 .and_then(|item| item.struct_data())
                 .map(|data| &data.fields),
             TypeDefId::Enum(_) => {
-                let Some(variant) = self.pattern_variant(path, owner)? else {
+                let Some(variant) = variant else {
                     return Ok(None);
                 };
                 items
@@ -102,11 +101,29 @@ where
 
     pub(crate) fn pattern_variant(
         &self,
+        scope: ScopeId,
         path: Option<&BodyPath>,
         owner: TypeDefRef,
     ) -> Result<Option<EnumVariantRef>, ReadError> {
-        let path = path.and_then(BodyPath::as_def_map_path);
-        let Some(name) = path.as_ref().and_then(|path| path.segments().last()) else {
+        let (TypeDefId::Enum(enum_id), Some(path)) =
+            (owner.id, path.and_then(BodyPath::as_def_map_path))
+        else {
+            return Ok(None);
+        };
+        // The written name can alias a variant with a different name, even one whose name
+        // collides with another variant of this enum. Prefer the declaration visible in scope.
+        if let Some(variant) = self
+            .context
+            .type_path_query()
+            .resolve_enum_variant_in_scope(scope, &path)?
+        {
+            return Ok(
+                (variant.origin == owner.origin && variant.enum_id == enum_id).then_some(variant),
+            );
+        }
+        // DefMap path lookup does not follow type aliases or `Self` to their underlying enum.
+        // Keep using the expected enum as a fallback for these patterns.
+        let Some(name) = path.segments().last() else {
             return Ok(None);
         };
         self.context
@@ -116,37 +133,20 @@ where
 
     /// Project the field type destructured by a record or tuple-variant pattern.
     ///
-    /// Pattern matching peels written references but does not use receiver autoderef. Struct and
-    /// union fields come directly from the expected nominal type; enum fields additionally use the
-    /// pattern path's final segment to select the variant.
+    /// Read from the expected type after the caller peels any written references.
     pub(crate) fn pattern_field_ty(
         &self,
-        path: Option<&BodyPath>,
-        expected_ty: &Ty,
+        owner: &AdtTy,
+        variant: Option<EnumVariantRef>,
         field_key: &FieldKey,
     ) -> Result<Option<Ty>, ReadError> {
-        let mut candidates = ExpectedUnique::new();
-
-        for candidate in expected_ty.reference_chain() {
-            for nominal_ty in candidate.as_adts() {
-                let field_ty = match nominal_ty.def.id {
-                    TypeDefId::Struct(_) | TypeDefId::Union(_) => {
-                        self.declared(nominal_ty, field_key)?
-                    }
-                    TypeDefId::Enum(_) => {
-                        let Some(variant_ref) = self.pattern_variant(path, nominal_ty.def)? else {
-                            continue;
-                        };
-                        self.enum_variant_field_ty(nominal_ty, variant_ref, field_key)?
-                    }
-                };
-                if let Some(field_ty) = field_ty {
-                    candidates.push(field_ty);
-                }
+        match (owner.def.id, variant) {
+            (TypeDefId::Enum(_), Some(variant)) => {
+                self.enum_variant_field_ty(owner, variant, field_key)
             }
+            (TypeDefId::Enum(_), None) => Ok(None),
+            (TypeDefId::Struct(_) | TypeDefId::Union(_), _) => self.declared(owner, field_key),
         }
-
-        Ok(candidates.into_option())
     }
 
     /// Resolve a declared field directly from its owner type.

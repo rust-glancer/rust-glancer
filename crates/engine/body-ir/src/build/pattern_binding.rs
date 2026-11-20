@@ -130,7 +130,7 @@ where
                 active,
                 pending_tys,
             )?;
-            self.deactivate_unit_variant_bindings_in_pat(*pat, &expected_ty, active)?;
+            self.deactivate_unit_variant_bindings_in_pat(*pat, *scope, &expected_ty, active)?;
         }
 
         for expr_idx in 0..self.body.body().exprs().len() {
@@ -145,6 +145,7 @@ where
                         if let Some(pat) = arm.pat {
                             self.deactivate_unit_variant_bindings_in_pat(
                                 pat,
+                                arm.scope,
                                 &expected_ty,
                                 active,
                             )?;
@@ -164,7 +165,12 @@ where
                         active,
                         pending_tys,
                     )?;
-                    self.deactivate_unit_variant_bindings_in_pat(*pat, &expected_ty, active)?;
+                    self.deactivate_unit_variant_bindings_in_pat(
+                        *pat,
+                        *scope,
+                        &expected_ty,
+                        active,
+                    )?;
                 }
                 _ => {}
             }
@@ -265,6 +271,7 @@ where
     fn deactivate_unit_variant_bindings_in_pat(
         &self,
         pat: rg_ir_model::PatId,
+        scope: ScopeId,
         expected_ty: &Ty,
         active: &mut [bool],
     ) -> Result<(), ReadError> {
@@ -297,13 +304,19 @@ where
                     active[binding.0] = false;
                 }
                 if let Some(subpat) = subpat {
-                    self.deactivate_unit_variant_bindings_in_pat(*subpat, expected_ty, active)?;
+                    self.deactivate_unit_variant_bindings_in_pat(
+                        *subpat,
+                        scope,
+                        expected_ty,
+                        active,
+                    )?;
                 }
             }
             PatKind::TupleStruct { path, fields } => {
                 self.deactivate_unit_variant_bindings_in_tuple_struct_pat(
                     path.as_ref(),
                     fields,
+                    scope,
                     expected_ty,
                     active,
                 )?;
@@ -312,17 +325,18 @@ where
                 self.deactivate_unit_variant_bindings_in_record_pat(
                     path.as_ref(),
                     fields,
+                    scope,
                     expected_ty,
                     active,
                 )?;
             }
             PatKind::Or { pats } => {
                 for pat in pats {
-                    self.deactivate_unit_variant_bindings_in_pat(*pat, expected_ty, active)?;
+                    self.deactivate_unit_variant_bindings_in_pat(*pat, scope, expected_ty, active)?;
                 }
             }
             PatKind::Ref { pat, .. } | PatKind::Box { pat } => {
-                self.deactivate_unit_variant_bindings_in_pat(*pat, expected_ty, active)?;
+                self.deactivate_unit_variant_bindings_in_pat(*pat, scope, expected_ty, active)?;
             }
             PatKind::Tuple { .. }
             | PatKind::Slice { .. }
@@ -342,24 +356,23 @@ where
         &self,
         path: Option<&BodyPath>,
         fields: &[rg_ir_model::PatId],
+        scope: ScopeId,
         expected_ty: &Ty,
         active: &mut [bool],
     ) -> Result<(), ReadError> {
-        let field_query = self.context.fields();
-        let arity = || {
-            let owner = expected_ty.reference_chain().flat_map(Ty::as_adts).next();
-            match owner {
-                Some(owner) => field_query.tuple_pattern_arity(path, owner.def),
-                None => Ok(None),
-            }
+        let Some(owner) = expected_ty.reference_chain().flat_map(Ty::as_adts).next() else {
+            return Ok(());
         };
+        let field_query = self.context.fields();
+        let variant = field_query.pattern_variant(scope, path, owner.def)?;
+        let arity = || field_query.tuple_pattern_arity(owner.def, variant);
         for (index, field_pat) in field_query.tuple_pattern_fields(fields, arity)? {
             let Some(field_ty) =
-                field_query.pattern_field_ty(path, expected_ty, &FieldKey::Tuple(index))?
+                field_query.pattern_field_ty(owner, variant, &FieldKey::Tuple(index))?
             else {
                 continue;
             };
-            self.deactivate_unit_variant_bindings_in_pat(field_pat, &field_ty, active)?;
+            self.deactivate_unit_variant_bindings_in_pat(field_pat, scope, &field_ty, active)?;
         }
         Ok(())
     }
@@ -368,18 +381,20 @@ where
         &self,
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
+        scope: ScopeId,
         expected_ty: &Ty,
         active: &mut [bool],
     ) -> Result<(), ReadError> {
+        let Some(owner) = expected_ty.reference_chain().flat_map(Ty::as_adts).next() else {
+            return Ok(());
+        };
+        let field_query = self.context.fields();
+        let variant = field_query.pattern_variant(scope, path, owner.def)?;
         for field in fields {
-            let Some(field_ty) =
-                self.context
-                    .fields()
-                    .pattern_field_ty(path, expected_ty, &field.key)?
-            else {
+            let Some(field_ty) = field_query.pattern_field_ty(owner, variant, &field.key)? else {
                 continue;
             };
-            self.deactivate_unit_variant_bindings_in_pat(field.pat, &field_ty, active)?;
+            self.deactivate_unit_variant_bindings_in_pat(field.pat, scope, &field_ty, active)?;
         }
         Ok(())
     }
