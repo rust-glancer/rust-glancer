@@ -12,7 +12,7 @@ use rg_lsp_proto::{
     DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
     EngineResult, EngineService, EngineServiceClient, FoldingClientCapabilities,
     OpenDocumentsRevision, ProjectInitialization, QueryError, QueryScope, QueryValue, SaveProposal,
-    SavedProjectChanges, path_to_file_uri,
+    SavedProjectChanges, SignatureHelpClientCapabilities, path_to_file_uri,
 };
 use rg_std::NormalizedPathBuf;
 use tarpc::{
@@ -32,7 +32,8 @@ use tower_lsp_server::{
         CompletionResponse, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
         DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InitializeParams, InitializeResult,
         InitializedParams, InlayHint, InlayHintKind, InlayHintParams, Label, Location, Position,
-        PrepareRenameResult, Range, SemanticTokens, TextEdit, Uri, WorkspaceEdit, WorkspaceSymbol,
+        PrepareRenameResult, Range, SemanticTokens, SignatureHelp, TextEdit, Uri, WorkspaceEdit,
+        WorkspaceSymbol,
     },
     jsonrpc::Result as LspResult,
 };
@@ -909,6 +910,15 @@ impl EngineService for GatedEditorEngine {
         _: context::Context,
         _: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Option<Hover>>, QueryError> {
+        panic!("test engine only supports editor query scenarios")
+    }
+
+    async fn signature_help(
+        self,
+        _: context::Context,
+        _: DocumentPositionSnapshot,
+        _: SignatureHelpClientCapabilities,
+    ) -> Result<QueryValue<Option<SignatureHelp>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
 

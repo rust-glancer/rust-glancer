@@ -270,6 +270,22 @@ impl EngineDispatcher {
                         |runner, cancellation| runner.hover(input, cancellation),
                     );
                 }
+                EngineCommand::SignatureHelp {
+                    input,
+                    client_capabilities,
+                    respond_to,
+                } => {
+                    let context =
+                        QueryContext::document("signature_help", queue_elapsed, input.snapshot());
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, cancellation| {
+                            runner.signature_help(input, client_capabilities, cancellation)
+                        },
+                    );
+                }
                 EngineCommand::CodeAction {
                     input,
                     request_context,

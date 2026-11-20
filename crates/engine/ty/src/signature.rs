@@ -18,7 +18,8 @@ use rg_source::ReadError;
 use rustc_type_ir::TypeVisitableExt as _;
 
 use crate::{
-    Clause, GenericArg, OpaqueTy, Substitution, TraitApplication, TraitRefLowering, Ty,
+    Clause, ConstructorRef, GenericArg, GenericArgs, OpaqueTy, Substitution, TraitApplication,
+    TraitRefLowering, Ty,
     lookup::ItemPathQuery,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver},
 };
@@ -138,6 +139,34 @@ where
                 .function(cx, function)?
                 .map(|value| value.raise(cx)))
         })
+    }
+
+    /// Read the parameter and return types with the tuple constructor's inferred arguments.
+    /// For `Wrapper::<u8>(value)`, substitute `u8` into both the field and `Wrapper<u8>`.
+    pub fn constructor(
+        &self,
+        constructor: ConstructorRef,
+        args: &GenericArgs,
+    ) -> Result<Option<CallableSignature>, ReadError> {
+        let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
+        let Some(mut signature) = lowering.with_storage(|cx| {
+            Ok(lowering
+                .constructor(cx, constructor)?
+                .map(|value| value.raise(cx)))
+        })?
+        else {
+            return Ok(None);
+        };
+        let generics = self
+            .item_paths
+            .generics()
+            .generics(constructor.owner().into())?;
+        let substitution = Substitution::from_args(&generics, args);
+        for param in &mut signature.params {
+            *param = substitution.apply(param);
+        }
+        signature.call_return = substitution.apply(&signature.call_return);
+        Ok(Some(signature))
     }
 
     /// Read the default written on a type or const parameter.

@@ -29,8 +29,8 @@ pub use self::{
         CompletionItem, CompletionKind, CompletionResult, CompletionTarget, DocumentSymbol,
         DocumentationLink, Fold, FoldKind, Highlight, HighlightKind, HoverBlock, HoverInfo,
         InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget,
-        NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
-        SyntheticCompletionTarget, WorkspaceSymbol,
+        NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget,
+        SignatureHelp, SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
     },
     query::{
         code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
@@ -292,6 +292,20 @@ impl<'a> Analysis<'a> {
     ) -> anyhow::Result<Option<HoverInfo>> {
         self.run_query("hover", || {
             query::hover::HoverResolver::new(self).hover(crate_ref, file_id, offset)
+        })
+    }
+
+    /// Show the signature and active parameter for the innermost call under the cursor.
+    ///
+    /// A declaration or a callable type can supply a signature before the list is complete.
+    pub fn signature_help(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<SignatureHelp>> {
+        self.run_query("signature help", || {
+            query::signature_help::signature_help(self, crate_ref, file_id, offset)
         })
     }
 

@@ -4,13 +4,15 @@ use std::path::PathBuf;
 
 use gen_lsp_types::{
     CodeAction, DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InlayHint, Location,
-    PrepareRenameResult, Range, SemanticTokens, TextEdit, WorkspaceEdit, WorkspaceSymbol,
+    PrepareRenameResult, Range, SemanticTokens, SignatureHelp, TextEdit, WorkspaceEdit,
+    WorkspaceSymbol,
 };
 use rg_lsp_proto::{
     CodeActionRequestContext, CompletionClientCapabilities, CompletionImport,
     CompletionImportCandidate, CompletionResult, DocumentPositionSnapshot, DocumentRangeSnapshot,
     DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, FoldingClientCapabilities,
     InlayHintsConfig, OpenDocumentsRevision, ProjectInitialization, QueryError, QueryValue,
+    SignatureHelpClientCapabilities,
 };
 use rg_project::SavedFileChange;
 use tokio::sync::oneshot;
@@ -81,6 +83,11 @@ pub(crate) enum EngineCommand {
     Hover {
         input: DocumentPositionSnapshot,
         respond_to: QueryResponder<Option<Hover>>,
+    },
+    SignatureHelp {
+        input: DocumentPositionSnapshot,
+        client_capabilities: SignatureHelpClientCapabilities,
+        respond_to: QueryResponder<Option<SignatureHelp>>,
     },
     CodeAction {
         input: DocumentRangeSnapshot,

@@ -156,7 +156,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             .resolved_function_calls(crate_ref, file_id, range)?
         {
             let Some(function) = members
-                .function(call.function())
+                .function(*call.target())
                 .context("read parameter hint function")?
             else {
                 continue;

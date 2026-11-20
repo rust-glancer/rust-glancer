@@ -13,8 +13,8 @@ use std::{sync::Arc, time::Instant};
 
 use anyhow::Context as _;
 use gen_lsp_types::{
-    CodeAction, DocumentSymbol, FoldingRange, Hover, InlayHint, Position, Range, TextEdit,
-    WorkspaceSymbol,
+    CodeAction, DocumentSymbol, FoldingRange, Hover, InlayHint, Position, Range, SignatureHelp,
+    TextEdit, WorkspaceSymbol,
 };
 use rg_analysis::{
     Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger,
@@ -26,7 +26,7 @@ use rg_lsp_proto::{
     CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
     CompletionImport, CompletionImportCandidate, CompletionImportSite, CompletionResult,
     DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot,
-    EditorSnapshot, FoldingClientCapabilities,
+    EditorSnapshot, FoldingClientCapabilities, SignatureHelpClientCapabilities,
 };
 use rg_parse::{LineIndex, parse_source_file};
 use rg_project::{FileContext, ProjectSnapshot};
@@ -40,7 +40,7 @@ use crate::{
     memory::MemoryControl,
     proto::{
         code_action, completion, folding as folding_proto, formatting as formatting_proto, hover,
-        inlay_hint, navigation::SourceLocations, position, symbols,
+        inlay_hint, navigation::SourceLocations, position, signature_help, symbols,
     },
 };
 
@@ -408,6 +408,32 @@ impl<'a> QueryRunner<'a> {
             },
         )
         .context("prepare hover analysis")
+    }
+
+    pub(super) fn signature_help(
+        &mut self,
+        input: DocumentPositionSnapshot,
+        client_capabilities: SignatureHelpClientCapabilities,
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<Option<SignatureHelp>> {
+        self.with_document_analysis(
+            "signature_help",
+            input.snapshot(),
+            DocumentSelection::Position(input.position()),
+            cancellation,
+            |current| {
+                let Some(current) = current else {
+                    return Ok(None);
+                };
+                let help = current.analysis.signature_help(
+                    current.target.crate_ref,
+                    current.target.file,
+                    current.selection.start,
+                )?;
+                Ok(help.map(|help| signature_help::signature_help(help, client_capabilities)))
+            },
+        )
+        .context("prepare signature help analysis")
     }
 
     /// Build the document outline directly from the syntax shown by the editor.

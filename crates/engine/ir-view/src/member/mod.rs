@@ -172,6 +172,14 @@ impl<'a> MemberFunction<'a> {
         self.data.has_self_receiver()
     }
 
+    pub fn is_variadic(&self) -> bool {
+        self.data
+            .signature
+            .params()
+            .last()
+            .is_some_and(|param| param.kind == ParamKind::Variadic)
+    }
+
     fn docs(&self) -> Option<&'a Documentation> {
         self.data.docs.as_ref()
     }

@@ -288,6 +288,7 @@ pub struct ParamItem {
 pub enum ParamKind {
     SelfParam(SelfParamKind),
     Normal,
+    Variadic,
 }
 
 /// Receiver form written by a function's self parameter.

@@ -16,7 +16,7 @@ use gen_lsp_types::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionTriggerKind, CompletionItem,
     CompletionItemTextEdit, Contents, DocumentChange, DocumentHighlight, DocumentHighlightKind,
     DocumentSymbol, Edit, FoldingRange, FoldingRangeKind, Hover, InlayHint, InlayHintKind, Label,
-    Location, Position, Range, TextEdit, Tooltip, Uri, WorkspaceEdit,
+    Location, Position, Range, SignatureHelp, TextEdit, Tooltip, Uri, WorkspaceEdit,
 };
 use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
@@ -24,8 +24,8 @@ use rg_lsp_proto::{
     DocumentRevision, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
     EngineResult, EngineService, FoldingClientCapabilities, OpenDocumentSession,
     OpenDocumentsRevision, QueryError, QueryScope, QueryValue, SaveProposal, SavedProjectChanges,
-    ServiceNotification, SysrootDiscovery, file_uri_to_path, path_to_file_uri,
-    semantic_tokens_legend,
+    ServiceNotification, SignatureHelpClientCapabilities, SysrootDiscovery, file_uri_to_path,
+    path_to_file_uri, semantic_tokens_legend,
 };
 use rg_parse::LineIndex;
 use rg_workspace::SysrootSources;
@@ -332,6 +332,26 @@ impl LspEngineFixture {
     fn position_snapshot(&self, path: PathBuf, position: Position) -> DocumentPositionSnapshot {
         self.document_snapshot(path).with_position(position)
     }
+
+    pub(super) async fn signature_help(
+        &self,
+        document: &DirtyDocument,
+        marker: &str,
+        client_capabilities: SignatureHelpClientCapabilities,
+    ) -> Option<SignatureHelp> {
+        let position = self.marker_position(QueryMarkers::Dirty(document), marker);
+        self.service
+            .clone()
+            .signature_help(
+                context::current(),
+                self.position_snapshot(self.fixture.path(document.path), position),
+                client_capabilities,
+            )
+            .await
+            .expect("signature help query should succeed")
+            .into_value()
+    }
+
     pub(super) async fn did_save_dirty(&self, dirty: &DirtyDocument) {
         let path = self.fixture.path(dirty.path);
         fs::write(&path, dirty.text.text())
