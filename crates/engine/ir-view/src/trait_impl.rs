@@ -77,6 +77,7 @@ pub struct MissingTraitMember {
     required: bool,
     scaffold: MissingTraitMemberScaffold,
     documentation: Option<String>,
+    suggestible: bool,
 }
 
 impl MissingTraitMember {
@@ -98,6 +99,10 @@ impl MissingTraitMember {
 
     pub fn documentation(&self) -> Option<&str> {
         self.documentation.as_deref()
+    }
+
+    pub fn is_suggestible(&self) -> bool {
+        self.suggestible
     }
 }
 
@@ -177,6 +182,8 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         application: &TraitApplication,
     ) -> anyhow::Result<Vec<MissingTraitMember>> {
         let trait_ref = application.def;
+        let defining_crate = trait_ref.origin.origin_crate();
+        let use_crate = impl_ref.origin.origin_crate();
         let items = ItemStoreQuery::new(self.db);
         let Some(impl_data) = items
             .impl_data(impl_ref)
@@ -257,6 +264,9 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                                 .context("render missing trait function signature")?,
                         },
                         documentation: data.docs.as_ref().map(Documentation::text),
+                        suggestible: data
+                            .user_facing_attrs
+                            .is_suggestible_from(defining_crate, use_crate),
                     }
                 }
                 AssocItemId::TypeAlias(id) => {
@@ -292,6 +302,9 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                             suggested_value,
                         },
                         documentation: data.docs.as_ref().map(Documentation::text),
+                        suggestible: data
+                            .user_facing_attrs
+                            .is_suggestible_from(defining_crate, use_crate),
                     }
                 }
                 AssocItemId::Const(id) => {
@@ -321,6 +334,9 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                             signature: signatures_renderer.trait_impl_const_signature(data, &ty),
                         },
                         documentation: data.docs.as_ref().map(Documentation::text),
+                        suggestible: data
+                            .user_facing_attrs
+                            .is_suggestible_from(defining_crate, use_crate),
                     }
                 }
             };

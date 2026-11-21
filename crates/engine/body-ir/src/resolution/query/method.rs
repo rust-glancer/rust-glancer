@@ -73,7 +73,7 @@ where
     /// Check out-of-scope methods from one batch of matching names.
     ///
     /// Screening by receiver shape keeps unrelated traits out of the shortlist. Each matching
-    /// function with a receiver spends one slot from the budget shared by all batches.
+    /// suggestible function with a receiver spends one slot from the budget shared by all batches.
     pub fn extension_methods_for_ty<'name>(
         &self,
         scope: ScopeId,
@@ -87,6 +87,7 @@ where
         let deadline = budget.as_ref().map(|(_, deadline)| *deadline);
         let expired = || deadline.is_some_and(|end| Instant::now() >= end);
         let traits_in_scope = self.context.traits().traits_in_scope(scope)?;
+        let use_crate = self.context.body_ref().crate_ref;
         let items = self.context.item_query();
         let context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&context, &self.context);
@@ -131,7 +132,12 @@ where
                     continue;
                 }
                 for (function, data) in items.associated_functions(trait_ref.member_store())? {
-                    if data.name == *name && data.has_self_receiver() {
+                    if data.name == *name
+                        && data.has_self_receiver()
+                        && data
+                            .user_facing_attrs
+                            .is_suggestible_from(function.store.origin.origin_crate(), use_crate)
+                    {
                         functions.push((function, *trait_ref));
                         if let Some((remaining, _)) = &mut budget {
                             **remaining -= 1;

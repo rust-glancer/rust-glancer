@@ -37,7 +37,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .context("collect dot field candidates")?
         {
             rg_std::check_cancel!(self.db, "completion candidate");
-            fields.push(field.field_ref());
+            if field.is_suggestible_from(receiver.body_ir().crate_ref) {
+                fields.push(field.field_ref());
+            }
         }
 
         Ok(fields)
@@ -61,6 +63,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         site: &RecordFieldCompletionSite,
     ) -> anyhow::Result<Vec<RecordFieldCompletionCandidate>> {
         let site = site.source();
+        let use_crate = site.scope().body_ir().crate_ref;
         let members = MemberView::new(self.db);
         let mut fields = Vec::new();
         match site.owner() {
@@ -73,7 +76,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     let Some(key) = field.key() else {
                         continue;
                     };
-                    if !Self::record_field_is_available(key, site.existing_fields()) {
+                    if !field.is_suggestible_from(use_crate)
+                        || !Self::record_field_is_available(key, site.existing_fields())
+                    {
                         continue;
                     }
                     fields.push(RecordFieldCompletionCandidate::Type(field.field_ref()));
@@ -88,7 +93,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     let Some(key) = field.key() else {
                         continue;
                     };
-                    if !Self::record_field_is_available(key, site.existing_fields()) {
+                    if !field.is_suggestible_from(use_crate)
+                        || !Self::record_field_is_available(key, site.existing_fields())
+                    {
                         continue;
                     }
                     fields.push(RecordFieldCompletionCandidate::EnumVariant(
@@ -125,7 +132,12 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .context("collect dot method candidates")?
         {
             rg_std::check_cancel!(self.db, "completion candidate");
-            methods.push(Self::dot_method_candidate(method));
+            if method
+                .function()
+                .is_suggestible_from(receiver.body_ir().crate_ref)
+            {
+                methods.push(Self::dot_method_candidate(method));
+            }
         }
 
         Ok(methods)

@@ -80,6 +80,105 @@ fn external() {
 }
 
 #[test]
+fn filters_foreign_members_and_expected_variants() {
+    let hidden_extensions = (0..16)
+        .map(|index| format!("#[doc(hidden)] fn extension_hidden_{index}(&self) {{}}\n"))
+        .collect::<String>();
+    let fixture = r#"
+//- /api/src/lib.rs crate:api root:api
+pub struct Record {
+    #[doc(hidden)]
+    pub field_hidden: u8,
+    pub field_visible: u8,
+}
+impl Record {
+    #[doc(hidden)]
+    pub fn member_hidden(&self) -> u16 { 0 }
+    pub fn member_visible(&self) {}
+    #[doc(hidden)]
+    pub const member_hidden_const: u8 = 0;
+    pub const member_visible_const: u8 = 0;
+}
+#[doc(hidden)]
+impl Record {
+    pub fn member_impl_only(&self) -> u16 { 0 }
+    pub const member_impl_const: u8 = 0;
+}
+
+pub enum Choice {
+    #[doc(hidden)]
+    VariantHidden,
+    VariantVisible {
+        #[doc(hidden)]
+        field_hidden: u8,
+        field_visible: u8,
+    },
+}
+
+pub trait Service {
+    #[doc(hidden)]
+    fn member_hidden(&self) {}
+    fn member_visible(&self) {}
+}
+
+pub mod extensions {
+    pub trait Extensions {
+        /* hidden methods */
+        fn extension_visible(&self) {}
+    }
+    impl Extensions for super::Record {}
+}
+
+fn internal(record: Record) {
+    record.member_$0; // complete("methods inside the defining crate").in_lib("api").matching("member_")
+}
+
+//- /app/src/lib.rs crate:app root:app deps:api
+use api::{Choice, Record, Service};
+
+fn external(record: Record) {
+    let $0written = record.member_impl_only(); // ty("a written hidden method still resolves").in_lib("app")
+    record.member_$0; // complete("foreign methods").in_lib("app").matching("member_")
+    record.field_$0; // complete("foreign fields").in_lib("app").matching("field_")
+    record.extension_$0; // complete("extension auto-import").in_lib("app").auto_import().matching("extension_")
+    Record::member_$0; // complete("associated items").in_lib("app").matching("member_")
+    let _ = Record { field_$0 }; // complete("record fields").in_lib("app").matching("field_")
+    let _ = Choice::VariantVisible { field_$0 }; // complete("variant fields").in_lib("app").matching("field_")
+    let _: Choice = Variant$0; // complete("expected enum variants").in_lib("app").matching("Variant")
+}
+
+struct Worker;
+impl Service for Worker {
+    fn member_$0 // complete("trait member scaffolds").in_lib("app").matching("member_")
+}
+"#
+    .replace("/* hidden methods */", &hidden_extensions);
+    check_analysis(
+        &fixture,
+        expect![[r#"
+            // methods inside the defining crate
+            im member_hidden
+            im member_impl_only
+            im member_visible
+
+            u16 // a written hidden method still resolves
+            im member_visible // foreign methods
+            fd field_visible // foreign fields
+            tm extension_visible // extension auto-import
+
+            // associated items
+            ct member_visible_const
+            fn member_visible
+
+            fd field_visible // record fields
+            fd field_visible // variant fields
+            ev VariantVisible // expected enum variants
+            fn member_visible // trait member scaffolds
+        "#]],
+    );
+}
+
+#[test]
 fn auto_import_uses_the_documented_alias_of_a_hidden_crate() {
     check_analysis(
         r#"

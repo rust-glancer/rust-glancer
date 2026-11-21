@@ -132,7 +132,7 @@ pub fn associated_declarations(
 ) -> ajika::Result<Option<AssociatedDeclarations>> {
     let target = target_declarations(db, krate)?;
     let headers = target.items.value_ref(db)?;
-    let (item_owner, source_store, module) = match owner {
+    let (item_owner, source_store, module, impl_attrs) = match owner {
         ItemStoreId::Trait(id) => {
             let Some(header) = headers.trait_data(db, id)? else {
                 return Ok(None);
@@ -141,6 +141,7 @@ pub fn associated_declarations(
                 ItemOwner::Trait(id),
                 GeneratedSourceStoreId::TraitMembers(id),
                 header.owner,
+                Default::default(),
             )
         }
         ItemStoreId::Impl(id) => {
@@ -151,6 +152,7 @@ pub fn associated_declarations(
                 ItemOwner::Impl(id),
                 GeneratedSourceStoreId::ImplMembers(id),
                 header.owner,
+                header.user_facing_attrs,
             )
         }
         ItemStoreId::Scope => return Ok(None),
@@ -172,7 +174,7 @@ pub fn associated_declarations(
                     .unwrap_or_else(|| ajika::Error::application(error.into_boxed_dyn_error()))
             })?;
         for (source, item) in expanded.items {
-            if let Some(id) = builder.lower(source, item_owner, &item)
+            if let Some(id) = builder.lower(source, item_owner, &item, impl_attrs)
                 && let Some(lang_item) = item.lang_item
             {
                 lang_items.insert(lang_item, id.semantic_ref(store));

@@ -12,10 +12,10 @@ mod method;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    ConstRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef, ItemOwner,
-    TraitApplicability, TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    ConstRef, CrateRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef,
+    ItemOwner, TraitApplicability, TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
+use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind, UserFacingAttrs};
 pub use rg_semantic_ir::AssociatedItemFilter;
 use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemStoreQuery};
 use rg_syntax::{Edition, LexedStr, SyntaxKind};
@@ -33,6 +33,13 @@ pub struct MemberField<'a> {
 impl<'a> MemberField<'a> {
     pub fn field_ref(&self) -> FieldRef {
         self.field
+    }
+
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .field
+            .user_facing_attrs
+            .is_suggestible_from(self.field.owner.origin.origin_crate(), use_crate)
     }
 
     pub fn key(&self) -> Option<&'a FieldKey> {
@@ -66,6 +73,13 @@ pub struct MemberEnumVariantField<'a> {
 impl<'a> MemberEnumVariantField<'a> {
     pub fn field_ref(&self) -> EnumVariantFieldRef {
         self.field
+    }
+
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .field
+            .user_facing_attrs
+            .is_suggestible_from(self.field.owner.origin.origin_crate(), use_crate)
     }
 
     pub fn key(&self) -> Option<&'a FieldKey> {
@@ -126,6 +140,12 @@ pub struct MemberFunction<'a> {
 impl<'a> MemberFunction<'a> {
     pub fn function_ref(&self) -> FunctionRef {
         self.function
+    }
+
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .user_facing_attrs
+            .is_suggestible_from(self.function.store.origin.origin_crate(), use_crate)
     }
 
     pub fn name(&self) -> &'a str {
@@ -236,6 +256,13 @@ pub struct MemberEnumVariant<'a> {
 impl<'a> MemberEnumVariant<'a> {
     pub fn variant_ref(&self) -> EnumVariantRef {
         self.variant
+    }
+
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .variant
+            .user_facing_attrs
+            .is_suggestible_from(self.variant.origin.origin_crate(), use_crate)
     }
 
     pub fn owner(&self) -> rg_ir_model::TypeDefRef {
@@ -351,9 +378,16 @@ pub struct MemberAssociatedItemDefinition {
     label: String,
     kind: SymbolKind,
     documentation: Option<String>,
+    user_facing_attrs: UserFacingAttrs,
 }
 
 impl MemberAssociatedItemDefinition {
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        let origin = self.candidate.item().declaration_ref().origin();
+        self.user_facing_attrs
+            .is_suggestible_from(origin.origin_crate(), use_crate)
+    }
+
     pub fn candidate(&self) -> MemberAssociatedItemCandidate {
         self.candidate
     }

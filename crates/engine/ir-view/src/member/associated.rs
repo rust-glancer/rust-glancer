@@ -297,7 +297,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &self,
         candidate: MemberAssociatedItemCandidate,
     ) -> anyhow::Result<Option<MemberAssociatedItemDefinition>> {
-        let (label, kind, documentation) = match candidate.item() {
+        let (label, kind, documentation, user_facing_attrs) = match candidate.item() {
             MemberAssociatedItem::Function(function) => {
                 let Some(function) = self
                     .function(function)
@@ -309,6 +309,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                     function.name().to_string(),
                     function.symbol_kind(),
                     function.docs_text(),
+                    function.data.user_facing_attrs,
                 )
             }
             MemberAssociatedItem::TypeAlias(alias) => {
@@ -322,6 +323,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                     data.name.to_string(),
                     SymbolKind::TypeAlias,
                     data.docs.as_ref().map(Documentation::text),
+                    data.user_facing_attrs,
                 )
             }
             MemberAssociatedItem::Const(konst) => {
@@ -335,6 +337,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                     data.name.to_string(),
                     SymbolKind::Const,
                     data.docs.as_ref().map(Documentation::text),
+                    data.user_facing_attrs,
                 )
             }
             MemberAssociatedItem::EnumVariant(variant) => {
@@ -348,6 +351,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                     variant.label().to_string(),
                     SymbolKind::EnumVariant,
                     variant.docs_text(),
+                    variant.data.variant.user_facing_attrs,
                 )
             }
         };
@@ -357,6 +361,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
             label,
             kind,
             documentation,
+            user_facing_attrs,
         }))
     }
 

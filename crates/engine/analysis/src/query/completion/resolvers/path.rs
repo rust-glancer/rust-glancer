@@ -57,7 +57,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             .context("collect module path completion candidates")?;
         candidates.extend(
             completion_candidates
-                .associated_definition_candidates_for_path(&site)
+                .associated_definition_candidates_for_path(&site, self.query.crate_ref)
                 .context("collect associated path completion candidates")?,
         );
         let mut completions = self

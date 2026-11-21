@@ -52,7 +52,7 @@ impl<'a, 'db, 'source> AssociatedTypeBindingCompletionResolver<'a, 'db, 'source>
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let source = CompletionCandidateSource::new(self.analysis.view_db());
         let candidates = source
-            .associated_type_binding_candidates(&site)
+            .associated_type_binding_candidates(&site, self.query.crate_ref)
             .context("collect associated type binding candidates")?;
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create associated type binding renderer")?;

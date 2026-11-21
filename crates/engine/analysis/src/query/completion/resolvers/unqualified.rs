@@ -436,6 +436,9 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             else {
                 continue;
             };
+            if !variant.is_suggestible_from(self.query.crate_ref) {
+                continue;
+            }
             let shape = variant.constructor_shape();
             if !site.accepts(&shape) {
                 continue;

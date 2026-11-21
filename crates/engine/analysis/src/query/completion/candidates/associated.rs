@@ -1,7 +1,7 @@
 //! Associated-item and pattern-constructor candidate lookup.
 
 use anyhow::Context as _;
-use rg_ir_model::{EnumVariantRef, TypeDefRef, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, EnumVariantRef, TypeDefRef, identity::DeclarationRef};
 use rg_ir_view::{
     lookup::name::NameNamespace,
     member::{AssociatedItemFilter, ConstructorShape, MemberAssociatedItem, MemberView},
@@ -27,6 +27,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     pub(crate) fn associated_definition_candidates_for_path(
         &self,
         site: &PathCompletionSite,
+        use_crate: CrateRef,
     ) -> anyhow::Result<Vec<DefinitionCompletionCandidate>> {
         let members = MemberView::new(self.db);
         let candidates = match site.source().scope() {
@@ -64,13 +65,14 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             }
         };
 
-        self.definition_candidates_from_associated(&members, candidates)
+        self.definition_candidates_from_associated(&members, candidates, use_crate)
     }
 
     /// Return only associated type declarations valid as binding names for the selected trait.
     pub(crate) fn associated_type_binding_candidates(
         &self,
         site: &IndexedAssociatedTypeBindingSite,
+        use_crate: CrateRef,
     ) -> anyhow::Result<Vec<DefinitionCompletionCandidate>> {
         let members = MemberView::new(self.db);
         let candidates = match site.scope() {
@@ -86,7 +88,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 .context("collect signature associated type binding candidates")?,
         };
         let mut definitions = self
-            .definition_candidates_from_associated(&members, candidates)
+            .definition_candidates_from_associated(&members, candidates, use_crate)
             .context("project associated type binding candidates")?;
         definitions.retain(|candidate| {
             candidate.kind() == CompletionKind::TypeAlias
@@ -103,6 +105,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         members: &MemberView<'_, '_>,
         candidates: Vec<rg_ir_view::member::MemberAssociatedItemCandidate>,
+        use_crate: CrateRef,
     ) -> anyhow::Result<Vec<DefinitionCompletionCandidate>> {
         let mut definitions = Vec::new();
         for candidate in candidates {
@@ -112,6 +115,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             else {
                 continue;
             };
+            if !definition.is_suggestible_from(use_crate) {
+                continue;
+            }
             let Some(kind) = Self::completion_kind(definition.kind()) else {
                 continue;
             };

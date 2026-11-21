@@ -70,6 +70,9 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
 
         for member in members {
             rg_std::check_cancel!(self.analysis, "completion candidate");
+            if !member.is_suggestible() {
+                continue;
+            }
             let (member_kind, kind, target) = match member.member() {
                 MissingTraitMemberRef::Function(function) => (
                     TraitImplMemberKind::Function,
