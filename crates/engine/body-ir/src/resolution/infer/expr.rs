@@ -60,7 +60,9 @@ where
         // Completion can ask what this slot expects while ignoring the value already there.
         // Leave the slot available so the call's other inputs can still constrain it.
         if self.argument_hole == Some(expr) {
-            self.coerce_expr_ty(expr, expected);
+            if let ExprExpectation::Coerce(expected) = expectation {
+                self.coerce_expr_ty(expr, &expected);
+            }
             return Ok(());
         }
         // Keep generated or expanded syntax from consuming an unbounded inference stack.
