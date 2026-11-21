@@ -115,6 +115,9 @@ pub enum Choice {
     },
 }
 
+#[doc(hidden)]
+pub enum InternalChoice { VariantInternal }
+
 pub trait Service {
     #[doc(hidden)]
     fn member_hidden(&self) {}
@@ -145,6 +148,7 @@ fn external(record: Record) {
     let _ = Record { field_$0 }; // complete("record fields").in_lib("app").matching("field_")
     let _ = Choice::VariantVisible { field_$0 }; // complete("variant fields").in_lib("app").matching("field_")
     let _: Choice = Variant$0; // complete("expected enum variants").in_lib("app").matching("Variant")
+    let _: api::InternalChoice = Variant$0; // complete("hidden expected enum").in_lib("app").matching("Variant")
 }
 
 struct Worker;
@@ -173,6 +177,7 @@ impl Service for Worker {
             fd field_visible // record fields
             fd field_visible // variant fields
             ev VariantVisible // expected enum variants
+            <none> // hidden expected enum
             fn member_visible // trait member scaffolds
         "#]],
     );
@@ -201,6 +206,35 @@ fn external() {
               sort: 05-auto-import:0003|00|RootApi|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 73..78
               additional: 44..44 => "\nuse crate::documented::RootApi;"
+        "#]],
+    );
+}
+
+#[test]
+fn expected_variants_can_use_a_documented_type_alias() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:app
+mod home {
+    mod private {
+        pub enum Event<T> { VariantVisible(T) }
+    }
+    pub type AliasU16 = private::Event<u16>;
+    pub type AliasU8 = private::Event<u8>;
+}
+use home::{AliasU16, AliasU8};
+
+fn external() -> AliasU8 {
+    Var$0 // complete_verbose("uses the alias with matching arguments").matching("Variant")
+}
+"#,
+        expect![[r#"
+            // uses the alias with matching arguments
+            variant VariantVisible
+              detail: variant AliasU8::VariantVisible
+              sort: !expected|00-expected|VariantVisible|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
+              replace: 236..239
+              snippet: AliasU8::VariantVisible($0)
         "#]],
     );
 }

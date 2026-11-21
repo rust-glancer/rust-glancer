@@ -99,6 +99,22 @@ impl ImportableNameSearch<'_, '_> {
         Ok(false)
     }
 
+    /// Check a qualified type path synthesized for completion, including its module route.
+    pub fn can_suggest_type_path(&self, module: ModuleRef, path: &Path) -> anyhow::Result<bool> {
+        let Some(ImportPathBindings { source, bindings }) =
+            self.selected_bindings(module, path, NamespaceSet::TYPES)?
+        else {
+            return Ok(false);
+        };
+        let (Some(label), [(namespace, binding)]) = (path.segments().last(), bindings.as_slice())
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .binding_name(module, source, label, *namespace, binding)?
+            .is_some())
+    }
+
     /// Follow just the saved route. A public item can remain reachable in Rust even after
     /// a dependency marks an intermediate module or its re-export as hidden.
     fn selected_bindings(

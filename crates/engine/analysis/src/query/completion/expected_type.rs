@@ -141,10 +141,15 @@ impl ExpectedTypeRanking {
 
     /// At a bare name, the completion can supply the entire constructor.
     /// If the user has already supplied delimiters, keep only their matching variant shape.
-    pub(super) fn enum_constructor_site(&self) -> Option<(TypeDefRef, ValueExpression)> {
+    pub(super) fn enum_constructor_site(
+        &self,
+    ) -> Option<(&IndexedType, TypeDefRef, ValueExpression)> {
         let owner = self.expected.adt_def()?;
-        (!self.member_has_generic_args && matches!(owner.id, TypeDefId::Enum(_)))
-            .then_some((owner, self.expression))
+        (!self.member_has_generic_args && matches!(owner.id, TypeDefId::Enum(_))).then_some((
+            &self.expected,
+            owner,
+            self.expression,
+        ))
     }
 
     /// Rank values and constructors after visibility and shadowing checks. Function

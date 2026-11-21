@@ -13,17 +13,20 @@
 use std::collections::HashSet;
 
 use anyhow::Context as _;
-use rg_ir_model::{EnumVariantRef, Path, TypeDefRef};
+use rg_ir_model::{DefMapRef, EnumVariantRef, Path, TypeDefRef};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::{
         details::{DeclarationDetailsContext, DeclarationDetailsView},
         path::PathView,
     },
-    lookup::name::{GenericScopeNameKind, NameLookupView, NameNamespace},
+    lookup::{
+        importable::ImportableNameSearch,
+        name::{GenericScopeNameKind, NameLookupView, NameNamespace},
+    },
     member::{ConstructorShape, MemberView},
     source::IndexedUnqualifiedNameScope,
-    ty::{TyView, locals::BodyView},
+    ty::{IndexedType, TyView, locals::BodyView},
 };
 
 use crate::{
@@ -158,13 +161,18 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 &hidden,
             )?;
             Some((variants, ExpectedVariantSite::Pattern(policy)))
-        } else if let Some((owner, expression)) = self
+        } else if let Some((expected, owner, expression)) = self
             .query
             .expected_type
-            .and_then(|expected| expected.enum_constructor_site())
+            .and_then(|ranking| ranking.enum_constructor_site())
         {
-            let variants =
-                self.expected_expression_variants(&site, syntax, owner, &module_candidates)?;
+            let variants = self.expected_expression_variants(
+                &site,
+                syntax,
+                owner,
+                expected,
+                &module_candidates,
+            )?;
             Some((variants, ExpectedVariantSite::Expression(expression)))
         } else {
             None
@@ -334,6 +342,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         site: &UnqualifiedCompletionSite,
         syntax: SyntaxRenderer,
         owner: TypeDefRef,
+        expected: &IndexedType,
         module: &[DefinitionCompletionCandidate],
     ) -> anyhow::Result<Vec<(EnumVariantRef, String)>> {
         let IndexedUnqualifiedNameScope::Body {
@@ -361,6 +370,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             Some(owner) => NameLookupView::new(db).generic_scope_names(owner, None)?,
             None => Vec::new(),
         };
+        let types = TyView::new(db);
         let resolves_to_enum = |path: &Path| -> anyhow::Result<bool> {
             // Ordinary path lookup sees local items. Type parameters can
             // shadow the enum too, but are resolved during type lowering.
@@ -371,26 +381,36 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             {
                 return Ok(false);
             }
-            let ty =
-                TyView::new(db).ty_for_body_type_path(scope.body_ir(), scope.scope_id(), path)?;
-            Ok(ty.adt_def() == Some(owner))
+            types.bare_constructor_matches(*scope, path, expected)
         };
 
         // Value lookup did not collect lexical type names. Resolve each spelling
         // in the type namespace to account for shadowing by a local item.
         let candidates = CompletionCandidateSource::new(db);
         let mut qualifier = None;
-        for candidate in module {
+        let enum_names = module
+            .iter()
+            .filter(|candidate| candidate.kind() == CompletionKind::Enum);
+        // A visible type alias may be the only spelling of an enum in a private module.
+        let aliases = module
+            .iter()
+            .filter(|candidate| candidate.kind() == CompletionKind::TypeAlias);
+        for candidate in enum_names.chain(aliases) {
             rg_std::check_cancel!(self.analysis, "expected enum qualifier");
             if candidate.kind() == CompletionKind::Enum
-                && candidates.type_def_for_target(candidate.target())? == Some(owner)
-                && resolves_to_enum(&Path::unqualified_name(candidate.label()))?
+                && candidates.type_def_for_target(candidate.target())? != Some(owner)
             {
+                continue;
+            }
+            if resolves_to_enum(&Path::unqualified_name(candidate.label()))? {
                 qualifier = Some(syntax.identifier(candidate.label()).to_string());
                 break;
             }
         }
-        if qualifier.is_none() && resolves_to_enum(&Path::unqualified_name(variant.owner_name()))? {
+        if qualifier.is_none()
+            && matches!(owner.origin, DefMapRef::Body(_))
+            && resolves_to_enum(&Path::unqualified_name(variant.owner_name()))?
+        {
             qualifier = Some(syntax.identifier(variant.owner_name()).to_string());
         }
         // TODO: Discover alternative qualified paths through re-exports and crate aliases.
@@ -406,6 +426,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             };
             if let Some(text) = canonical
                 && let Some(path) = Path::from_text(&text, None)
+                && let Some(module) = BodyView::new(db).owner_module(scope.body_ir())?
+                && ImportableNameSearch::new(db).can_suggest_type_path(module, &path)?
                 && resolves_to_enum(&path)?
             {
                 qualifier = Some(text);

@@ -5,10 +5,10 @@
 
 use rg_body_ir::{ExprKind, StmtKind};
 use rg_ir_model::{
-    BodyRef, DefMapRef, ExprId, FileId, FunctionRef, SemanticItemRef, Span,
+    BodyRef, DefMapRef, ExprId, FileId, FunctionRef, Path, SemanticItemRef, Span,
     identity::{DeclarationRef, LexicalScopeRef},
 };
-use rg_semantic_ir::{GenericsQuery, ItemStoreQuery};
+use rg_semantic_ir::{GenericsQuery, ItemStoreQuery, TypePathResolution};
 use rg_std::ExpectedUnique;
 use rg_ty::{
     ClosureTy, FnDefRef, Substitution, Ty,
@@ -240,6 +240,36 @@ impl TyView<'_, '_> {
             .type_ref_ty(scope.body_ir(), scope.scope_id(), ty)?
             .filter(|ty| matches!(ty, Ty::Adt(_)))
             .map(IndexedType::new))
+    }
+
+    /// Check a constructor qualifier that completion will insert without generic arguments.
+    pub fn bare_constructor_matches(
+        &self,
+        scope: LexicalScopeRef,
+        path: &Path,
+        expected: &IndexedType,
+    ) -> anyhow::Result<bool> {
+        let resolution = BodyResolutionView::new(self.db).type_path_resolution(
+            scope.body_ir(),
+            scope.scope_id(),
+            path,
+        )?;
+        match resolution {
+            Some(TypePathResolution::TypeDef(def) | TypePathResolution::SelfType(def)) => {
+                Ok(expected.adt_def() == Some(def))
+            }
+            Some(TypePathResolution::TypeAlias(alias)) => {
+                let owner = self.body_view().generic_owner(scope.body_ir())?;
+                Ok(
+                    SemanticSignatureQuery::new(self.db, self.db).type_alias_matches_adt(
+                        alias,
+                        expected.raw(),
+                        owner,
+                    )?,
+                )
+            }
+            _ => Ok(false),
+        }
     }
 
     fn function_signature(

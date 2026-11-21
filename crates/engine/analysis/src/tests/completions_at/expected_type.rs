@@ -3,6 +3,41 @@ use expect_test::expect;
 use crate::tests::utils::check_analysis;
 
 #[test]
+fn infers_generic_arguments_for_an_alias_of_the_expected_enum() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:completion_generic_alias
+mod api {
+    mod private {
+        pub enum Event<L, R> { Variant(L, R) }
+    }
+    pub type AliasSame<T> = private::Event<T, T>;
+    pub type ZEvent<T> = private::Event<T, u16>;
+}
+use api::{AliasSame, ZEvent};
+
+fn concrete() -> ZEvent<u8> {
+    Var$0 // complete_verbose("infer the alias parameter").matching("Variant")
+}
+
+fn generic<T>() -> ZEvent<T> {
+    Var$0 // complete("infer the alias parameter from a contextual type parameter").matching("Variant")
+}
+"#,
+        expect![[r#"
+            // infer the alias parameter
+            variant Variant
+              detail: variant ZEvent::Variant
+              sort: !expected|00-expected|Variant|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
+              replace: 247..250
+              snippet: ZEvent::Variant($0)
+
+            ev Variant // infer the alias parameter from a contextual type parameter
+        "#]],
+    );
+}
+
+#[test]
 fn ranks_values_by_active_call_parameter() {
     check_analysis(
         r#"
