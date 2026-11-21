@@ -18,8 +18,8 @@ use gen_lsp_types::{
 };
 use rg_analysis::{
     Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger,
-    CompletionClientCapabilities as AnalysisCompletionClientCapabilities,
-    CompletionImport as AnalysisCompletionImport, CompletionQuery, CompletionSource,
+    CompletionClientCapabilities as AnalysisCompletionClientCapabilities, CompletionQuery,
+    CompletionSource,
 };
 use rg_ir_model::{Path, Span};
 use rg_lsp_proto::{
@@ -183,7 +183,12 @@ impl<'a> QueryRunner<'a> {
                     .into_iter()
                     .enumerate()
                     .map(|(index, item)| {
-                        completion::completion_candidate(item, current.line_index, index)
+                        completion::completion_candidate(
+                            item,
+                            current.line_index,
+                            index,
+                            client_capabilities.label_details_support,
+                        )
                     })
                     .collect();
                 let protocol_conversion_us = protocol_conversion_started.elapsed().as_micros();
@@ -244,10 +249,6 @@ impl<'a> QueryRunner<'a> {
                     current.selection.start,
                 )
                 .with_source_text(input.document().text());
-                let import = AnalysisCompletionImport {
-                    path,
-                    anonymous: import.anonymous,
-                };
                 let selected = if let Some(candidate) = candidate {
                     let Some(kind) = completion::import_kind(candidate.kind) else {
                         return Ok(None);
@@ -260,7 +261,8 @@ impl<'a> QueryRunner<'a> {
                     .analysis
                     .resolve_completion_import(
                         query,
-                        &import,
+                        &path,
+                        import.anonymous,
                         selected,
                         candidate.and_then(|row| row.inline_module_path.as_deref()),
                     )?

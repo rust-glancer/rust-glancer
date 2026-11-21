@@ -667,6 +667,7 @@ impl LspEngineFixture {
                 CompletionClientCapabilities {
                     resolve_additional_text_edits: true,
                     snippet_support: true,
+                    label_details_support: true,
                 },
             )
             .await

@@ -736,7 +736,6 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             if !filter.accepts_scope_candidate(candidate.namespace(), candidate.kind()) {
                 continue;
             }
-            let rendered_path = syntax.path(&path);
             let path_len = path.component_count();
             let Some(mut completion) = renderer
                 .completion(DefinitionCompletionRequest {
@@ -750,11 +749,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             else {
                 continue;
             };
-            completion.detail = Some(match completion.detail {
-                Some(detail) => format!("{detail} (use {rendered_path})"),
-                None => format!("use {rendered_path}"),
-            });
             completion.import = Some(CompletionImport {
+                display_path: syntax.path(&path).to_string(),
                 path,
                 anonymous: false,
             });

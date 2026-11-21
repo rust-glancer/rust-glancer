@@ -176,12 +176,8 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                             }),
                         })?
                         .item;
-                    let rendered_path = syntax.path(&path);
-                    item.detail = Some(format!(
-                        "{} (use {rendered_path} as _)",
-                        item.detail.as_deref().unwrap_or_default(),
-                    ));
                     item.import = Some(CompletionImport {
+                        display_path: syntax.path(&path).to_string(),
                         path,
                         anonymous: true,
                     });

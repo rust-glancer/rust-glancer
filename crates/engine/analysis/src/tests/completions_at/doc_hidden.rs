@@ -202,7 +202,8 @@ fn external() {
         expect![[r#"
             // auto-import the documented alias
             struct RootApi
-              detail: struct RootApi (use crate::documented::RootApi)
+              detail: struct RootApi
+              import: use crate::documented::RootApi
               replace: 73..78
               additional: 44..44 => "\nuse crate::documented::RootApi;"
         "#]],

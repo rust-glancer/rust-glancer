@@ -57,6 +57,8 @@ pub struct CompletionResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionImport {
     pub path: Path,
+    /// Path as it would be written in the receiving crate, including edition-specific escaping.
+    pub display_path: String,
     pub anonymous: bool,
 }
 

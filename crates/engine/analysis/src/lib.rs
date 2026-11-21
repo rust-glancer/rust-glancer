@@ -14,7 +14,7 @@ mod source_symbol;
 mod tests;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Path, Span};
 pub use rg_ir_view::SymbolKind;
 use rg_ir_view::{IndexedViewDb, source::IndexedSourceProvenance, ty::IndexedType};
 use rg_parse::SourceReader;
@@ -403,7 +403,8 @@ impl<'a> Analysis<'a> {
     pub fn resolve_completion_import(
         &self,
         query: CompletionQuery<'_>,
-        import: &CompletionImport,
+        path: &Path,
+        anonymous: bool,
         selected: Option<(&str, CompletionKind)>,
         expected_inline_module: Option<&[String]>,
     ) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
@@ -420,7 +421,8 @@ impl<'a> Analysis<'a> {
                 self,
                 query,
                 source,
-                import,
+                path,
+                anonymous,
                 selected,
                 expected_inline_module,
             )

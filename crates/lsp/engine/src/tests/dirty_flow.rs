@@ -44,6 +44,24 @@ async fn resolves_named_and_extension_trait_completion_imports() {
         .check_auto_import("method", "render_widget", "use crate::WidgetRenderer as _;")
         .await;
 
+    for (item, declaration, import_hint) in [
+        (
+            &widget.item,
+            "struct Widget",
+            " (use crate::collections::Widget)",
+        ),
+        (
+            &method.item,
+            "fn render_widget(&self)",
+            " (use crate::WidgetRenderer as _)",
+        ),
+    ] {
+        let label_details = item.label_details.as_ref().expect("separate import hint");
+        assert_eq!(item.detail.as_deref(), Some(declaration));
+        assert_eq!(label_details.description.as_deref(), Some(declaration));
+        assert_eq!(label_details.detail.as_deref(), Some(import_hint));
+    }
+
     // The displayed return type changes, but the same method still needs the same import.
     fixture
         .did_change_full(

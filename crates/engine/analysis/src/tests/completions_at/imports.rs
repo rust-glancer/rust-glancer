@@ -114,29 +114,34 @@ fn values() {
         expect![[r#"
             // coalesced HashMap import
             struct HashMap
-              detail: struct HashMap (use catalog::collections::HashMap)
+              detail: struct HashMap
+              import: use catalog::collections::HashMap
               replace: 61..66
               additional: 4..34 => "catalog::collections::{BTreeMap, HashMap}"
 
             // ambiguous imports
             struct Widget
-              detail: struct Widget (use catalog::left::Widget)
+              detail: struct Widget
+              import: use catalog::left::Widget
               replace: 79..82
               additional: 35..35 => "\nuse catalog::left::Widget;"
             struct Widget
-              detail: struct Widget (use catalog::right::Widget)
+              detail: struct Widget
+              import: use catalog::right::Widget
               replace: 79..82
               additional: 35..35 => "\nuse catalog::right::Widget;"
 
             // short re-export path
             struct RankedWidget
-              detail: struct RankedWidget (use catalog::RankedWidget)
+              detail: struct RankedWidget
+              import: use catalog::RankedWidget
               replace: 95..102
               additional: 35..35 => "\nuse catalog::RankedWidget;"
 
             // public re-export
             struct PublicWidget
-              detail: struct PublicWidget (use catalog::PublicWidget)
+              detail: struct PublicWidget
+              import: use catalog::PublicWidget
               replace: 115..122
               additional: 35..35 => "\nuse catalog::PublicWidget;"
 
@@ -147,7 +152,8 @@ fn values() {
 
             // value auto-import
             fn make_widget
-              detail: pub fn make_widget() (use catalog::make_widget)
+              detail: pub fn make_widget()
+              import: use catalog::make_widget
               replace: 229..235
               additional: 35..35 => "\nuse catalog::make_widget;"
               snippet: make_widget()$0
@@ -198,7 +204,7 @@ fn draw(yes: bool, no: u32) {
     no.draw_w$0; // complete("receiver is not a canvas").auto_import().matching("draw_with")
     yes.draw_i$0; // complete("receiver determines a paintable item").auto_import().matching("draw_item")
     no.draw_i$0; // complete("receiver determines an unpaintable item").auto_import().matching("draw_item")
-    yes.draw_f$0; // complete("the other source is chosen by the caller").auto_import().matching("draw_from")
+    yes.draw_f$0; // complete_verbose("the other source is chosen by the caller").auto_import().matching("draw_from")
 }
 "#,
         expect![[r#"
@@ -210,7 +216,14 @@ fn draw(yes: bool, no: u32) {
             <none> // receiver is not a canvas
             tm draw_item // receiver determines a paintable item
             <none> // receiver determines an unpaintable item
-            tm draw_from // the other source is chosen by the caller
+
+            // the other source is chosen by the caller
+            trait_method draw_from
+              detail: fn draw_from<T: Source>(&self, other: T) where Self: Source<Item = T::Item>
+              import: use crate::catalog::Draw as _
+              replace: 1020..1026
+              additional: 0..0 => "use crate::catalog::Draw as _;\n\n"
+              snippet: draw_from(${1:other})$0
         "#]],
     );
 }

@@ -100,6 +100,12 @@ impl CompletionRelevance {
                 .then_with(|| left.kind.rank().cmp(&right.kind.rank()))
                 .then_with(|| left.applicability.cmp(&right.applicability))
                 .then_with(|| left.detail.cmp(&right.detail))
+                .then_with(|| {
+                    left.import
+                        .as_ref()
+                        .map(|import| &import.display_path)
+                        .cmp(&right.import.as_ref().map(|import| &import.display_path))
+                })
                 // Two traits can offer the same method with the same signature. Only then
                 // compare target identities so equivalent lookups give those rows a stable order.
                 .then_with(|| {

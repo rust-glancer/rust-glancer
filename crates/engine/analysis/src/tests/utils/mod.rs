@@ -1117,6 +1117,11 @@ impl AnalysisQuerySnapshot<'_, '_> {
             if let Some(detail) = &completion.detail {
                 writeln!(dump, "  detail: {detail}").expect("string writes should not fail");
             }
+            if let Some(import) = &completion.import {
+                let alias = if import.anonymous { " as _" } else { "" };
+                writeln!(dump, "  import: use {}{alias}", import.display_path)
+                    .expect("string writes should not fail");
+            }
             if let Some(docs) = &completion.documentation {
                 writeln!(dump, "  docs: {docs}").expect("string writes should not fail");
             }
@@ -1132,7 +1137,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 && let Some(edit) = self
                     .db
                     .analysis()
-                    .resolve_completion_import(query, import, None, None)
+                    .resolve_completion_import(query, &import.path, import.anonymous, None, None)
                     .expect("fixture import should resolve")
             {
                 writeln!(

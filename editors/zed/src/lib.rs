@@ -4,7 +4,11 @@
 //! user-configured binary, a binary from the worktree environment, or the managed fallback. Once
 //! the command is chosen, Rust Glancer still owns its command-line and LSP configuration behavior.
 
-use zed_extension_api::{self as zed, settings::LspSettings};
+use zed_extension_api::{
+    self as zed,
+    lsp::{Completion, CompletionKind},
+    settings::LspSettings,
+};
 
 mod server;
 
@@ -66,6 +70,48 @@ impl zed::Extension for RustGlancerExtension {
             LspSettings::for_worktree(language_server_id.as_ref(), worktree)?
                 .initialization_options,
         )
+    }
+
+    fn label_for_completion(
+        &self,
+        _language_server_id: &zed::LanguageServerId,
+        completion: Completion,
+    ) -> Option<zed::CodeLabel> {
+        let details = completion.label_details?;
+        let import = details.detail.as_deref()?.strip_prefix(" (use ")?;
+        let name_highlight = match completion.kind {
+            Some(CompletionKind::Function | CompletionKind::Method) => Some("function"),
+            Some(CompletionKind::Constant | CompletionKind::EnumMember) => Some("constant"),
+            Some(CompletionKind::Variable) => Some("variable"),
+            Some(
+                CompletionKind::Class
+                | CompletionKind::Interface
+                | CompletionKind::Struct
+                | CompletionKind::Enum,
+            ) => Some("type"),
+            _ => None,
+        };
+
+        // Zed's generic renderer can drop the import hint when a description is present.
+        // Put the import next to the name so it remains visible when the row is truncated.
+        let filter_range = (0..completion.label.len()).into();
+        let mut spans = vec![
+            zed::CodeLabelSpan::literal(completion.label, name_highlight.map(str::to_owned)),
+            zed::CodeLabelSpan::literal(" (", None),
+            zed::CodeLabelSpan::literal("use", Some("keyword".to_owned())),
+            zed::CodeLabelSpan::literal(format!(" {import}"), None),
+        ];
+        if let Some(declaration) = details.description.or(completion.detail) {
+            spans.push(zed::CodeLabelSpan::literal(
+                format!("  {declaration}"),
+                None,
+            ));
+        }
+        Some(zed::CodeLabel {
+            code: String::new(),
+            spans,
+            filter_range,
+        })
     }
 }
 

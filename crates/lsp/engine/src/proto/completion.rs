@@ -1,6 +1,6 @@
 use gen_lsp_types::{
-    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionItemTextEdit, Documentation,
-    InsertTextFormat, MarkupContent, MarkupKind, TextEdit,
+    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionItemLabelDetails,
+    CompletionItemTextEdit, Documentation, InsertTextFormat, MarkupContent, MarkupKind, TextEdit,
 };
 use rg_analysis::{
     CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
@@ -17,13 +17,33 @@ pub(crate) fn completion_candidate(
     item: CompletionItem,
     line_index: &LineIndex,
     position: usize,
+    label_details_support: bool,
 ) -> CompletionCandidate {
-    let detail = completion_detail(item.detail, item.applicability);
+    let mut detail = completion_detail(item.detail, item.applicability);
+    let mut label_details = None;
+    if let Some(import) = &item.import {
+        let alias = if import.anonymous { " as _" } else { "" };
+        let hint = format!("use {}{alias}", import.display_path);
+        if label_details_support {
+            label_details = Some(CompletionItemLabelDetails {
+                detail: Some(format!(" ({hint})")),
+                description: detail.clone(),
+            });
+        } else {
+            // Keep the hint visible for clients with a single detail field. Resolve uses
+            // the primary label to find the completed name even after the client inserts it.
+            detail = Some(match detail {
+                Some(detail) => format!("{detail} ({hint})"),
+                None => hint,
+            });
+        }
+    }
     let insert_text_format = completion_insert_text_format(&item.insert_text);
     let text_edit = completion_text_edit(&item.label, item.insert_text, item.edit, line_index);
     CompletionCandidate {
         item: LspCompletionItem {
             label: item.label,
+            label_details,
             kind: Some(completion_kind(item.kind)),
             detail,
             documentation: item.documentation.and_then(markdown_documentation),
@@ -172,10 +192,12 @@ mod tests {
             },
             &LineIndex::new("user.na"),
             15,
+            true,
         )
         .item;
 
         assert_eq!(completion.kind, Some(CompletionItemKind::Method));
+        assert!(completion.label_details.is_none());
         assert_eq!(
             completion.detail.as_deref(),
             Some("fn name(&self) (maybe applicable)")
@@ -212,7 +234,7 @@ mod tests {
                 kind: CompletionKind::Keyword,
                 target: CompletionTarget::Keyword(KeywordCompletion::Use),
                 applicability: CompletionApplicability::Known,
-                detail: None,
+                detail: Some("struct HashMap".to_string()),
                 documentation: None,
                 relevance: Default::default(),
                 insert_text: CompletionInsertText::Snippet(
@@ -223,15 +245,23 @@ mod tests {
                 }),
                 import: Some(CompletionImport {
                     path: Path::from_text("std::collections::HashMap", None).expect("known path"),
+                    display_path: "std::collections::HashMap".to_string(),
                     anonymous: false,
                 }),
             },
             &line_index,
             16,
+            false,
         );
         let import = candidate.import.expect("auto-import payload");
         assert_eq!(import.path, "std::collections::HashMap");
         let completion = candidate.item;
+        assert_eq!(completion.label, "HashMap");
+        assert!(completion.label_details.is_none());
+        assert_eq!(
+            completion.detail.as_deref(),
+            Some("struct HashMap (use std::collections::HashMap)")
+        );
         assert_eq!(completion.sort_text.as_deref(), Some("0000000000000010"));
         assert!(completion.additional_text_edits.is_none());
 
