@@ -6,14 +6,10 @@
 
 mod associated;
 mod auto_import;
-mod member;
 mod module;
 mod scope;
 
-use rg_ir_model::{
-    BodyRef, EnumVariantFieldRef, FieldRef, FunctionRef, ModuleRef, ScopeId,
-    identity::DeclarationRef,
-};
+use rg_ir_model::{BodyRef, FunctionRef, ModuleRef, ScopeId, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb,
     lookup::name::{MacroKind, NameNamespace, NameOrigin},
@@ -169,13 +165,6 @@ enum PrimitiveTypePathScope {
     Body { body: BodyRef, scope: ScopeId },
     Signature(IndexedSignatureTypeScope),
     Module(ModuleRef),
-}
-
-/// Stable field identity selected for a record literal or pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RecordFieldCompletionCandidate {
-    Type(FieldRef),
-    EnumVariant(EnumVariantFieldRef),
 }
 
 /// Turns normalized cursor sites into completion candidates from the matching indexed views.
