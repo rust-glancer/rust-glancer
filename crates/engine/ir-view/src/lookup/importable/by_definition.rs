@@ -73,7 +73,7 @@ impl<'a, 'db> DefinitionImportSearch<'a, 'db> {
                     let DefId::Local(def) = binding.def else {
                         continue;
                     };
-                    if binding.attribute_import().is_some() && !binding.has_reexport() {
+                    if binding.import_attrs().is_some() && !binding.has_reexport() {
                         continue;
                     }
                     let route = DefinitionBinding {

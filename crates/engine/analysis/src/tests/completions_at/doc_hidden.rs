@@ -78,3 +78,30 @@ fn external() {
         "#]],
     );
 }
+
+#[test]
+fn auto_import_uses_the_documented_alias_of_a_hidden_crate() {
+    check_analysis(
+        r#"
+//- /hidden/src/lib.rs crate:hidden root:hidden
+#![doc(hidden)]
+pub struct RootApi;
+
+//- /app/src/lib.rs crate:app root:app deps:hidden
+#[doc(inline)]
+pub use hidden as documented;
+
+fn external() {
+    let _: RootA$0; // complete_verbose("auto-import the documented alias").in_lib("app").auto_import().matching("RootApi")
+}
+"#,
+        expect![[r#"
+            // auto-import the documented alias
+            struct RootApi
+              detail: struct RootApi (use crate::documented::RootApi)
+              sort: 05-auto-import:0003|00|RootApi|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
+              replace: 73..78
+              additional: 44..44 => "\nuse crate::documented::RootApi;"
+        "#]],
+    );
+}

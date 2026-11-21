@@ -326,7 +326,9 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
         if !resolver.binding_is_visible(importing_module, binding)? {
             return Ok(None);
         }
-        let Some(name) = self.binding_name(importing_module, label, namespace, binding)? else {
+        let Some(name) =
+            self.binding_name(importing_module, module.module, label, namespace, binding)?
+        else {
             return Ok(None);
         };
         let mut path = module.path_with(label);
@@ -354,12 +356,13 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
     fn binding_name(
         &self,
         importing_module: ModuleRef,
+        source_module: ModuleRef,
         label: &Name,
         namespace: Namespace,
         binding: &NameBinding,
     ) -> anyhow::Result<Option<ModuleScopeName>> {
         if matches!(binding.def, DefId::Module(_))
-            || (binding.attribute_import().is_some() && !binding.has_reexport())
+            || (binding.import_attrs().is_some() && !binding.has_reexport())
         {
             return Ok(None);
         }
@@ -371,8 +374,9 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
                 namespace,
                 def: binding.def,
                 origin: VisibleScopeOrigin::ItemScope,
-                attribute_import: binding.attribute_import(),
-                has_reexport: binding.has_reexport(),
+                import: binding
+                    .import_attrs()
+                    .map(|attrs| (source_module.origin.origin_crate(), attrs)),
             },
         )
     }
