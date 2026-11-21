@@ -13,7 +13,6 @@ use rg_ir_view::{
 
 use super::{
     CompletionContext,
-    render::CompletionSortPolicy,
     site::{CompletionSite, NameCompletionContext},
     syntax::{CompletionSyntaxContext, ExpectedTypeSite, ValueExpression},
 };
@@ -134,7 +133,7 @@ impl ExpectedTypeRanking {
             && item.applicability == CompletionApplicability::Known
             && types.function_call_ty(function)?.as_ref() == Some(&self.expected)
         {
-            CompletionSortPolicy::promote_expected_type(&mut item.sort_text);
+            item.relevance.set_inference_priority(true);
         }
         Ok(())
     }
@@ -152,8 +151,9 @@ impl ExpectedTypeRanking {
         ))
     }
 
-    /// Rank values and constructors after visibility and shadowing checks. Function
-    /// completions have already been ranked when their insertion text was chosen.
+    /// Mark values and constructors that match the expected type after visibility and shadowing
+    /// checks. Functions are checked while choosing their insertion text, since producing a
+    /// return value requires a call.
     pub(super) fn rank(
         &self,
         analysis: &Analysis<'_>,
@@ -162,7 +162,6 @@ impl ExpectedTypeRanking {
         let db = analysis.view_db();
         let types = TyView::new(db);
         let members = MemberView::new(db);
-        let mut changed = false;
         for item in items.iter_mut() {
             rg_std::check_cancel!(analysis, "rank completion candidate type");
             if item.import.is_some() || item.applicability != CompletionApplicability::Known {
@@ -215,12 +214,8 @@ impl ExpectedTypeRanking {
             };
 
             if fits {
-                CompletionSortPolicy::promote_expected_type(&mut item.sort_text);
-                changed = true;
+                item.relevance.set_inference_priority(true);
             }
-        }
-        if changed {
-            items.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         }
         Ok(())
     }

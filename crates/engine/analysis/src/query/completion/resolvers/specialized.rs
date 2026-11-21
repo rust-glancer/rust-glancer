@@ -32,9 +32,9 @@ use crate::{
     query::completion::{
         CompletionContext,
         candidates::CompletionCandidateSource,
+        relevance::{CompletionSortPolicy, CompletionSortPriority},
         render::{
-            CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
-            DefinitionCompletionRenderer, DefinitionCompletionRequest,
+            CallCompletionKind, DefinitionCompletionRenderer, DefinitionCompletionRequest,
             SyntheticCompletionCandidate, SyntheticCompletionRenderer,
         },
         site::{SpecializedStringCompletionContext, UnqualifiedCompletionSite},
@@ -171,15 +171,9 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
                 applicability: CompletionApplicability::Known,
                 detail: Some(Self::capture_detail(kind, &label)),
                 documentation: None,
-                sort_text: CompletionSortPolicy::General.sort_text(
-                    Some(CompletionSortPriority::body_scope(
-                        candidate.scope_distance(),
-                    )),
-                    &label,
-                    kind,
-                    CompletionApplicability::Known,
-                    target,
-                ),
+                relevance: CompletionSortPolicy::General.relevance(Some(
+                    CompletionSortPriority::body_scope(candidate.scope_distance()),
+                )),
                 insert_text: crate::model::CompletionInsertText::Plain,
                 edit: Some(edit),
                 import: None,
@@ -208,13 +202,8 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
                 applicability: CompletionApplicability::Known,
                 detail: Some(format!("const parameter {label}")),
                 documentation: None,
-                sort_text: CompletionSortPolicy::General.sort_text(
-                    Some(CompletionSortPriority::GenericScope),
-                    &label,
-                    CompletionKind::Const,
-                    CompletionApplicability::Known,
-                    target,
-                ),
+                relevance: CompletionSortPolicy::General
+                    .relevance(Some(CompletionSortPriority::GenericScope)),
                 insert_text: crate::model::CompletionInsertText::Plain,
                 edit: Some(edit),
                 import: None,
@@ -255,7 +244,6 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
             }
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 

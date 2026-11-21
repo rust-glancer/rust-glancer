@@ -77,7 +77,6 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
             completions.push(completion);
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

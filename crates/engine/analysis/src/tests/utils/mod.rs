@@ -728,6 +728,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .completions_at(completion_query)
                     .expect("fixture completion query should resolve")
                     .items;
+                // Keep the query's order so snapshots also cover ranking.
                 Self::filter_completions(query, &mut completions);
                 if matches!(
                     query.kind,
@@ -736,8 +737,6 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 ) {
                     completions.retain(|completion| completion.kind == CompletionKind::Keyword);
                 }
-                // Snapshot the server's ranking after applying the fixture's filter.
-                completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 if matches!(
                     query.kind,
                     AnalysisQueryKind::CompletionsAtVerbose
@@ -1124,8 +1123,6 @@ impl AnalysisQuerySnapshot<'_, '_> {
             if let Some(filter_text) = &completion.filter_text {
                 writeln!(dump, "  filter: {filter_text}").expect("string writes should not fail");
             }
-            writeln!(dump, "  sort: {}", completion.sort_text)
-                .expect("string writes should not fail");
             if let Some(edit) = completion.edit {
                 let span = edit.replace;
                 writeln!(dump, "  replace: {}..{}", span.start, span.end)

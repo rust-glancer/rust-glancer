@@ -12,16 +12,16 @@ use rg_ir_view::{
     ty::TyView,
 };
 
-use super::{
-    CallCompletionKind, escape_lsp_snippet_text,
-    sort::{CompletionSortPolicy, CompletionSortPriority},
-};
+use super::{CallCompletionKind, escape_lsp_snippet_text};
 use crate::{
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
     },
-    query::completion::CompletionContext,
+    query::completion::{
+        CompletionContext,
+        relevance::{CompletionSortPolicy, CompletionSortPriority},
+    },
 };
 
 /// Rendered function completion plus receiver information for method-only sites.
@@ -78,13 +78,7 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
 
         let target = CompletionTarget::Function(function.function_ref());
         let mut item = CompletionItem {
-            sort_text: request.sort_policy.sort_text(
-                request.sort_priority,
-                &label,
-                request.kind,
-                request.applicability,
-                target,
-            ),
+            relevance: request.sort_policy.relevance(request.sort_priority),
             label,
             filter_text: None,
             kind: request.kind,

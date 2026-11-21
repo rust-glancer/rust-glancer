@@ -171,8 +171,8 @@ impl Service for Worker {
             tm extension_visible // extension auto-import
 
             // associated items
-            ct member_visible_const
             fn member_visible
+            ct member_visible_const
 
             fd field_visible // record fields
             fd field_visible // variant fields
@@ -203,7 +203,6 @@ fn external() {
             // auto-import the documented alias
             struct RootApi
               detail: struct RootApi (use crate::documented::RootApi)
-              sort: 05-auto-import:0003|00|RootApi|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 73..78
               additional: 44..44 => "\nuse crate::documented::RootApi;"
         "#]],
@@ -232,7 +231,6 @@ fn external() -> AliasU8 {
             // uses the alias with matching arguments
             variant VariantVisible
               detail: variant AliasU8::VariantVisible
-              sort: !expected|00-expected|VariantVisible|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 236..239
               snippet: AliasU8::VariantVisible($0)
         "#]],

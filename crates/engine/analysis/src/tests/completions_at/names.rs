@@ -66,25 +66,20 @@ pub fn use_it(c_a_outer: u8) {
             // unqualified value proximity
             variable c_z_inner
               detail: let c_z_inner: u8
-              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(1) })
               replace: 107..108
             variable c_a_outer
               detail: let c_a_outer: u8
-              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(0) })
               replace: 107..108
             fn c_module_item
               detail: pub fn c_module_item()
-              sort: 01-module|c_module_item|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 107..108
               snippet: c_module_item()$0
             fn use_it
               detail: pub fn use_it(c_a_outer: u8)
-              sort: 01-module|use_it|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(1) })
               replace: 107..108
               snippet: use_it(${1:c_a_outer})$0
             keyword crate
               detail: keyword crate
-              sort: ~keyword:00:crate
               replace: 107..108
               snippet: crate::$0
         "#]],
@@ -110,19 +105,15 @@ pub fn use_it() {
             // unqualified type proximity
             struct ZLocal
               detail: struct ZLocal
-              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Function(0), body: BodyId(0) }), id: Struct(StructId(0)) }) })
               replace: 112..113
             struct AModule
               detail: struct AModule
-              sort: 01-module|00|AModule|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 112..113
             trait ATrait
               detail: trait ATrait
-              sort: 01-module|01|ATrait|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 112..113
             module a_mod
               detail: mod a_mod
-              sort: 01-module|02|a_mod|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 112..113
         "#]],
     );
@@ -389,11 +380,9 @@ pub fn use_it() {
             // module named like primitive completions
             module usize
               detail: mod usize
-              sort: 01-module|02|usize|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 52..54
             primitive_type usize
               detail: primitive type usize
-              sort: 02-primitive|00|usize|00|PrimitiveType(UnsignedInt(Usize))
               replace: 52..54
         "#]],
     );
@@ -509,15 +498,12 @@ pub fn use_it() {
             // unqualified type sorting
             struct Zed
               detail: struct Zed
-              sort: 01-module|00|Zed|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 89..90
             trait Mid
               detail: trait Mid
-              sort: 01-module|01|Mid|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 89..90
             module aa_prefix
               detail: mod aa_prefix
-              sort: 01-module|02|aa_prefix|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 89..90
         "#]],
     );

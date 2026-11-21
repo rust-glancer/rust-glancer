@@ -3,6 +3,32 @@ use expect_test::expect;
 use crate::tests::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 
 #[test]
+fn shorter_names_sort_before_names_that_extend_them() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:completion_order
+mod memory {
+    pub fn alloc_zeroed() {}
+    pub struct AllocatorClone;
+    pub fn alloc() {}
+    pub struct Allocator;
+}
+
+fn main() {
+    memory::$0; // complete("prefix-related labels")
+}
+"#,
+        expect![[r#"
+            // prefix-related labels
+            st Allocator
+            st AllocatorClone
+            fn alloc
+            fn alloc_zeroed
+        "#]],
+    );
+}
+
+#[test]
 fn completes_copied_names_after_generated_path_parts() {
     check_analysis(
         r#"
@@ -302,7 +328,6 @@ pub fn use_it() {
             // path metadata completions
             struct User
               detail: struct User
-              sort: User|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 79..81
         "#]],
     );

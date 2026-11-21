@@ -1,14 +1,13 @@
 //! Reusable construction of final completion rows.
 //!
 //! Resolvers decide which candidates belong at a site. This module turns those candidates into
-//! editor-facing labels, details, documentation, insertion text, and stable sort keys without
+//! editor-facing labels, details, documentation, insertion text, and ranking inputs without
 //! taking ownership of any completion family.
 
 mod definition;
 mod field;
 mod function;
 mod primitive;
-mod sort;
 mod synthetic;
 
 use rg_ir_view::member::ConstructorShape;
@@ -18,7 +17,6 @@ pub(super) use self::{
     field::FieldCompletionRenderer,
     function::{FunctionCompletionRenderer, FunctionCompletionRequest},
     primitive::PrimitiveTypeCompletionRenderer,
-    sort::{CompletionSortPolicy, CompletionSortPriority},
     synthetic::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
 };
 use crate::model::{CompletionInsertText, CompletionKind};

@@ -115,33 +115,28 @@ fn values() {
             // coalesced HashMap import
             struct HashMap
               detail: struct HashMap (use catalog::collections::HashMap)
-              sort: 05-auto-import:0003|00|HashMap|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 61..66
               additional: 4..34 => "catalog::collections::{BTreeMap, HashMap}"
 
             // ambiguous imports
             struct Widget
               detail: struct Widget (use catalog::left::Widget)
-              sort: 05-auto-import:0003|00|Widget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(2) } })
               replace: 79..82
               additional: 35..35 => "\nuse catalog::left::Widget;"
             struct Widget
               detail: struct Widget (use catalog::right::Widget)
-              sort: 05-auto-import:0003|00|Widget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
               replace: 79..82
               additional: 35..35 => "\nuse catalog::right::Widget;"
 
             // short re-export path
             struct RankedWidget
               detail: struct RankedWidget (use catalog::RankedWidget)
-              sort: 05-auto-import:0002|00|RankedWidget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(5) } })
               replace: 95..102
               additional: 35..35 => "\nuse catalog::RankedWidget;"
 
             // public re-export
             struct PublicWidget
               detail: struct PublicWidget (use catalog::PublicWidget)
-              sort: 05-auto-import:0002|00|PublicWidget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(4) } })
               replace: 115..122
               additional: 35..35 => "\nuse catalog::PublicWidget;"
 
@@ -153,7 +148,6 @@ fn values() {
             // value auto-import
             fn make_widget
               detail: pub fn make_widget() (use catalog::make_widget)
-              sort: 05-auto-import:0002|make_widget|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 229..235
               additional: 35..35 => "\nuse catalog::make_widget;"
               snippet: make_widget()$0
@@ -333,9 +327,9 @@ pub fn use_it() {
             tt Copy
             tt Default
             tt Eq
+            tt Fn
             tt FnMut
             tt FnOnce
-            tt Fn
             tt IntoIterator
             tt Iterator
             tt Ord

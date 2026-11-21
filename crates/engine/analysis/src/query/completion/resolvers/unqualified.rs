@@ -42,10 +42,11 @@ use crate::{
             GenericScopeCompletionCandidate, LexicalCompletionCandidate,
         },
         pattern::{PatternCandidateRole, PatternCompletionPolicy},
+        relevance::{CompletionSortPolicy, CompletionSortPriority},
         render::{
-            CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
-            DefinitionCompletionRenderer, DefinitionCompletionRequest, FunctionCompletionRenderer,
-            FunctionCompletionRequest, PrimitiveTypeCompletionRenderer, constructor_insert_text,
+            CallCompletionKind, DefinitionCompletionRenderer, DefinitionCompletionRequest,
+            FunctionCompletionRenderer, FunctionCompletionRequest, PrimitiveTypeCompletionRenderer,
+            constructor_insert_text,
         },
         site::{NameCompletionContext, PatternCompletionKind, UnqualifiedCompletionSite},
         syntax::ValueExpression,
@@ -265,7 +266,6 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             ));
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 
@@ -484,7 +484,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                             true,
                         );
                     }
-                    CompletionSortPolicy::promote_expected_type(&mut item.sort_text);
+                    item.relevance.set_inference_priority(true);
                 }
                 continue;
             }
@@ -501,13 +501,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 applicability: CompletionApplicability::Known,
                 detail: Some(format!("variant {insert}")),
                 documentation: variant.docs_text(),
-                sort_text: CompletionSortPolicy::General.sort_text(
-                    Some(CompletionSortPriority::ExpectedType),
-                    &label,
-                    CompletionKind::EnumVariant,
-                    CompletionApplicability::Known,
-                    target,
-                ),
+                relevance: CompletionSortPolicy::General
+                    .relevance(Some(CompletionSortPriority::ExpectedVariant)),
                 insert_text: match site {
                     ExpectedVariantSite::Pattern(policy) => {
                         policy.constructor_insert_text(&insert, &shape, false)
@@ -527,9 +522,9 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 edit: Some(edit),
                 import: None,
             };
-            if matches!(site, ExpectedVariantSite::Expression(_)) {
-                CompletionSortPolicy::promote_expected_type(&mut completion.sort_text);
-            }
+            completion
+                .relevance
+                .set_inference_priority(matches!(site, ExpectedVariantSite::Expression(_)));
             if let Some(index) = existing {
                 completions[index] = completion;
             } else {
@@ -565,13 +560,9 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             applicability: CompletionApplicability::Known,
             detail: Some(detail),
             documentation: None,
-            sort_text: filter.sort_policy().sort_text(
-                Some(CompletionSortPriority::GenericScope),
-                &label,
-                kind,
-                CompletionApplicability::Known,
-                target,
-            ),
+            relevance: filter
+                .sort_policy()
+                .relevance(Some(CompletionSortPriority::GenericScope)),
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
             import: None,
@@ -634,27 +625,22 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let target = candidate.target();
         let kind = candidate.kind();
         let label = syntax.identifier(candidate.label()).to_string();
-        let mut completion = CompletionItem {
-            label: label.clone(),
-            filter_text: None,
-            kind,
-            target,
-            applicability: CompletionApplicability::Known,
-            detail,
-            documentation,
-            sort_text: filter.sort_policy().sort_text(
-                Some(CompletionSortPriority::body_scope(
-                    candidate.scope_distance(),
-                )),
-                &label,
+        let mut completion =
+            CompletionItem {
+                label: label.clone(),
+                filter_text: None,
                 kind,
-                CompletionApplicability::Known,
                 target,
-            ),
-            insert_text: CompletionInsertText::Plain,
-            edit: Some(edit),
-            import: None,
-        };
+                applicability: CompletionApplicability::Known,
+                detail,
+                documentation,
+                relevance: filter.sort_policy().relevance(Some(
+                    CompletionSortPriority::body_scope(candidate.scope_distance()),
+                )),
+                insert_text: CompletionInsertText::Plain,
+                edit: Some(edit),
+                import: None,
+            };
         if let (Some(policy), PatternCandidateRole::Constructor(shape)) =
             (pattern_policy, pattern_role)
         {

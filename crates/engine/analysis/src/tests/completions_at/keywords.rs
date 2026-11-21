@@ -136,7 +136,6 @@ mod restricted_visibility_context {
             // dyn type
             keyword dyn
               detail: keyword dyn
-              sort: ~keyword:00:dyn
               replace: 71..73
               snippet: dyn ${1:Trait}
 

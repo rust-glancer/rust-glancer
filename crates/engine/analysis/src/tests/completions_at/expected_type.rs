@@ -28,7 +28,6 @@ fn generic<T>() -> ZEvent<T> {
             // infer the alias parameter
             variant Variant
               detail: variant ZEvent::Variant
-              sort: !expected|00-expected|Variant|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 247..250
               snippet: ZEvent::Variant($0)
 
@@ -236,7 +235,6 @@ fn unit() {
             // keeps the written arguments
             fn choice_z_bool
               detail: fn choice_z_bool<T>() -> bool
-              sort: !expected|01-module|choice_z_bool|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(2) })
               replace: 173..180
 
             // unit leaves scope order intact
@@ -299,63 +297,53 @@ fn generic<Imported>() -> crate::model::Event<u8> {
             // aliased enum constructors
             variant ChoiceRecord
               detail: variant Imported::ChoiceRecord
-              sort: !expected|00-expected|ChoiceRecord|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 2 })
               replace: 204..207
               snippet: Imported::ChoiceRecord { $0 }
             variant ChoiceTuple
               detail: variant Imported::ChoiceTuple
-              sort: !expected|00-expected|ChoiceTuple|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 1 })
               replace: 204..207
               snippet: Imported::ChoiceTuple($0)
             variant ChoiceUnit
               detail: variant Imported::ChoiceUnit
-              sort: !expected|00-expected|ChoiceUnit|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 204..207
               insert: Imported::ChoiceUnit
             variable ChoiceWrong
               detail: let ChoiceWrong: u8
-              sort: 00-body:0001|ChoiceWrong|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(0) })
               replace: 204..207
 
             // existing tuple arguments
             variant ChoiceTuple
               detail: variant Imported::ChoiceTuple
-              sort: !expected|00-expected|ChoiceTuple|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 1 })
               replace: 244..247
               insert: Imported::ChoiceTuple
 
             // existing record fields
             variant ChoiceRecord
               detail: variant Imported::ChoiceRecord
-              sort: !expected|00-expected|ChoiceRecord|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 2 })
               replace: 294..297
               insert: Imported::ChoiceRecord
 
             // reachable enum outside scope
             variant ChoiceUnit
               detail: variant crate::model::Event::ChoiceUnit
-              sort: !expected|00-expected|ChoiceUnit|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 384..387
               insert: crate::model::Event::ChoiceUnit
 
             // variant in scope uses its short name
             variant ChoiceTuple
               detail: variant ChoiceTuple
-              sort: !expected|01-module|ChoiceTuple|04|00|Declaration(DeclarationRef { kind: "enum_variant", variant: EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 1 } })
               replace: 524..527
               snippet: ChoiceTuple($0)
 
             // shadowed enum uses its qualified path
             variant ChoiceUnit
               detail: variant crate::model::Event::ChoiceUnit
-              sort: !expected|00-expected|ChoiceUnit|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 594..597
               insert: crate::model::Event::ChoiceUnit
 
             // type parameter shadows the imported enum name
             variant ChoiceUnit
               detail: variant crate::model::Event::ChoiceUnit
-              sort: !expected|00-expected|ChoiceUnit|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 657..660
               insert: crate::model::Event::ChoiceUnit
         "#]],

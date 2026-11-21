@@ -11,9 +11,12 @@ use rg_parse::LineIndex;
 
 use crate::proto::{markdown, position, text_edit};
 
+/// Convert one row at its position in the ranked list. Fixed-width `sortText` preserves that
+/// order when the client compares the keys as strings.
 pub(crate) fn completion_candidate(
     item: CompletionItem,
     line_index: &LineIndex,
+    position: usize,
 ) -> CompletionCandidate {
     let detail = completion_detail(item.detail, item.applicability);
     let insert_text_format = completion_insert_text_format(&item.insert_text);
@@ -24,7 +27,7 @@ pub(crate) fn completion_candidate(
             kind: Some(completion_kind(item.kind)),
             detail,
             documentation: item.documentation.and_then(markdown_documentation),
-            sort_text: Some(item.sort_text),
+            sort_text: Some(format!("{position:016x}")),
             filter_text: item.filter_text,
             insert_text_format,
             text_edit,
@@ -160,7 +163,7 @@ mod tests {
                 applicability: CompletionApplicability::Maybe,
                 detail: Some("fn name(&self)".to_string()),
                 documentation: Some("Display name.".to_string()),
-                sort_text: "name|01".to_string(),
+                relevance: Default::default(),
                 insert_text: CompletionInsertText::Plain,
                 edit: Some(CompletionEdit {
                     replace: Span { start: 5, end: 7 },
@@ -168,6 +171,7 @@ mod tests {
                 import: None,
             },
             &LineIndex::new("user.na"),
+            15,
         )
         .item;
 
@@ -183,7 +187,7 @@ mod tests {
                 value: "Display name.".to_string(),
             }))
         );
-        assert_eq!(completion.sort_text.as_deref(), Some("name|01"));
+        assert_eq!(completion.sort_text.as_deref(), Some("000000000000000f"));
         assert_eq!(completion.filter_text.as_deref(), Some("na"));
         assert_eq!(completion.insert_text_format, None);
         assert_eq!(completion.additional_text_edits, None);
@@ -210,7 +214,7 @@ mod tests {
                 applicability: CompletionApplicability::Known,
                 detail: None,
                 documentation: None,
-                sort_text: String::new(),
+                relevance: Default::default(),
                 insert_text: CompletionInsertText::Snippet(
                     "HashMap::<${1:K}, ${2:V}>$0\n".to_string(),
                 ),
@@ -223,10 +227,12 @@ mod tests {
                 }),
             },
             &line_index,
+            16,
         );
         let import = candidate.import.expect("auto-import payload");
         assert_eq!(import.path, "std::collections::HashMap");
         let completion = candidate.item;
+        assert_eq!(completion.sort_text.as_deref(), Some("0000000000000010"));
         assert!(completion.additional_text_edits.is_none());
 
         assert_eq!(

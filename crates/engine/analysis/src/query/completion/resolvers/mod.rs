@@ -207,7 +207,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                             .item_list_completions(item_list, syntax_context)
                             .context("collect item keywords beside incomplete module macro")?,
                     );
-                    completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 }
                 Ok(completions)
             }
@@ -223,7 +222,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                         .completions(syntax_context)
                         .context("collect trait impl keyword completions")?,
                 );
-                completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 Ok(completions)
             }
             CompletionSite::Unqualified(site) => {
@@ -269,7 +267,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                         NameCompletionContext::Const => Vec::new(),
                         NameCompletionContext::Import => Vec::new(),
                     });
-                    completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 }
                 let keywords = KeywordCompletionResolver::new(self.query.client_capabilities);
                 for root in keywords
@@ -284,7 +281,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                         completions.push(root);
                     }
                 }
-                completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 Ok(completions)
             }
             CompletionSite::RecordField(site) => {

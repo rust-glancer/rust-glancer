@@ -34,7 +34,9 @@ pub use self::{
     },
     query::{
         code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
-        completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
+        completion::{
+            CompletionClientCapabilities, CompletionQuery, CompletionRelevance, CompletionSource,
+        },
         references::{
             ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind, ReferenceSearchLabel,
         },
@@ -368,7 +370,7 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    /// Returns best-effort completion candidates for a source offset.
+    /// Returns ranked completion candidates for a source offset.
     ///
     /// Semantic sites cover dot members and postfix transforms, qualified and unqualified names,
     /// imports, patterns, record fields, associated type bindings, and missing trait members.
@@ -388,7 +390,10 @@ impl<'a> Analysis<'a> {
                     &snapshot_text
                 }
             };
-            query::completion::CompletionResolver::new(self, query, source_text).completions_at()
+            let mut result = query::completion::CompletionResolver::new(self, query, source_text)
+                .completions_at()?;
+            CompletionRelevance::sort(&mut result.items);
+            Ok(result)
         })
     }
 

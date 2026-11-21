@@ -20,10 +20,8 @@ use crate::{
         CompletionContext,
         candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
         pattern::{PatternCandidateRole, PatternCompletionPolicy},
-        render::{
-            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-            DefinitionCompletionRequest,
-        },
+        relevance::CompletionSortPolicy,
+        render::{CallCompletionKind, DefinitionCompletionRenderer, DefinitionCompletionRequest},
         site::{NameCompletionContext, PathCompletionSite, PatternCompletionKind},
     },
 };
@@ -60,32 +58,27 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
                 .associated_definition_candidates_for_path(&site, self.query.crate_ref)
                 .context("collect associated path completion candidates")?,
         );
-        let mut completions = self
-            .module_path_completions(
-                &completion_candidates,
-                candidates,
-                edit,
-                context,
-                match context {
-                    NameCompletionContext::Type | NameCompletionContext::Value => {
-                        CallCompletionKind::Call
-                    }
-                    NameCompletionContext::Const => CallCompletionKind::Plain,
-                    NameCompletionContext::Pattern(PatternCompletionKind::Name) => {
-                        CallCompletionKind::Call
-                    }
-                    NameCompletionContext::Pattern(
-                        PatternCompletionKind::TupleConstructor
-                        | PatternCompletionKind::RecordConstructor,
-                    ) => CallCompletionKind::Plain,
-                    NameCompletionContext::Import => CallCompletionKind::Plain,
-                },
-            )
-            .context("render path completions")?;
-
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
-
-        Ok(completions)
+        self.module_path_completions(
+            &completion_candidates,
+            candidates,
+            edit,
+            context,
+            match context {
+                NameCompletionContext::Type | NameCompletionContext::Value => {
+                    CallCompletionKind::Call
+                }
+                NameCompletionContext::Const => CallCompletionKind::Plain,
+                NameCompletionContext::Pattern(PatternCompletionKind::Name) => {
+                    CallCompletionKind::Call
+                }
+                NameCompletionContext::Pattern(
+                    PatternCompletionKind::TupleConstructor
+                    | PatternCompletionKind::RecordConstructor,
+                ) => CallCompletionKind::Plain,
+                NameCompletionContext::Import => CallCompletionKind::Plain,
+            },
+        )
+        .context("render path completions")
     }
 
     /// Renders definitions visible from a resolved module qualifier.
@@ -162,7 +155,6 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             completions.push(completion);
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

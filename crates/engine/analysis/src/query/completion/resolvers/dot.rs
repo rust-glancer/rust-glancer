@@ -18,9 +18,10 @@ use crate::{
         completion::{
             CompletionContext,
             candidates::CompletionCandidateSource,
+            relevance::{CompletionSortPolicy, CompletionSortPriority},
             render::{
-                CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
-                FieldCompletionRenderer, FunctionCompletionRenderer, FunctionCompletionRequest,
+                CallCompletionKind, FieldCompletionRenderer, FunctionCompletionRenderer,
+                FunctionCompletionRequest,
             },
             site::DotCompletionSite,
             syntax::CompletionSyntaxContext,
@@ -107,7 +108,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                 edit,
                 call_completion: CallCompletionKind::MethodCall,
                 sort_policy: CompletionSortPolicy::General,
-                sort_priority: None,
+                sort_priority: Some(CompletionSortPriority::Member),
             })?;
             if !completion.has_self_receiver
                 || completions
@@ -157,12 +158,6 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                         })
                     },
                 )?;
-                if !extensions.is_empty() {
-                    // The existing rows keep their label order within the first sort bucket.
-                    for item in &mut completions {
-                        item.sort_text.insert_str(0, "00-member|");
-                    }
-                }
                 for (function, path) in extensions {
                     let Some(function) = members.function(function)? else {
                         continue;
@@ -195,8 +190,6 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             }
         }
 
-        // Keep snapshot output and editor ordering stable across equivalent resolution paths.
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

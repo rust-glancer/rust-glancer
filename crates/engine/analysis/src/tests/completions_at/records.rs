@@ -119,8 +119,8 @@ pub fn use_it(id: u8, user: User, users: Users) {
             fd name
 
             // record update base completions
-            vr users
             vr user
+            vr users
 
             // record pattern prefix completions
             fd active

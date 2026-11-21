@@ -18,6 +18,7 @@
 mod candidates;
 mod expected_type;
 mod pattern;
+mod relevance;
 mod render;
 mod resolvers;
 mod site;
@@ -34,6 +35,7 @@ use rg_ir_view::{
     ty::locals::BodyView,
 };
 
+pub use self::relevance::CompletionRelevance;
 use self::{
     candidates::CompletionCandidateSource, expected_type::ExpectedTypeRanking, site::CompletionSite,
 };

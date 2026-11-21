@@ -87,8 +87,8 @@ pub fn inspect<T: api::Render>(value: T) {
             fn render_base @ 3:12-3:23 // supertrait declaration
 
             // completed bound methods
-            tm render_base
             tm render
+            tm render_base
         "#]],
     );
 }
@@ -129,8 +129,8 @@ where
             u32 // method through generic Deref chain
 
             // generic Deref members
-            im value_len
             fd value
+            im value_len
         "#]],
     );
 }
@@ -415,12 +415,10 @@ pub fn use_it(user: User) {
             // bare dot before statement completions
             inherent_method id
               detail: pub fn id(&self)
-              sort: id|01|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(0) })
               replace: 119..119
               snippet: id()$0
             field name
               detail: pub name: String
-              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(0)) }, index: 0 })
               replace: 119..119
         "#]],
     );
@@ -1341,12 +1339,10 @@ pub fn use_it(user: User) {
             field name
               detail: pub name: Profile
               docs: Name field.
-              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(1)) }, index: 0 })
               replace: 216..218
             inherent_method name
               detail: pub fn name(&self) -> Profile
               docs: Name method.
-              sort: name|01|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(0) })
               replace: 216..218
               snippet: name()$0
         "#]],

@@ -13,10 +13,8 @@ use crate::{
     query::completion::{
         CompletionContext,
         candidates::CompletionCandidateSource,
-        render::{
-            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-            DefinitionCompletionRequest,
-        },
+        relevance::CompletionSortPolicy,
+        render::{CallCompletionKind, DefinitionCompletionRenderer, DefinitionCompletionRequest},
         site::ModuleMacroCompletionSite,
     },
 };
@@ -65,7 +63,6 @@ impl<'a, 'db, 'source> ModuleMacroCompletionResolver<'a, 'db, 'source> {
             completions.push(completion);
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }
