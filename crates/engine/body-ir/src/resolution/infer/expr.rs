@@ -30,6 +30,14 @@ pub(crate) struct BreakTarget<'s, 'query> {
     values: Vec<Ty<'s>>,
 }
 
+#[derive(Clone, Copy)]
+enum ExprExpectation<'s> {
+    Coerce(Ty<'s>),
+    // A slice expectation can guide the elements of an array behind a borrow.
+    // The coercion happens on the reference, so its operand keeps its own type.
+    ArrayElement(Ty<'s>),
+}
+
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource + Copy,
@@ -38,6 +46,14 @@ where
     /// Infer one expression against its expectation and store its type in inference state.
     /// Shared variables carry later evidence without revisiting this subtree.
     pub(super) fn infer_expr(&mut self, expr: ExprId, expected: &Ty<'s>) -> anyhow::Result<()> {
+        self.infer_expr_expected(expr, ExprExpectation::Coerce(*expected))
+    }
+
+    fn infer_expr_expected(
+        &mut self,
+        expr: ExprId,
+        expectation: ExprExpectation<'s>,
+    ) -> anyhow::Result<()> {
         #[cfg(test)]
         self.before_expression();
         rg_std::check_cancel!(self.context, "expression resolution");
@@ -83,10 +99,10 @@ where
                     expected: output,
                     values: Some(Vec::new()),
                 },
-                |inference| inference.infer_expr_inner(expr, expected),
+                |inference| inference.infer_expr_inner(expr, expectation),
             )
         } else {
-            self.infer_expr_inner(expr, expected)
+            self.infer_expr_inner(expr, expectation)
         };
         if let Some(outer_targets) = outer_targets {
             self.break_targets = outer_targets;
@@ -95,7 +111,15 @@ where
         result
     }
 
-    fn infer_expr_inner(&mut self, expr: ExprId, expected: &Ty<'s>) -> anyhow::Result<()> {
+    fn infer_expr_inner(
+        &mut self,
+        expr: ExprId,
+        expectation: ExprExpectation<'s>,
+    ) -> anyhow::Result<()> {
+        let expected = &match expectation {
+            ExprExpectation::Coerce(ty) => ty,
+            ExprExpectation::ArrayElement(_) => self.cx.unknown(),
+        };
         // Syntax belongs to the immutable body, independently of the mutable inference state.
         let body = self.body;
         let data = body.expr_unchecked(expr);
@@ -125,7 +149,12 @@ where
                     self.infer_statement(*statement)
                         .context("infer block statement")?;
                 }
-                self.infer_optional(tail, &block_expected)
+                let tail_expected = if is_async {
+                    ExprExpectation::Coerce(block_expected)
+                } else {
+                    expectation
+                };
+                self.infer_optional_expected(tail, tail_expected)
                     .context("infer block tail")?;
                 // Statements and the tail can refine locals used by earlier pending operations.
                 // Let those operations use the new evidence before reading the block's result.
@@ -209,8 +238,9 @@ where
             }
             ExprKind::Array { ref elements } => {
                 let expected = self.inference.root_resolved_ty(expected);
-                let element_ty = match expected.shape() {
-                    TyShape::Array { inner, len }
+                let element_ty = match (expectation, expected.shape()) {
+                    (ExprExpectation::ArrayElement(inner), _) => inner,
+                    (_, TyShape::Array { inner, len })
                         if matches!(
                             self.cx.raise_const(len),
                             rg_ty::ConstValue::Unknown | rg_ty::ConstValue::Param(_)
@@ -221,9 +251,9 @@ where
                     }
                     _ => self.cx.unknown(),
                 };
+                let shared_element = self.inference.table_mut().new_type_var();
                 if !elements.is_empty() {
                     let element_ty = self.coercion_site_expected(element_ty);
-                    let shared_element = self.inference.table_mut().new_type_var();
                     let mut element_tys = Vec::with_capacity(elements.len());
                     for element in elements {
                         self.infer_expr(*element, &element_ty)
@@ -236,12 +266,12 @@ where
                         never_fallback: false,
                     })
                     .context("coerce array elements")?;
-                    self.inference.set_expr_ty(
-                        expr,
-                        self.cx
-                            .array(shared_element, self.cx.scalar(elements.len() as u128)),
-                    );
                 }
+                self.inference.set_expr_ty(
+                    expr,
+                    self.cx
+                        .array(shared_element, self.cx.scalar(elements.len() as u128)),
+                );
             }
             ExprKind::RepeatArray {
                 initializer,
@@ -249,8 +279,9 @@ where
                 ref len_text,
             } => {
                 let expected = self.inference.root_resolved_ty(expected);
-                let element_ty = match expected.shape() {
-                    TyShape::Array { inner, .. } => inner,
+                let element_ty = match (expectation, expected.shape()) {
+                    (ExprExpectation::ArrayElement(inner), _)
+                    | (_, TyShape::Array { inner, .. }) => inner,
                     _ => self.cx.unknown(),
                 };
                 self.infer_optional(initializer, &element_ty)
@@ -425,7 +456,7 @@ where
                 let scrutinee = scrutinee
                     .map(|expr| self.inference.expr_slot(expr))
                     .unwrap_or(self.cx.unknown());
-                let arm_expected = self.coercion_site_expected(*expected);
+                let arm_expected = self.branch_expectation(expectation);
                 for arm in arms {
                     if let Some(pat) = arm.pat {
                         self.infer_pattern(pat, arm.scope, &scrutinee)
@@ -433,7 +464,7 @@ where
                     }
                     self.infer_optional(arm.guard, &self.cx.primitive(PrimitiveTy::Bool))
                         .context("infer match guard")?;
-                    self.infer_optional(arm.expr, &arm_expected)
+                    self.infer_optional_expected(arm.expr, arm_expected)
                         .context("infer optional expression")?;
                 }
                 self.infer_branch_result(expr, arms.iter().filter_map(|arm| arm.expr))
@@ -447,13 +478,13 @@ where
                 self.infer_optional(condition, &self.cx.primitive(PrimitiveTy::Bool))
                     .context("infer if condition")?;
                 let branch_expected = if else_branch.is_some() {
-                    self.coercion_site_expected(*expected)
+                    self.branch_expectation(expectation)
                 } else {
-                    self.cx.unknown()
+                    ExprExpectation::Coerce(self.cx.unknown())
                 };
-                self.infer_optional(then_branch, &branch_expected)
+                self.infer_optional_expected(then_branch, branch_expected)
                     .context("infer optional expression")?;
-                self.infer_optional(else_branch, &branch_expected)
+                self.infer_optional_expected(else_branch, branch_expected)
                     .context("infer optional expression")?;
                 if let Some(else_branch) = else_branch {
                     self.infer_branch_result(expr, then_branch.into_iter().chain([else_branch]))
@@ -637,10 +668,8 @@ where
             }
             ExprKind::Wrapper { kind, inner } => {
                 let resolved_expected = self.inference.root_resolved_ty(expected);
-                // In `let object: &dyn Trait = &make()`, make still produces a concrete type.
-                // Apply the object's requirements at the borrow, without passing dyn into make.
                 let inner_expected = match (&kind, resolved_expected.shape()) {
-                    (ExprWrapperKind::Paren, _) => *expected,
+                    (ExprWrapperKind::Paren, _) => expectation,
                     (
                         ExprWrapperKind::Ref { mutability },
                         TyShape::Reference {
@@ -648,18 +677,23 @@ where
                             inner,
                             ..
                         },
-                    ) if *mutability == expected_mutability
-                        && !matches!(
-                            self.inference.root_resolved_ty(&inner).shape(),
-                            TyShape::Dyn(_)
-                        ) =>
-                    {
-                        inner
+                    ) if *mutability == expected_mutability => {
+                        // For `first(&identity(items))`, identity still returns Vec<Item>.
+                        // An unsized pointee can guide the operand without requiring its type.
+                        match self.inference.root_resolved_ty(&inner).shape() {
+                            TyShape::Slice(element) => ExprExpectation::ArrayElement(element),
+                            TyShape::Dyn(_) | TyShape::Primitive(PrimitiveTy::Str) => {
+                                ExprExpectation::Coerce(self.cx.unknown())
+                            }
+                            _ => ExprExpectation::Coerce(inner),
+                        }
                     }
-                    (ExprWrapperKind::Return, _) => self.return_target.expected,
-                    _ => self.cx.unknown(),
+                    (ExprWrapperKind::Return, _) => {
+                        ExprExpectation::Coerce(self.return_target.expected)
+                    }
+                    _ => ExprExpectation::Coerce(self.cx.unknown()),
                 };
-                self.infer_optional(inner, &inner_expected)
+                self.infer_optional_expected(inner, inner_expected)
                     .context("infer wrapped expression")?;
                 if let Some(inner) = inner {
                     let inner_ty = self.inference.expr_slot(inner);
@@ -820,11 +854,26 @@ where
         expr: Option<ExprId>,
         expected: &Ty<'s>,
     ) -> anyhow::Result<()> {
+        self.infer_optional_expected(expr, ExprExpectation::Coerce(*expected))
+    }
+
+    fn infer_optional_expected(
+        &mut self,
+        expr: Option<ExprId>,
+        expectation: ExprExpectation<'s>,
+    ) -> anyhow::Result<()> {
         match expr {
             Some(expr) => self
-                .infer_expr(expr, expected)
+                .infer_expr_expected(expr, expectation)
                 .context("infer child expression"),
             None => Ok(()),
+        }
+    }
+
+    fn branch_expectation(&self, expectation: ExprExpectation<'s>) -> ExprExpectation<'s> {
+        match expectation {
+            ExprExpectation::Coerce(ty) => ExprExpectation::Coerce(self.coercion_site_expected(ty)),
+            ExprExpectation::ArrayElement(_) => expectation,
         }
     }
 

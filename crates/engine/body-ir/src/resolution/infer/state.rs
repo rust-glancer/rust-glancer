@@ -102,27 +102,29 @@ impl<'s> InferenceState<'s> {
     /// Replacing a slot containing `?T` with `Vec<u8>` would leave earlier reads of `?T` behind.
     /// Relating them instead lets those reads learn the same answer. A completely unknown slot
     /// has no such identity yet, so its first useful type can be stored directly.
-    fn refine(table: &InferenceTable<'s>, slot: &mut Ty<'s>, ty: Ty<'s>) {
+    fn refine(table: &InferenceTable<'s>, slot: &mut Ty<'s>, ty: Ty<'s>) -> bool {
         if slot.is_unknown() {
             *slot = ty;
-            return;
+            return true;
         }
         if ty.is_unknown() {
-            return;
+            return true;
         }
         let existing = if slot.has_unknown() {
             table.instantiate_nested_unknowns(*slot)
         } else {
             *slot
         };
-        if table.try_unify(existing, ty).is_ok() {
-            if !slot.has_var() {
-                *slot = existing;
-            }
-            if !slot.has_var() && ty.has_var() {
-                *slot = ty;
-            }
+        if table.try_unify(existing, ty).is_err() {
+            return false;
         }
+        if !slot.has_var() {
+            *slot = existing;
+        }
+        if !slot.has_var() && ty.has_var() {
+            *slot = ty;
+        }
+        true
     }
 
     pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: Ty<'s>) {
@@ -171,14 +173,14 @@ impl<'s> InferenceState<'s> {
         self.exprs[expr].ty = binding_ty;
     }
 
-    pub(crate) fn constrain_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) {
+    pub(crate) fn constrain_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) -> bool {
         // `!` coerces to the destination without equating that destination to `!`.
         if self.root_resolved_expr_ty(expr).is_never()
             && !self.table.resolve_root_var(expected).is_never()
         {
-            return;
+            return true;
         }
-        self.set_expr_ty(expr, *expected);
+        Self::refine(&self.table, &mut self.exprs[expr].ty, *expected)
     }
 
     /// Record a conversion on this expression without changing its producer's shared type.

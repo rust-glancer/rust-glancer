@@ -21,4 +21,6 @@ impl<T, A: Allocator> core::ops::Deref for Vec<T, A> {
     type Target = [T];
 }
 
+impl<T, A: Allocator> core::ops::DerefMut for Vec<T, A> {}
+
 impl<T> core::iter::FromIterator<T> for Vec<T> {}

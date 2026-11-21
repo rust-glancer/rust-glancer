@@ -4,6 +4,10 @@ pub trait Deref {
     type Target: ?crate::marker::Sized;
 }
 
+// Coercion needs the supertrait relationship, so the fixture omits the method.
+#[lang = "deref_mut"]
+pub trait DerefMut: Deref {}
+
 // These fixtures exercise output projections. Residual conversion and branching methods are
 // intentionally omitted because they are not needed to declare those relationships.
 #[lang = "Try"]

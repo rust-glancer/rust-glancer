@@ -189,14 +189,11 @@ where
 
     fn try_coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) -> bool {
         let expected = self.inference.root_resolved_ty(expected);
-        if matches!(expected.shape(), TyShape::Unknown) {
+        if expected.is_unknown() {
             return true;
         }
-        if !self.can_coerce_ty(&self.inference.expr_ty(expr)) {
-            return false;
-        }
         let source = self.inference.root_resolved_expr_ty(expr);
-        if self.constructor_waits_for_projection(source, expected) {
+        if !self.coercion_ready(source, expected) {
             return false;
         }
 
@@ -210,11 +207,6 @@ where
         }
 
         if let Some(object) = self.trait_object_pointee(expected) {
-            // In `let object: Box<dyn Trait> = id(Box::new(value))`, id's result starts as
-            // ?T. Wait for its argument to supply Box<Concrete> before applying conversion.
-            if matches!(source.shape(), TyShape::InferVar { .. }) {
-                return false;
-            }
             let source_inner = match (source.shape(), expected.shape()) {
                 (
                     TyShape::Reference {
@@ -248,8 +240,36 @@ where
                 return true;
             }
         }
-        self.inference.constrain_expr_ty(expr, &expected);
-        true
+        if self.inference.constrain_expr_ty(expr, &expected) {
+            return true;
+        }
+        if self
+            .inference
+            .table()
+            .try_coerce_reference(source, expected)
+        {
+            self.inference.set_coerced_expr_ty(expr, expected);
+            return true;
+        }
+        // A later use can determine the arguments of a Deref impl and reveal its target.
+        // Leave conflicting references eligible for a retry when either type changes.
+        source.reference_inner().is_none() || expected.reference_inner().is_none()
+    }
+
+    fn coercion_ready(&self, source: Ty<'s>, expected: Ty<'s>) -> bool {
+        let mut producer = source;
+        if expected.reference_inner().is_some() {
+            // In `first(&items?)`, the projection may yield Vec<T>. Wait before equating its
+            // destination with the slice, so the borrow can use Deref when the type is known.
+            while let Some((inner, _)) = producer.reference_inner() {
+                producer = self.inference.root_resolved_ty(&inner);
+            }
+        }
+        self.can_coerce_ty(&producer)
+            && !self.constructor_waits_for_projection(source, expected)
+            // In `let object: Box<dyn Trait> = id(Box::new(value))`, wait for the argument
+            // to supply Box<Concrete> before applying the conversion to the result.
+            && !(source.is_var() && self.trait_object_pointee(expected).is_some())
     }
 
     fn constructor_waits_for_projection(&self, source: Ty<'s>, expected: Ty<'s>) -> bool {
@@ -464,15 +484,7 @@ where
                     .expect("round retains its pending work");
                 rg_std::check_cancel!(self.context, "retry pending inference");
                 let input = self.deferred_input(&operation.kind);
-                // Selecting a generic producer can make coercion safe without making its result
-                // concrete. In that case the type key stays unchanged, but the wait is over.
                 let coercion_ready = match &operation.kind {
-                    DeferredKind::Coerce { expr, expected } => {
-                        let source = self.inference.root_resolved_expr_ty(*expr);
-                        self.can_coerce_ty(&source)
-                            && !self.constructor_waits_for_projection(source, *expected)
-                            && !(source.is_var() && self.trait_object_pointee(*expected).is_some())
-                    }
                     DeferredKind::BranchResult { branches, .. } => {
                         branches.iter().all(|ty| self.can_coerce_ty(ty))
                     }
@@ -551,7 +563,16 @@ where
                 _ => unreachable!("pending operator owns a unary or binary expression"),
             },
             DeferredKind::Coerce { expr, expected } => {
-                self.cx.tuple(vec![expr_ty(*expr), *expected])
+                let source = self.inference.root_resolved_expr_ty(*expr);
+                let target = self.inference.root_resolved_ty(expected);
+                // Selecting a generic producer can make coercion safe while its result is
+                // still the same variable. Include readiness so this change triggers a retry.
+                let readiness = if self.coercion_ready(source, target) {
+                    self.cx.unit()
+                } else {
+                    self.cx.never()
+                };
+                self.cx.tuple([source, target, readiness])
             }
             DeferredKind::BranchResult {
                 result, branches, ..
