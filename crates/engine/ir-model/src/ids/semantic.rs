@@ -140,6 +140,10 @@ impl FunctionRef {
         Self { store, id }
     }
 
+    pub fn is_associated(self) -> bool {
+        self.store.id != ItemStoreId::Scope
+    }
+
     /// Find the owner of a function declared in a trait's member store. A method from an
     /// `impl Trait for T` belongs to the impl's store.
     pub fn declaring_trait(self) -> Option<TraitDefRef> {

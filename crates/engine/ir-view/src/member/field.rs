@@ -13,21 +13,22 @@ use crate::{
 };
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    /// Return fields visible for a type under the enclosing body's assumptions.
+    /// Return visible fields and whether their accessed value has the requested type.
     pub fn field_candidates_for_ty<'view>(
         &'view self,
         body: BodyRef,
         ty: &IndexedType,
-    ) -> anyhow::Result<Vec<MemberField<'view>>> {
+        expected: Option<&IndexedType>,
+    ) -> anyhow::Result<Vec<(MemberField<'view>, bool)>> {
         let mut fields = Vec::new();
-        for field_ref in BodyResolutionView::new(self.db)
-            .field_candidate_refs_for_ty(body, ty.raw())
+        for (field_ref, type_matches) in BodyResolutionView::new(self.db)
+            .field_candidates_for_ty(body, ty.raw(), expected.map(IndexedType::raw))
             .context("resolve field candidates for type")?
         {
             let Some(field) = self.field(field_ref).context("read field candidate data")? else {
                 continue;
             };
-            fields.push(field);
+            fields.push((field, type_matches));
         }
         Ok(fields)
     }

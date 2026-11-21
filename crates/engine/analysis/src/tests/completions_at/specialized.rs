@@ -32,29 +32,24 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
             // extern ABI
             value C-unwind
               detail: extern ABI C-unwind
-              sort: 00-specialized:08:C-unwind
               replace: 76..80
 
             // macro fragment
             value expr
               detail: macro fragment expr
-              sort: 00-specialized:08:expr
               replace: 133..135
             value expr_2021
               detail: macro fragment expr_2021
-              sort: 00-specialized:08:expr_2021
               replace: 133..135
 
             // format local
             variable local_capture
               detail: format capture local_capture
-              sort: 00-body:0001|local_capture|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(0) })
               replace: 302..305
 
             // format named argument
             variable explicit_name
               detail: format argument explicit_name
-              sort: 00-specialized:07:explicit_name
               replace: 355..358
 
             ct MODULE_CAPTURE // format module const
@@ -62,7 +57,6 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
             // Cargo environment
             value CARGO_MANIFEST_DIR
               detail: directory containing this package manifest
-              sort: 00-specialized:08:CARGO_MANIFEST_DIR
               replace: 434..443
 
             vl CARGO_BIN_NAME // Cargo option environment
@@ -72,7 +66,6 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
             // postfix match
             postfix match
               detail: postfix match expr
-              sort: 00-specialized:09:match
               replace: 538..552
               snippet: match (value + 1) {
                 ${1:_} => { $0 },
@@ -81,7 +74,6 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
             // boolean postfix
             postfix if
               detail: postfix if expr
-              sort: 00-specialized:09:if
               replace: 566..577
               snippet: if condition {
                 $0
@@ -174,7 +166,6 @@ fn const_body<const N: usize>() {
             // cfg Cargo feature
             value serde-support
               detail: attribute input serde-support
-              sort: 00-specialized:08:serde-support
               replace: 272..278
 
             vl message // diagnostic input
@@ -229,25 +220,21 @@ mod nested {
             // missing trait members
             const REQUIRED
               detail: required trait member: const REQUIRED: u8
-              sort: 00-required|REQUIRED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: ConstId(0) }) })
               replace: 488..491
               snippet: const REQUIRED: u8 = ${1:todo!()};
             fn required
               detail: required trait member: fn required(&self, value: u8, object: &(dyn analysis_missing_trait_member_completions::nested::Object + analysis_missing_trait_member_completions::nested::Marker), mapper: impl analysis_missing_trait_member_completions::nested::Object) -> Self::Output
               docs: Handle one request.
-              sort: 00-required|required|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: FunctionId(0) })
               replace: 488..491
               snippet: fn required(&self, value: u8, object: &(dyn analysis_missing_trait_member_completions::nested::Object + analysis_missing_trait_member_completions::nested::Marker), mapper: impl analysis_missing_trait_member_completions::nested::Object) -> Self::Output {
                 ${1:todo!()}
             }
             const DEFAULTED
               detail: default trait member: const DEFAULTED: u8
-              sort: 01-default|DEFAULTED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: ConstId(1) }) })
               replace: 488..491
               snippet: const DEFAULTED: u8 = ${1:todo!()};
             type_alias Defaulted
               detail: default trait member: type Defaulted = u8
-              sort: 01-default|Defaulted|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: TypeAliasId(1) }) })
               replace: 488..491
               snippet: type Defaulted = ${1:u8};
         "#]],
@@ -285,7 +272,6 @@ impl Service for ConstWorker {
             fn required
               detail: required trait member: fn required(&self) -> Self::Output
               filter: fn required
-              sort: 00-required|required|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: FunctionId(0) })
               replace: 161..166
               snippet: fn required(&self) -> Self::Output {
                 ${1:todo!()}
@@ -295,7 +281,6 @@ impl Service for ConstWorker {
             type_alias Output
               detail: required trait member: type Output = ()
               filter: type Output
-              sort: 00-required|Output|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: TypeAliasId(0) }) })
               replace: 223..230
               snippet: type Output = ${1:()};
 
@@ -303,7 +288,6 @@ impl Service for ConstWorker {
             const LIMIT
               detail: required trait member: const LIMIT: usize
               filter: const LIMIT
-              sort: 00-required|LIMIT|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Trait(TraitId(0)) }, id: ConstId(0) }) })
               replace: 289..297
               snippet: const LIMIT: usize = ${1:todo!()};
         "#]],
@@ -336,13 +320,11 @@ tools::nested_i$0!(); // complete_verbose("qualified module macro")
             // unqualified module macro
             macro local_item
               detail: macro local_item
-              sort: local_item|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 245..252
 
             // qualified module macro
             macro nested_item
               detail: macro nested_item
-              sort: nested_item|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
               replace: 264..272
         "#]],
     );
@@ -384,11 +366,9 @@ pub struct Child;
             // root module declaration
             module parser
               detail: mod parser
-              sort: parser|03|00|Synthetic(ModuleDeclaration)
               replace: 17..21
             module r#type
               detail: mod r#type
-              sort: r#type|03|00|Synthetic(ModuleDeclaration)
               replace: 17..21
 
             <none> // path-attributed module declaration
@@ -396,7 +376,6 @@ pub struct Child;
             // inline module declaration
             module child
               detail: mod child
-              sort: child|03|00|Synthetic(ModuleDeclaration)
               replace: 76..79
         "#]],
     );
@@ -432,13 +411,11 @@ pub struct WrongChild;
             // path-selected definition file
             module beside
               detail: mod beside
-              sort: beside|03|00|Synthetic(ModuleDeclaration)
               replace: 4..7
 
             // custom target root
             module root_child
               detail: mod root_child
-              sort: root_child|03|00|Synthetic(ModuleDeclaration)
               replace: 4..7
         "#]],
     );
@@ -477,54 +454,44 @@ pub fn use_it() {
             // macro from value prefix
             fn exported_function
               detail: pub fn exported_function() -> u8
-              sort: 01-module|exported_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(1) })
               replace: 343..347
               snippet: exported_function()$0
             macro exported_value
               detail: macro exported_value
-              sort: 01-module|exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 343..347
               snippet: exported_value!($0)
             fn make_function
               detail: pub fn make_function() -> u8
-              sort: 01-module|make_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 343..347
               snippet: make_function()$0
             macro make_value
               detail: macro make_value
-              sort: 01-module|make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 343..347
               snippet: make_value!($0)
             fn use_it
               detail: pub fn use_it()
-              sort: 01-module|use_it|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(2) })
               replace: 343..347
               snippet: use_it()$0
 
             // qualified macro from value prefix
             fn exported_function
               detail: pub fn exported_function() -> u8
-              sort: exported_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(1) })
               replace: 377..385
               snippet: exported_function()$0
             macro exported_value
               detail: macro exported_value
-              sort: exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 377..385
               snippet: exported_value!($0)
             fn make_function
               detail: pub fn make_function() -> u8
-              sort: make_function|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 377..385
               snippet: make_function()$0
             macro make_value
               detail: macro make_value
-              sort: make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 377..385
               snippet: make_value!($0)
             fn use_it
               detail: pub fn use_it()
-              sort: use_it|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(2) })
               replace: 377..385
               snippet: use_it()$0
         "#]],
@@ -603,33 +570,28 @@ fn cannot_name_other_exports() {
             // unqualified function-like proc macro at EOF
             macro emit
               detail: macro emit
-              sort: 01-module|emit|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 64..66
               snippet: emit!($0)
 
             // function-like proc macro with invocation already typed
             macro emit
               detail: macro emit
-              sort: 01-module|emit|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 64..66
 
             // qualified function-like proc macro at EOF
             macro emit
               detail: macro emit
-              sort: emit|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 53..55
               snippet: emit!($0)
 
             // attribute proc macro keeps macro detail
             macro traced
               detail: macro traced
-              sort: traced|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
               replace: 26..29
 
             // derive proc macro keeps export name and macro detail
             macro Stored
               detail: macro Stored
-              sort: Stored|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(5) } })
               replace: 33..36
 
             <none> // implementation function is hidden downstream

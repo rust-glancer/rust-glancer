@@ -24,10 +24,8 @@ use crate::{
     query::completion::{
         CompletionContext,
         candidates::CompletionCandidateSource,
-        render::{
-            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-            DefinitionCompletionRequest,
-        },
+        relevance::CompletionSortPolicy,
+        render::{CallCompletionKind, DefinitionCompletionRenderer, DefinitionCompletionRequest},
     },
 };
 
@@ -52,7 +50,7 @@ impl<'a, 'db, 'source> AssociatedTypeBindingCompletionResolver<'a, 'db, 'source>
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let source = CompletionCandidateSource::new(self.analysis.view_db());
         let candidates = source
-            .associated_type_binding_candidates(&site)
+            .associated_type_binding_candidates(&site, self.query.crate_ref)
             .context("collect associated type binding candidates")?;
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create associated type binding renderer")?;
@@ -78,7 +76,6 @@ impl<'a, 'db, 'source> AssociatedTypeBindingCompletionResolver<'a, 'db, 'source>
             completions.push(completion);
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

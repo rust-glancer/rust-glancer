@@ -182,9 +182,9 @@ pub fn use_it(user_value: u8) {
 "#,
         expect![[r#"
             // record field value completions
+            vr user_value
             st User
             fn use_it
-            vr user_value
         "#]],
     );
 }

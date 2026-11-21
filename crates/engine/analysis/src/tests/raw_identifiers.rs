@@ -94,8 +94,8 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
             st Imported
             st r#async
             st r#gen
-            md r#mod
             st r#type
+            md r#mod
 
             // complete raw field
             im r#fn

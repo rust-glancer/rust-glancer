@@ -16,7 +16,7 @@
 
 use rg_ir_view::{lookup::name::NameNamespace, member::ConstructorShape};
 
-use super::render::escape_lsp_snippet_text;
+use super::render::constructor_insert_text;
 use crate::{
     model::{CompletionInsertText, CompletionKind},
     query::completion::site::PatternCompletionKind,
@@ -146,17 +146,6 @@ impl PatternCompletionPolicy {
             return CompletionInsertText::Plain;
         }
 
-        match shape {
-            ConstructorShape::Unit if plain_is_label => CompletionInsertText::Plain,
-            ConstructorShape::Unit => CompletionInsertText::Text(path.to_string()),
-            ConstructorShape::Tuple { .. } if self.snippet_support => {
-                CompletionInsertText::Snippet(format!("{}($0)", escape_lsp_snippet_text(path)))
-            }
-            ConstructorShape::Tuple { .. } => CompletionInsertText::Text(format!("{path}()")),
-            ConstructorShape::Record { .. } if self.snippet_support => {
-                CompletionInsertText::Snippet(format!("{} {{ $0 }}", escape_lsp_snippet_text(path)))
-            }
-            ConstructorShape::Record { .. } => CompletionInsertText::Text(format!("{path} {{  }}")),
-        }
+        constructor_insert_text(path, shape, self.snippet_support, plain_is_label)
     }
 }

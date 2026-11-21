@@ -420,6 +420,7 @@ fn record_field_list_from_ast(
                 .unwrap_or_else(|| field.syntax().text_range());
 
             FieldItem {
+                user_facing_attrs: UserFacingAttrs::from_ast(&field),
                 key: name.map(|name| FieldKey::Named(Name::new(name.text()))),
                 visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
                 ty: field
@@ -441,6 +442,7 @@ fn tuple_field_list_from_ast(
         .fields()
         .enumerate()
         .map(|(index, field)| FieldItem {
+            user_facing_attrs: UserFacingAttrs::from_ast(&field),
             key: Some(FieldKey::Tuple(index)),
             visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
             ty: field

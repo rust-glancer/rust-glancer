@@ -1,8 +1,12 @@
 //! Shared rendering for request-local completion rows without indexed declarations.
 
-use crate::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget, SyntheticCompletionTarget,
+use crate::{
+    CompletionRelevance,
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget, SyntheticCompletionTarget,
+    },
+    query::completion::relevance::CompletionSortPriority,
 };
 
 /// One source-adjacent candidate produced by a specialized resolver.
@@ -59,8 +63,8 @@ impl SyntheticCompletionCandidate {
 
 /// Filters and renders rows that have no declaration in the indexed stores.
 ///
-/// Examples include `true`, an ABI name, and postfix `box`. Their target records the synthetic
-/// family, while this renderer applies prefix matching, edit range, and a stable shared sort band.
+/// Examples include `true`, an ABI name, and postfix `box`. These rows share a priority group
+/// and sort by kind before label.
 pub(crate) struct SyntheticCompletionRenderer<'a> {
     prefix: &'a str,
     edit: CompletionEdit,
@@ -76,15 +80,11 @@ impl<'a> SyntheticCompletionRenderer<'a> {
         &self,
         candidates: impl IntoIterator<Item = SyntheticCompletionCandidate>,
     ) -> Vec<CompletionItem> {
-        let mut completions = candidates
+        candidates
             .into_iter()
             .filter(|candidate| candidate.match_text.starts_with(self.prefix))
             .map(|candidate| CompletionItem {
-                sort_text: format!(
-                    "00-specialized:{:02}:{}",
-                    candidate.kind.sort_text_rank(),
-                    candidate.label
-                ),
+                relevance: CompletionRelevance::new(CompletionSortPriority::Synthetic),
                 label: candidate.label,
                 filter_text: None,
                 kind: candidate.kind,
@@ -96,8 +96,6 @@ impl<'a> SyntheticCompletionRenderer<'a> {
                 edit: Some(self.edit),
                 import: None,
             })
-            .collect::<Vec<_>>();
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
-        completions
+            .collect()
     }
 }

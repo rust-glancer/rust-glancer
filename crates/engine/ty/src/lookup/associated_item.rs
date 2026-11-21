@@ -34,7 +34,7 @@
 //! not decide labels, visibility at the cursor, or insertion text; those remain with the body and
 //! editor-facing adapters.
 
-use std::collections::HashSet;
+use std::{cmp::Ordering, collections::HashSet};
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
@@ -45,7 +45,7 @@ use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 
 use crate::{
-    AdtTy, Clause, TraitApplication, Ty, TyContext,
+    AdtTy, Clause, Substitution, TraitApplication, Ty, TyContext,
     lookup::{ImplQuery, ItemPathQuery, ReceiverImplMatches},
     signature::SemanticSignatureQuery,
     solver::SolverScope,
@@ -69,9 +69,24 @@ pub enum AssociatedItemRef {
 pub struct AssociatedItemCandidateRef {
     item: AssociatedItemRef,
     applicability: TraitApplicability,
+    /// Whether the function's instantiated return type matched the expected type.
+    /// `false` also covers unchecked functions and items such as associated constants.
+    return_type_matches: bool,
 }
 
 impl AssociatedItemCandidateRef {
+    pub fn new(
+        item: AssociatedItemRef,
+        applicability: TraitApplicability,
+        return_type_matches: bool,
+    ) -> Self {
+        Self {
+            item,
+            applicability,
+            return_type_matches,
+        }
+    }
+
     pub fn item(self) -> AssociatedItemRef {
         self.item
     }
@@ -79,30 +94,57 @@ impl AssociatedItemCandidateRef {
     pub fn applicability(self) -> TraitApplicability {
         self.applicability
     }
+
+    /// Whether lookup established a return type match using the qualifier's bindings.
+    pub fn return_type_matches(self) -> bool {
+        self.return_type_matches
+    }
+
+    /// Keep the more applicable result when two paths reach the same declaration.
+    /// Equally applicable paths can instantiate the same function differently, as with
+    /// `T: Source<u8> + Source<u16>`, so both must confirm the return type match.
+    pub fn merge(self, other: Self) -> Self {
+        debug_assert_eq!(self.item, other.item);
+        match self.applicability.cmp(&other.applicability) {
+            Ordering::Less => self,
+            Ordering::Greater => other,
+            Ordering::Equal => Self {
+                return_type_matches: self.return_type_matches && other.return_type_matches,
+                ..self
+            },
+        }
+    }
 }
+
+type ReturnTypeMatcher<'a> = dyn Fn(FunctionRef, &Substitution) -> Result<bool, ReadError> + 'a;
 
 /// Shared associated-item discovery after the prefix has been lowered to semantic types.
 ///
 /// Body lookup supplies a resolver that understands local items. Signature lookup uses the
 /// crate-level resolver. The candidate rules stay here so `Widget::`, `T::`, and
 /// `<T as Factory>::` do not grow separate impl-selection behavior in each caller.
-pub struct AssociatedItemQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
+pub struct AssociatedItemQuery<'query, 'rank, D, I, R = ItemPathQuery<'query, D, I>> {
     context: TyContext<'query, D, I>,
     impls: ImplQuery<'query, D, I, R>,
+    return_type_matcher: Option<&'rank ReturnTypeMatcher<'rank>>,
 }
 
-impl<'query, D, I> AssociatedItemQuery<'query, D, I>
+impl<'query, D, I> AssociatedItemQuery<'query, '_, D, I>
 where
     D: DefMapSource + Clone,
     I: SemanticItemSource<'query> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let impls = ImplQuery::new(context.clone());
-        Self { context, impls }
+        Self {
+            context,
+            impls,
+            return_type_matcher: None,
+        }
     }
 }
 
-impl<'query, D, I, R> AssociatedItemQuery<'query, D, I, R>
+impl<'query, 'rank, D, I, R> AssociatedItemQuery<'query, 'rank, D, I, R>
 where
     D: DefMapSource + Clone,
     I: SemanticItemSource<'query> + Clone,
@@ -110,7 +152,18 @@ where
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
         let impls = ImplQuery::with_resolver(context.clone(), resolver);
-        Self { context, impls }
+        Self {
+            context,
+            impls,
+            return_type_matcher: None,
+        }
+    }
+
+    /// Check function return types as lookup expands the items from each matched owner.
+    /// The matcher receives the owner's bindings, such as `T = u8` from `Buffer::<u8>::new`.
+    pub fn with_return_type_matcher(mut self, matcher: &'rank ReturnTypeMatcher<'rank>) -> Self {
+        self.return_type_matcher = Some(matcher);
+        self
     }
 
     /// Find declarations exposed by every applicable impl for one receiver type.
@@ -161,6 +214,7 @@ where
                 impl_match.impl_ref().member_store(),
                 impl_match.applicability(),
                 filter,
+                Some(impl_match.subst()),
             )?;
         }
 
@@ -171,7 +225,7 @@ where
             }
             self.push_trait_hierarchy(
                 &mut candidates,
-                selection.trait_impl.trait_ref,
+                selection.application(),
                 selection.applicability,
                 filter,
                 &mut matching_traits,
@@ -217,7 +271,7 @@ where
             }
             self.push_trait_hierarchy(
                 &mut candidates,
-                application.def,
+                &application,
                 applicability,
                 filter,
                 &mut matching_traits,
@@ -260,6 +314,7 @@ where
                     index,
                 }),
                 TraitApplicability::Yes,
+                false,
             );
         }
         Ok(())
@@ -269,12 +324,13 @@ where
     fn push_trait_hierarchy(
         &self,
         candidates: &mut Vec<AssociatedItemCandidateRef>,
-        trait_ref: TraitDefRef,
+        application: &TraitApplication,
         applicability: TraitApplicability,
         filter: AssociatedItemFilter<'_>,
         matching_traits: &mut Option<HashSet<TraitDefRef>>,
         lineage: &mut Vec<TraitDefRef>,
     ) -> Result<(), ReadError> {
+        let trait_ref = application.def;
         if lineage.contains(&trait_ref) {
             return Ok(());
         }
@@ -301,8 +357,25 @@ where
             }
             _ => true,
         };
+        let subst =
+            if self.return_type_matcher.is_some() && applicability == TraitApplicability::Yes {
+                let generics = self
+                    .context
+                    .item_paths()
+                    .generics()
+                    .generics(trait_ref.into())?;
+                Some(Substitution::from_args(&generics, &application.args))
+            } else {
+                None
+            };
         if read_members {
-            self.push_assoc_items(candidates, trait_ref.member_store(), applicability, filter)?;
+            self.push_assoc_items(
+                candidates,
+                trait_ref.member_store(),
+                applicability,
+                filter,
+                subst.as_ref(),
+            )?;
         }
 
         // The canonical trait header has already lowered `Self: Super` predicates. Filtering on
@@ -320,9 +393,19 @@ where
                 if application.def == trait_ref || application.self_ty() != Some(&header.self_ty) {
                     continue;
                 }
+                // Carry the child's arguments into the parent. For
+                // `trait Child<T>: Parent<Vec<T>> {}`, a `Child<u8>` bound supplies
+                // `Parent<Vec<u8>>` when looking up inherited methods.
+                let instantiated;
+                let application = if let Some(subst) = &subst {
+                    instantiated = subst.apply_trait_application(application);
+                    &instantiated
+                } else {
+                    application
+                };
                 self.push_trait_hierarchy(
                     candidates,
-                    application.def,
+                    application,
                     applicability,
                     filter,
                     matching_traits,
@@ -341,6 +424,7 @@ where
         store: ItemStoreRef,
         applicability: TraitApplicability,
         filter: AssociatedItemFilter<'_>,
+        owner_subst: Option<&Substitution>,
     ) -> Result<(), ReadError> {
         for item in self
             .context
@@ -360,7 +444,15 @@ where
                 }
                 AssocItemId::Const(id) => AssociatedItemRef::Const(ConstRef { store, id: *id }),
             };
-            Self::push_candidate(candidates, item, applicability);
+            let return_type_matches = match (item, self.return_type_matcher, owner_subst) {
+                (AssociatedItemRef::Function(function), Some(matcher), Some(subst))
+                    if applicability == TraitApplicability::Yes =>
+                {
+                    matcher(function, subst)?
+                }
+                _ => false,
+            };
+            Self::push_candidate(candidates, item, applicability, return_type_matches);
         }
         Ok(())
     }
@@ -370,17 +462,16 @@ where
         candidates: &mut Vec<AssociatedItemCandidateRef>,
         item: AssociatedItemRef,
         applicability: TraitApplicability,
+        return_type_matches: bool,
     ) {
+        let candidate = AssociatedItemCandidateRef::new(item, applicability, return_type_matches);
         if let Some(existing) = candidates
             .iter_mut()
             .find(|candidate| candidate.item == item)
         {
-            existing.applicability = existing.applicability.or(applicability);
+            *existing = existing.merge(candidate);
             return;
         }
-        candidates.push(AssociatedItemCandidateRef {
-            item,
-            applicability,
-        });
+        candidates.push(candidate);
     }
 }

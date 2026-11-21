@@ -4,6 +4,7 @@
 //! that compiler representation behind the view boundary while still supporting the concrete
 //! operations used by hover, navigation, completion, and inlay hints.
 
+mod expression;
 pub mod locals;
 
 use std::fmt;
@@ -18,12 +19,13 @@ use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Ty,
+    AdtTy, AliasTy, ConstValue, GenericArg, Ty,
     lookup::ItemPathQuery,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     signature::SemanticSignatureQuery,
 };
 
+pub use self::expression::{ExpectedCallResult, IndexedCallArguments};
 use crate::{
     IndexedViewDb,
     body::BodyResolutionView,
@@ -52,6 +54,59 @@ impl IndexedType {
 
     pub(crate) fn raw(&self) -> &Ty {
         &self.0
+    }
+
+    /// Whether this type can serve as evidence for a match. For example, two
+    /// `[u8; _]` types can have different lengths once inference fills them in.
+    pub fn is_known(&self) -> bool {
+        !self.0.has_unknown_type_or_const() && !self.0.has_projection()
+    }
+
+    pub fn is_unit(&self) -> bool {
+        matches!(self.raw(), Ty::Unit)
+    }
+
+    /// The nominal definition of a value type, without peeling references.
+    pub fn adt_def(&self) -> Option<TypeDefRef> {
+        match self.raw() {
+            Ty::Adt(adt) => Some(adt.def),
+            _ => None,
+        }
+    }
+
+    /// Check the constructor's owner and any generic arguments fixed by its qualifier.
+    ///
+    /// For an expected `Flag<u8>`, `Flag::Set` can take `u8` from the context.
+    /// `Flag::<u16>::Set` and `WordFlag::Set` with `type WordFlag = Flag<u16>`
+    /// already fix the argument to `u16`.
+    pub fn matches_constructor(&self, declaration: &Self, qualifier: Option<&Self>) -> bool {
+        let (Ty::Adt(expected), Ty::Adt(candidate)) = (self.raw(), declaration.raw()) else {
+            return false;
+        };
+        if expected.def != candidate.def {
+            return false;
+        }
+        let Some(qualifier) = qualifier else {
+            return true;
+        };
+        let Ty::Adt(qualifier) = qualifier.raw() else {
+            return false;
+        };
+        if qualifier.def != expected.def {
+            return false;
+        }
+
+        match (qualifier.args.as_slice(), expected.args.as_slice()) {
+            ([], _) => true,
+            (args, expected) if args.len() == expected.len() => {
+                args.iter().zip(expected).all(|(arg, expected)| match arg {
+                    GenericArg::Type(ty) if matches!(ty.as_ref(), Ty::Unknown) => true,
+                    GenericArg::Const(ConstValue::Unknown) => true,
+                    _ => arg == expected,
+                })
+            }
+            _ => false,
+        }
     }
 
     /// Return the primitive kind when this is exactly a primitive type.

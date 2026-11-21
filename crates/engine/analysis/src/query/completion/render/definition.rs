@@ -11,12 +11,15 @@ use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView};
 use super::{
     CallCompletionKind, definition_detail, escape_lsp_snippet_text,
     function::{FunctionCompletionRenderer, FunctionCompletionRequest},
-    sort::{CompletionSortPolicy, CompletionSortPriority},
 };
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind},
-    query::completion::{CompletionContext, candidates::DefinitionCompletionCandidate},
+    query::completion::{
+        CompletionContext,
+        candidates::DefinitionCompletionCandidate,
+        relevance::{CompletionSortPolicy, CompletionSortPriority},
+    },
 };
 
 /// Site-specific rendering choices for one definition-shaped candidate.
@@ -66,8 +69,8 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
                 return Ok(None);
             };
             return Ok(Some(
-                FunctionCompletionRenderer::new(self.query, self.syntax)
-                    .completion(FunctionCompletionRequest {
+                FunctionCompletionRenderer::new(self.query, self.syntax).completion(
+                    FunctionCompletionRequest {
                         function,
                         label_override: Some(request.candidate.label()),
                         kind: request.candidate.kind(),
@@ -76,8 +79,8 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
                         call_completion: request.call_completion,
                         sort_policy: request.sort_policy,
                         sort_priority: request.sort_priority,
-                    })
-                    .item,
+                    },
+                ),
             ));
         }
 
@@ -95,13 +98,7 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
             applicability: request.candidate.applicability(),
             detail: Some(definition_detail(kind, &label)),
             documentation: request.candidate.documentation().map(ToString::to_string),
-            sort_text: request.sort_policy.sort_text(
-                request.sort_priority,
-                &label,
-                kind,
-                request.candidate.applicability(),
-                target,
-            ),
+            relevance: request.sort_policy.relevance(request.sort_priority),
             insert_text: self.insert_text(kind, &label, request.call_completion, request.edit),
             edit: Some(request.edit),
             import: None,

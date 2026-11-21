@@ -241,23 +241,42 @@ impl Ty {
     }
 
     pub fn has_unknown(&self) -> bool {
+        self.has_unknown_components(false)
+    }
+
+    /// Like `has_unknown`, but also checks array lengths and const generic arguments.
+    pub fn has_unknown_type_or_const(&self) -> bool {
+        self.has_unknown_components(true)
+    }
+
+    fn has_unknown_components(&self, include_consts: bool) -> bool {
+        let unknown = |ty: &Self| ty.has_unknown_components(include_consts);
+        let unknown_arg = |arg: &GenericArg| match arg {
+            GenericArg::Type(ty) => unknown(ty),
+            GenericArg::Const(value) => include_consts && *value == ConstValue::Unknown,
+            GenericArg::Lifetime(_) => false,
+        };
         match self {
-            Self::Tuple(fields) => fields.iter().any(Self::has_unknown),
-            Self::Array { inner, .. }
-            | Self::Slice(inner)
-            | Self::Reference { inner, .. }
-            | Self::RawPointer { inner, .. } => inner.has_unknown(),
-            Self::FnPointer { params, ret } => {
-                params.iter().any(Self::has_unknown) || ret.has_unknown()
+            Self::Tuple(fields) => fields.iter().any(unknown),
+            Self::Array { inner, len } => {
+                (include_consts && *len == ConstValue::Unknown) || unknown(inner)
             }
-            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_unknown),
-            Self::Dyn(ty) => ty.types().any(Self::has_unknown),
-            Self::Alias(alias) => alias.has_unknown(),
-            Self::Closure(closure) => {
-                closure.params.iter().any(Self::has_unknown) || closure.ret.has_unknown()
+            Self::Slice(inner) | Self::Reference { inner, .. } | Self::RawPointer { inner, .. } => {
+                unknown(inner)
             }
-            Self::AsyncCoroutine(coroutine) => coroutine.output.has_unknown(),
-            Self::FnDef(function) => function.args.iter().any(GenericArg::has_unknown),
+            Self::FnPointer { params, ret } => params.iter().any(unknown) || unknown(ret),
+            Self::Adt(ty) => ty.args.iter().any(unknown_arg),
+            Self::Dyn(ty) => {
+                ty.args.iter().any(unknown_arg)
+                    || ty
+                        .associated_types
+                        .iter()
+                        .any(|binding| binding.args.iter().any(unknown_arg) || unknown(&binding.ty))
+            }
+            Self::Alias(alias) => alias.args().iter().any(unknown_arg),
+            Self::Closure(closure) => closure.params.iter().any(unknown) || unknown(&closure.ret),
+            Self::AsyncCoroutine(coroutine) => unknown(&coroutine.output),
+            Self::FnDef(function) => function.args.iter().any(unknown_arg),
             Self::Unknown => true,
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) => false,
         }
@@ -463,10 +482,6 @@ impl AliasTy {
             Self::Projection(alias) => &alias.args,
             Self::Opaque(alias) => &alias.args,
         }
-    }
-
-    fn has_unknown(&self) -> bool {
-        self.args().iter().any(GenericArg::has_unknown)
     }
 }
 

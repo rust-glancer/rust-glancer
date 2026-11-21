@@ -23,6 +23,7 @@ pub(crate) struct ImportableModuleWalk<'a, 'db> {
     deadline: Option<Instant>,
     pending: VecDeque<ModuleRoute>,
     scheduled: HashSet<ModuleRef>,
+    unchecked_roots: HashSet<ModuleRef>,
 }
 
 impl<'a, 'db> ImportableModuleWalk<'a, 'db> {
@@ -62,7 +63,9 @@ impl<'a, 'db> ImportableModuleWalk<'a, 'db> {
             .context("read auto-import extern roots")?;
         extern_roots.sort_by(|(left, _), (right, _)| left.cmp(right));
         let remaining = Self::MAX_MODULES - pending.len();
+        let mut unchecked_roots = HashSet::new();
         for (label, module) in extern_roots.into_iter().take(remaining) {
+            unchecked_roots.insert(module);
             pending.push_back(ModuleRoute {
                 module,
                 path: Path::relative(vec![Name::new(label)]),
@@ -78,6 +81,7 @@ impl<'a, 'db> ImportableModuleWalk<'a, 'db> {
             deadline,
             pending,
             scheduled,
+            unchecked_roots,
         })
     }
 
@@ -88,6 +92,16 @@ impl<'a, 'db> ImportableModuleWalk<'a, 'db> {
             rg_std::check_cancel!(self.db, "importable module search");
             if self.deadline.is_some_and(|end| Instant::now() >= end) {
                 break;
+            }
+            // Check seed visibility as the walk reaches it, after nearby modules.
+            if module.depth == 0 {
+                let unchecked = self.unchecked_roots.remove(&module.module);
+                if !module_is_exposed(self.db, self.importing_module, module.module, None)? {
+                    if unchecked {
+                        self.scheduled.remove(&module.module);
+                    }
+                    continue;
+                }
             }
             let Some(definitions) = self.db.definitions_for_origin(module.module.origin)? else {
                 continue;
@@ -120,12 +134,25 @@ impl<'a, 'db> ImportableModuleWalk<'a, 'db> {
             let DefId::Module(child) = binding.def else {
                 continue;
             };
+            // A hidden root can also be reachable through a documented alias.
+            // Validate the seeded spelling before treating its reservation as final.
             if self.scheduled.contains(&child)
-                || !resolver.binding_is_visible(self.importing_module, binding)?
-                || !module_is_exposed(self.db, self.importing_module, binding, child)?
+                && (!self.unchecked_roots.contains(&child)
+                    || module_is_exposed(self.db, self.importing_module, child, None)?)
             {
                 continue;
             }
+            if !resolver.binding_is_visible(self.importing_module, binding)?
+                || !module_is_exposed(
+                    self.db,
+                    self.importing_module,
+                    child,
+                    Some((module.module, binding)),
+                )?
+            {
+                continue;
+            }
+            self.unchecked_roots.remove(&child);
             self.scheduled.insert(child);
             self.pending.push_back(module.child(child, label));
             if self.scheduled.len() >= Self::MAX_MODULES {
@@ -165,19 +192,27 @@ impl ModuleRoute {
 pub(crate) fn module_is_exposed(
     db: &IndexedViewDb<'_>,
     importing_module: ModuleRef,
-    binding: &NameBinding,
     child: ModuleRef,
+    route: Option<(ModuleRef, &NameBinding)>,
 ) -> anyhow::Result<bool> {
-    if binding.attribute_import().is_some() && !binding.has_reexport() {
-        return Ok(false);
-    }
-    if child.origin.origin_crate() == importing_module.origin.origin_crate() {
+    let import = if let Some((source, binding)) = route
+        && let Some(attrs) = binding.import_attrs()
+    {
+        if !binding.has_reexport() {
+            return Ok(false);
+        }
+        Some((source.origin.origin_crate(), attrs))
+    } else {
+        None
+    };
+    let use_crate = importing_module.origin.origin_crate();
+    let defining_crate = child.origin.origin_crate();
+    if defining_crate == use_crate && import.is_none() {
         return Ok(true);
     }
-    let attrs = if let Some(import) = binding.attribute_import() {
-        db.import_data(import)?.map(|data| data.user_facing_attrs)
-    } else {
-        db.module_data(child)?.map(|data| data.user_facing_attrs)
-    };
-    Ok(!attrs.is_some_and(|attrs| attrs.is_doc_hidden() || attrs.is_unstable()))
+    let attrs = db
+        .module_data(child)?
+        .map(|data| data.user_facing_attrs)
+        .unwrap_or_default();
+    Ok(attrs.is_suggestible_through(defining_crate, import, use_crate))
 }

@@ -1,25 +1,26 @@
 //! Reusable construction of final completion rows.
 //!
 //! Resolvers decide which candidates belong at a site. This module turns those candidates into
-//! editor-facing labels, details, documentation, insertion text, and stable sort keys without
+//! editor-facing labels, details, documentation, insertion text, and ranking inputs without
 //! taking ownership of any completion family.
 
 mod definition;
 mod field;
 mod function;
 mod primitive;
-mod sort;
 mod synthetic;
+
+use rg_ir_view::member::ConstructorShape;
 
 pub(super) use self::{
     definition::{DefinitionCompletionRenderer, DefinitionCompletionRequest},
     field::FieldCompletionRenderer,
     function::{FunctionCompletionRenderer, FunctionCompletionRequest},
     primitive::PrimitiveTypeCompletionRenderer,
-    sort::{CompletionSortPolicy, CompletionSortPriority},
     synthetic::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
 };
-use crate::model::CompletionKind;
+use super::site::{NameCompletionContext, PatternCompletionKind};
+use crate::model::{CompletionInsertText, CompletionKind};
 
 /// Controls whether accepting a callable candidate inserts syntax around the completed name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,8 +34,42 @@ pub(super) enum CallCompletionKind {
 }
 
 impl CallCompletionKind {
+    pub(super) fn for_name_context(context: NameCompletionContext) -> Self {
+        match context {
+            NameCompletionContext::Type
+            | NameCompletionContext::Value
+            | NameCompletionContext::Pattern(PatternCompletionKind::Name) => Self::Call,
+            NameCompletionContext::Const
+            | NameCompletionContext::Import
+            | NameCompletionContext::Pattern(
+                PatternCompletionKind::TupleConstructor | PatternCompletionKind::RecordConstructor,
+            ) => Self::Plain,
+        }
+    }
+
     pub(super) fn inserts_call_syntax(self) -> bool {
         !matches!(self, Self::Plain)
+    }
+}
+
+/// Insert a constructor at a bare path. Existing delimiters are handled by the caller.
+pub(super) fn constructor_insert_text(
+    path: &str,
+    shape: &ConstructorShape,
+    snippet_support: bool,
+    plain_is_label: bool,
+) -> CompletionInsertText {
+    match shape {
+        ConstructorShape::Unit if plain_is_label => CompletionInsertText::Plain,
+        ConstructorShape::Unit => CompletionInsertText::Text(path.to_string()),
+        ConstructorShape::Tuple { .. } if snippet_support => {
+            CompletionInsertText::Snippet(format!("{}($0)", escape_lsp_snippet_text(path)))
+        }
+        ConstructorShape::Tuple { .. } => CompletionInsertText::Text(format!("{path}()")),
+        ConstructorShape::Record { .. } if snippet_support => {
+            CompletionInsertText::Snippet(format!("{} {{ $0 }}", escape_lsp_snippet_text(path)))
+        }
+        ConstructorShape::Record { .. } => CompletionInsertText::Text(format!("{path} {{  }}")),
     }
 }
 

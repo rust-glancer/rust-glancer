@@ -22,9 +22,10 @@ use crate::{
     query::completion::{
         CompletionContext,
         candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
+        relevance::CompletionSortPolicy,
         render::{
-            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-            DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
+            CallCompletionKind, DefinitionCompletionRenderer, DefinitionCompletionRequest,
+            SyntheticCompletionCandidate, SyntheticCompletionRenderer,
         },
         site::RestrictedVisibilityCompletionContext,
         syntax::CompletionSyntaxContext,
@@ -162,7 +163,6 @@ impl<'a, 'db, 'source> VisibilityCompletionResolver<'a, 'db, 'source> {
                 completions.push(completion);
             }
         }
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(())
     }
 }

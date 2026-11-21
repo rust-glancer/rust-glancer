@@ -16,7 +16,9 @@
 //! This keeps source-edit planning out of the search that runs while the user types.
 
 mod candidates;
+mod expected_type;
 mod pattern;
+mod relevance;
 mod render;
 mod resolvers;
 mod site;
@@ -27,13 +29,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rg_ir_model::{CrateRef, FileId};
+use rg_ir_model::{CrateRef, FileId, Path};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer, lookup::importable::ImportableNameSearch, member::MemberView,
     ty::locals::BodyView,
 };
 
-use self::{candidates::CompletionCandidateSource, site::CompletionSite};
+pub use self::relevance::CompletionRelevance;
+use self::{
+    candidates::CompletionCandidateSource, expected_type::ExpectedTypeRanking,
+    render::CallCompletionKind, site::CompletionSite, syntax::CallSuffix,
+};
 pub(crate) use self::{
     resolvers::CompletionResolver,
     site::{CompletionSiteDetector, PathCompletionSite},
@@ -41,7 +47,7 @@ pub(crate) use self::{
 };
 use crate::{
     Analysis,
-    model::{CompletionAdditionalEdit, CompletionEdit, CompletionImport, CompletionKind},
+    model::{CompletionAdditionalEdit, CompletionEdit, CompletionKind},
     query::import::{ImportContext, ImportEditPlan, ImportEditPlanner},
 };
 
@@ -171,9 +177,21 @@ pub(crate) struct CompletionContext<'a> {
     pub(crate) source_text: &'a str,
     pub(crate) client_capabilities: CompletionClientCapabilities,
     pub(crate) auto_import_budget: Duration,
+    expected_type: Option<&'a ExpectedTypeRanking>,
+    call_suffix: CallSuffix,
 }
 
 impl CompletionContext<'_> {
+    fn inserts_call(&self, kind: CallCompletionKind) -> bool {
+        self.call_suffix == CallSuffix::Absent
+            && self.client_capabilities.snippet_support
+            && kind.inserts_call_syntax()
+    }
+
+    fn completes_call(&self, kind: CallCompletionKind) -> bool {
+        self.call_suffix == CallSuffix::ArgumentList || self.inserts_call(kind)
+    }
+
     /// Start the search budget when a resolver reaches an eligible prefix.
     pub(crate) fn auto_import_deadline(&self, prefix: &str) -> Option<Instant> {
         (self.client_capabilities.auto_import && ImportableNameSearch::supports_prefix(prefix))
@@ -186,7 +204,8 @@ pub(crate) fn resolve_import(
     analysis: &Analysis<'_>,
     query: CompletionQuery<'_>,
     source: &str,
-    import: &CompletionImport,
+    path: &Path,
+    anonymous: bool,
     selected: Option<(&str, CompletionKind)>,
     expected_inline_module: Option<&[String]>,
 ) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
@@ -206,22 +225,20 @@ pub(crate) fn resolve_import(
         Some(syntax.site_syntax()),
     )?;
     let replace = match site {
-        Some(CompletionSite::Unqualified(site)) if !import.anonymous => {
-            if !CompletionCandidateSource::new(db).can_import_selected_name(
-                &site,
-                &import.path,
-                selected,
-            )? {
+        Some(CompletionSite::Unqualified(site)) if !anonymous => {
+            if !CompletionCandidateSource::new(db)
+                .can_import_selected_name(&site, path, selected)?
+            {
                 return Ok(None);
             }
             site.replace_span()
         }
-        Some(CompletionSite::Dot(site)) if import.anonymous => {
+        Some(CompletionSite::Dot(site)) if anonymous => {
             let Some(context) = ImportContext::for_dot_site(db, site.source())? else {
                 return Ok(None);
             };
             let Some(trait_ref) =
-                ImportableNameSearch::new(db).trait_for_import(context.module(), &import.path)?
+                ImportableNameSearch::new(db).trait_for_import(context.module(), path)?
             else {
                 return Ok(None);
             };
@@ -248,13 +265,12 @@ pub(crate) fn resolve_import(
     };
 
     let rendered_path = SyntaxRenderer::new(db.crate_edition(query.crate_ref)?)
-        .path(&import.path)
+        .path(path)
         .to_string();
     // Build the edit against this buffer. The row's original replacement span may have moved
     // or may already contain the completed name.
-    let planner =
-        ImportEditPlanner::for_completion(&syntax, CompletionEdit { replace }, import.anonymous);
-    Ok(match planner.plan(&import.path, &rendered_path) {
+    let planner = ImportEditPlanner::for_completion(&syntax, CompletionEdit { replace }, anonymous);
+    Ok(match planner.plan(path, &rendered_path) {
         ImportEditPlan::Edit(edit) => Some(CompletionAdditionalEdit {
             replace: edit.replace,
             new_text: edit.new_text,

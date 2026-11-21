@@ -5,7 +5,7 @@ use rg_ir_model::{
     AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ItemOwner, ItemStoreRef, Path, PrimitiveTy,
     ScopeId, TraitApplicability, TypeDefId, identity::DeclarationRef,
 };
-use rg_item_tree::TypeRef;
+use rg_item_tree::{GenericArg, TypeRef};
 use rg_semantic_ir::{AssociatedItemFilter, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -54,10 +54,40 @@ where
     /// Unlike crate-level signature lookup, this query also sees types and impls declared inside
     /// the active body. The returned identities use the shared `rg_ty` candidate vocabulary, so
     /// local and crate-level declarations follow the same downstream lookup path.
+    ///
+    /// With an expected call result, compare each applicable function using the bindings from
+    /// the qualifier and any arguments written on the function name.
     pub(crate) fn candidates_for_prefix(
         &self,
         scope: ScopeId,
         prefix: &BodyAssociatedPathPrefix,
+        expected: Option<(&Ty, &[GenericArg])>,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
+        let context = self.context.ty_context();
+        let Some(expected) = expected else {
+            let query = AssociatedItemQuery::with_resolver(context, &self.context);
+            return self.collect_prefix_candidates(scope, prefix, query);
+        };
+
+        // Written arguments can name types declared inside this body, so compare the return
+        // type in the caller's scope using the bindings supplied by lookup.
+        SemanticDeclarations::new(&context, &self.context).with_table(|table, params| {
+            let live = self.context.live();
+            let matcher = |function: FunctionRef, owner: &Substitution| {
+                let subst = table.interner().lower_substitution(owner, params);
+                live.function_return_matches(scope, function, &table, &subst, expected)
+            };
+            let query = AssociatedItemQuery::with_resolver(context.clone(), &self.context)
+                .with_return_type_matcher(&matcher);
+            self.collect_prefix_candidates(scope, prefix, query)
+        })?
+    }
+
+    fn collect_prefix_candidates(
+        &self,
+        scope: ScopeId,
+        prefix: &BodyAssociatedPathPrefix,
+        query: AssociatedItemQuery<'query, '_, D, I, &BodyResolutionContext<'query, D, I>>,
     ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
@@ -88,13 +118,23 @@ where
                     ))
                 })?;
 
-                let mut candidates = self.candidates_for_ty(scope, &prefix_ty)?;
-                candidates.extend(self.candidates_for_trait_applications(owner_traits)?);
-                if let Some(direct_trait) = direct_trait {
-                    candidates.extend(
-                        self.candidates_for_trait_applications([direct_trait.application])?,
-                    );
-                }
+                let receiver = self
+                    .context
+                    .impls()
+                    .matches_for_receiver_with_associated_items(scope, &prefix_ty)?;
+                let mut candidates = query.candidates_for_matches(
+                    receiver.receiver_ty(),
+                    receiver.matches(),
+                    AssociatedItemFilter::All,
+                )?;
+                let traits = owner_traits
+                    .into_iter()
+                    .chain(direct_trait.map(|trait_ref| trait_ref.application));
+                candidates.extend(query.candidates_for_trait_applications(
+                    traits,
+                    TraitApplicability::Yes,
+                    AssociatedItemFilter::All,
+                )?);
                 Ok(candidates)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
@@ -108,7 +148,11 @@ where
                 let Some(trait_ref) = trait_ref else {
                     return Ok(Vec::new());
                 };
-                self.candidates_for_trait_applications([trait_ref.application])
+                query.candidates_for_trait_applications(
+                    [trait_ref.application],
+                    TraitApplicability::Yes,
+                    AssociatedItemFilter::All,
+                )
             }
         }
     }
@@ -137,34 +181,9 @@ where
         let Some(trait_ref) = trait_ref else {
             return Ok(Vec::new());
         };
-        self.candidates_for_trait_applications([trait_ref.application])
-    }
-
-    /// Combine body-local impls with crate-indexed impls for one lowered prefix type.
-    fn candidates_for_ty(
-        &self,
-        scope: ScopeId,
-        ty: &Ty,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
-        let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
-        let receiver = self
-            .context
-            .impls()
-            .matches_for_receiver_with_associated_items(scope, ty)?;
-        query.candidates_for_matches(
-            receiver.receiver_ty(),
-            receiver.matches(),
-            AssociatedItemFilter::All,
-        )
-    }
-
-    fn candidates_for_trait_applications(
-        &self,
-        applications: impl IntoIterator<Item = TraitApplication>,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context)
             .candidates_for_trait_applications(
-                applications,
+                [trait_ref.application],
                 TraitApplicability::Yes,
                 AssociatedItemFilter::All,
             )

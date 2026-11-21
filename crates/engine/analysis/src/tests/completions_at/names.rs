@@ -20,9 +20,9 @@ pub fn use_it(input_user: User) {
 "#,
         expect![[r#"
             // unqualified value completions
-            st User
-            vr input_user
             vr local_user
+            vr input_user
+            st User
             fn make_user
             fn use_it
         "#]],
@@ -66,25 +66,20 @@ pub fn use_it(c_a_outer: u8) {
             // unqualified value proximity
             variable c_z_inner
               detail: let c_z_inner: u8
-              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(1) })
               replace: 107..108
             variable c_a_outer
               detail: let c_a_outer: u8
-              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(0) })
               replace: 107..108
             fn c_module_item
               detail: pub fn c_module_item()
-              sort: 01-module|c_module_item|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
               replace: 107..108
               snippet: c_module_item()$0
             fn use_it
               detail: pub fn use_it(c_a_outer: u8)
-              sort: 01-module|use_it|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(1) })
               replace: 107..108
               snippet: use_it(${1:c_a_outer})$0
             keyword crate
               detail: keyword crate
-              sort: ~keyword:00:crate
               replace: 107..108
               snippet: crate::$0
         "#]],
@@ -110,19 +105,15 @@ pub fn use_it() {
             // unqualified type proximity
             struct ZLocal
               detail: struct ZLocal
-              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Function(0), body: BodyId(0) }), id: Struct(StructId(0)) }) })
               replace: 112..113
             struct AModule
               detail: struct AModule
-              sort: 01-module|00|AModule|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 112..113
             trait ATrait
               detail: trait ATrait
-              sort: 01-module|01|ATrait|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 112..113
             module a_mod
               detail: mod a_mod
-              sort: 01-module|02|a_mod|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 112..113
         "#]],
     );
@@ -187,50 +178,50 @@ pub fn incomplete(value: Wrapper<Fi$0 // complete("incomplete function generic a
 "#,
         expect![[r#"
             // struct field generic arg
+            tp T
             st Array
             st Fixture
             st Holder
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // struct field type param
+            tp T
             st Array
             st Fixture
             st Holder
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // trait method generic arg
+            tp Self
+            tp T
+            tp U
             st Array
             st Fixture
             st Holder
-            tp Self
-            tt Service
-            tp T
-            tp U
             st Wrapper
+            tt Service
 
             // trait method Self
-            st Array
-            st Fixture
-            st Holder
             tp Self
-            tt Service
             tp T
             tp U
-            st Wrapper
-
-            // impl method generic arg
             st Array
             st Fixture
             st Holder
-            ct N
-            tp Self
-            tt Service
-            tp T
             st Wrapper
+            tt Service
+
+            // impl method generic arg
+            tp Self
+            tp T
+            ct N
+            st Array
+            st Fixture
+            st Holder
+            st Wrapper
+            tt Service
 
             // qualified return type
             st Array
@@ -240,37 +231,37 @@ pub fn incomplete(value: Wrapper<Fi$0 // complete("incomplete function generic a
             st Wrapper
 
             // function generic arg
+            tp T
+            ct N
             st Array
             st Fixture
             st Holder
-            ct N
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // function type param
+            tp T
             st Array
             st Fixture
             st Holder
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // function const arg
+            tp T
+            ct N
             st Array
             st Fixture
             st Holder
-            ct N
-            tt Service
-            tp T
             st Wrapper
+            tt Service
 
             // incomplete function generic arg
             st Array
             st Fixture
             st Holder
-            tt Service
             st Wrapper
+            tt Service
         "#]],
     );
 }
@@ -304,13 +295,13 @@ pub fn use_it<T, const N: usize>() {
 "#,
         expect![[r#"
             // body type parameter
-            st Array
             tp T
+            st Array
 
             // body const generic argument
-            st Array
-            ct N
             tp T
+            ct N
+            st Array
         "#]],
     );
 }
@@ -389,11 +380,9 @@ pub fn use_it() {
             // module named like primitive completions
             module usize
               detail: mod usize
-              sort: 01-module|02|usize|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 52..54
             primitive_type usize
               detail: primitive type usize
-              sort: 02-primitive|00|usize|00|PrimitiveType(UnsignedInt(Usize))
               replace: 52..54
         "#]],
     );
@@ -424,20 +413,20 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // body-local type item completions
-            st GlobalId
             en LocalAction
             ta LocalAlias
             un LocalBits
-            tt LocalNamed
             st LocalUnit
+            tt LocalNamed
+            st GlobalId
 
             // body-local value item completions
-            st GlobalId
             st LocalUnit
             vr _typed
             sc local_current
             ct local_default
             fn local_helper
+            st GlobalId
             fn use_it
         "#]],
     );
@@ -509,15 +498,12 @@ pub fn use_it() {
             // unqualified type sorting
             struct Zed
               detail: struct Zed
-              sort: 01-module|00|Zed|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 89..90
             trait Mid
               detail: trait Mid
-              sort: 01-module|01|Mid|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 89..90
             module aa_prefix
               detail: mod aa_prefix
-              sort: 01-module|02|aa_prefix|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 89..90
         "#]],
     );

@@ -15,18 +15,15 @@
 //! request-local parse. Type-sensitive transforms such as `if`, `while`, and `not` additionally
 //! require the receiver to infer as `bool`.
 
-use anyhow::Context as _;
-use rg_ir_model::{PrimitiveTy, Span};
+use rg_ir_model::Span;
 
 use crate::{
-    Analysis,
     model::{
         CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
         SyntheticCompletionTarget,
     },
     query::completion::{
         CompletionContext,
-        candidates::CompletionCandidateSource,
         render::{
             SyntheticCompletionCandidate, SyntheticCompletionRenderer, escape_lsp_snippet_text,
         },
@@ -39,14 +36,13 @@ use crate::{
 ///
 /// The indexed site supplies receiver identity and inferred type; request syntax supplies the
 /// exact source span that can safely be replaced.
-pub(super) struct PostfixCompletionResolver<'a, 'db, 'source> {
-    analysis: &'a Analysis<'db>,
+pub(super) struct PostfixCompletionResolver<'source> {
     query: CompletionContext<'source>,
 }
 
-impl<'a, 'db, 'source> PostfixCompletionResolver<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionContext<'source>) -> Self {
-        Self { analysis, query }
+impl<'source> PostfixCompletionResolver<'source> {
+    pub(super) fn new(query: CompletionContext<'source>) -> Self {
+        Self { query }
     }
 
     /// Complete only when semantic and request-local receiver spans describe the same expression.
@@ -54,21 +50,22 @@ impl<'a, 'db, 'source> PostfixCompletionResolver<'a, 'db, 'source> {
         &self,
         site: &DotCompletionSite,
         syntax: Option<&CompletionSyntaxContext<'_>>,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
+        receiver_is_bool: bool,
+    ) -> Vec<CompletionItem> {
         let Some(syntax) = syntax else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
         let Some(receiver_span) = syntax.postfix_receiver_span() else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
 
         // Body IR and the request-local parse must select the same written receiver. This check is
         // what makes a whole-expression replacement safe in dirty buffers and parser recovery.
         if receiver_span != site.receiver_span() || receiver_span.end > site.replace_span().start {
-            return Ok(Vec::new());
+            return Vec::new();
         }
         let Some(receiver) = syntax.source_text(receiver_span) else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
         let replace = Span {
             start: receiver_span.start,
@@ -82,17 +79,13 @@ impl<'a, 'db, 'source> PostfixCompletionResolver<'a, 'db, 'source> {
             .source_text(between)
             .is_some_and(|text| text.contains('.'))
         {
-            return Ok(Vec::new());
+            return Vec::new();
         }
 
         let prefix = syntax.prefix().text();
         let edit = CompletionEdit { replace };
-        let is_bool = CompletionCandidateSource::new(self.analysis.view_db())
-            .receiver_primitive_for_dot(site)
-            .context("read postfix receiver primitive type")?
-            == Some(PrimitiveTy::Bool);
-        Ok(SyntheticCompletionRenderer::new(prefix, edit)
-            .completions(self.candidates(receiver, is_bool)))
+        SyntheticCompletionRenderer::new(prefix, edit)
+            .completions(self.candidates(receiver, receiver_is_bool))
     }
 
     fn candidates(&self, receiver: &str, is_bool: bool) -> Vec<SyntheticCompletionCandidate> {

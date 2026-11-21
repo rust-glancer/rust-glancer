@@ -63,6 +63,7 @@ mod tests {
                     "completion": {
                         "completionItem": {
                             "snippetSupport": true,
+                            "labelDetailsSupport": true,
                             "resolveSupport": { "properties": ["additionalTextEdits"] }
                         }
                     },
@@ -83,6 +84,7 @@ mod tests {
         assert!(actual.code_action.preferred_support);
         assert!(actual.supports_eager_actions());
         assert!(actual.completion.snippet_support);
+        assert!(actual.completion.label_details_support);
         assert!(actual.completion.resolve_additional_text_edits);
         assert!(actual.signature_help.label_offset_support);
         assert!(actual.signature_help.no_active_parameter_support);
@@ -92,6 +94,7 @@ mod tests {
         );
         assert!(!defaults.supports_eager_actions());
         assert!(!defaults.completion.snippet_support);
+        assert!(!defaults.completion.label_details_support);
         assert!(!defaults.completion.resolve_additional_text_edits);
     }
 }

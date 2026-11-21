@@ -5,10 +5,13 @@ use rg_ir_view::{
     member::{MemberEnumVariantField, MemberField},
 };
 
-use super::sort::CompletionSortPolicy;
-use crate::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget,
+use crate::{
+    CompletionRelevance,
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
+    },
+    query::completion::relevance::CompletionSortPriority,
 };
 
 /// Renders named fields from both ordinary records and enum-variant records.
@@ -71,13 +74,7 @@ impl FieldCompletionRenderer {
             applicability: CompletionApplicability::Known,
             detail,
             documentation,
-            sort_text: CompletionSortPolicy::General.sort_text(
-                None,
-                &label,
-                CompletionKind::Field,
-                CompletionApplicability::Known,
-                target,
-            ),
+            relevance: CompletionRelevance::new(CompletionSortPriority::Member),
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
             import: None,

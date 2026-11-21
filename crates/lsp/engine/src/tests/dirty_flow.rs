@@ -44,6 +44,24 @@ async fn resolves_named_and_extension_trait_completion_imports() {
         .check_auto_import("method", "render_widget", "use crate::WidgetRenderer as _;")
         .await;
 
+    for (item, declaration, import_hint) in [
+        (
+            &widget.item,
+            "struct Widget",
+            " (use crate::collections::Widget)",
+        ),
+        (
+            &method.item,
+            "fn render_widget(&self)",
+            " (use crate::WidgetRenderer as _)",
+        ),
+    ] {
+        let label_details = item.label_details.as_ref().expect("separate import hint");
+        assert_eq!(item.detail.as_deref(), Some(declaration));
+        assert_eq!(label_details.description.as_deref(), Some(declaration));
+        assert_eq!(label_details.detail.as_deref(), Some(import_hint));
+    }
+
     // The displayed return type changes, but the same method still needs the same import.
     fixture
         .did_change_full(
@@ -934,6 +952,45 @@ pub fn demo(local_capture: usize, condition: bool) {
         )
         .await;
 
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn completion_ranks_the_active_parameter_type_from_unsaved_source() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_completion_expected_type"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        fn send(_: u8) {}
+        "#,
+    )
+    .await;
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            r#"
+fn send(_: bool) {}
+fn demo(choice_a_number: u8, choice_z_flag: bool) {
+    send($argument$
+"#,
+        )
+        .await;
+    let items = fixture.dirty_completion_items(&dirty, "argument").await;
+    let sort_text = |label| {
+        items
+            .iter()
+            .find(|item| item.label == label)
+            .and_then(|item| item.sort_text.as_deref())
+            .expect("candidate has a protocol sort key")
+    };
+    assert!(sort_text("choice_z_flag") < sort_text("choice_a_number"));
     fixture.shutdown().await;
 }
 

@@ -12,11 +12,11 @@ use rustc_type_ir::{
 };
 
 use super::{
-    AssocTypeBinding, Clause, Const, DefId, DynAssocTypeBinding, DynTy, GenericArgs, List, Param,
-    ProjectionTy, Region, SolverInterner, Ty,
+    AssocTypeBinding, Clause, Const, DefId, DynAssocTypeBinding, DynTy, GenericArg, GenericArgs,
+    InferenceSubstitution, List, Param, ProjectionTy, Region, SolverInterner, Ty,
     types::{ErrorGuaranteed, Safety, ValueConst},
 };
-use crate::AsyncCoroutineTy;
+use crate::{AsyncCoroutineTy, GenericArg as StoredArg, Substitution};
 
 impl<'s> SolverInterner<'s> {
     pub(crate) fn param(
@@ -170,13 +170,34 @@ impl<'s> SolverInterner<'s> {
     ) -> GenericArgs<'s> {
         let args = args
             .iter()
-            .map(|arg| match arg {
-                crate::GenericArg::Type(ty) => self.lower_ty(ty, params).into(),
-                crate::GenericArg::Lifetime(r) => self.lower_region(*r, params).into(),
-                crate::GenericArg::Const(c) => self.lower_const(*c, params).into(),
-            })
+            .map(|arg| self.lower_arg(arg, params))
             .collect::<Vec<_>>();
         List::new(self, &args)
+    }
+
+    /// Restore impl or trait bindings for use in the caller's solver table.
+    /// When `Wrapper<T>` matches `impl<U> Wrapper<U>`, keep `U` as the binding key and lower
+    /// its value `T` using the caller's generic parameters.
+    pub fn lower_substitution(
+        self,
+        subst: &Substitution,
+        params: &[GenericParamRef],
+    ) -> InferenceSubstitution<'s> {
+        InferenceSubstitution {
+            args: subst
+                .bindings()
+                .iter()
+                .map(|(param, arg)| (*param, self.lower_arg(arg, params)))
+                .collect(),
+        }
+    }
+
+    fn lower_arg(self, arg: &StoredArg, params: &[GenericParamRef]) -> GenericArg<'s> {
+        match arg {
+            StoredArg::Type(ty) => self.lower_ty(ty, params).into(),
+            StoredArg::Lifetime(region) => self.lower_region(*region, params).into(),
+            StoredArg::Const(value) => self.lower_const(*value, params).into(),
+        }
     }
 
     pub(crate) fn lower_region(self, r: crate::Lifetime, params: &[GenericParamRef]) -> Region<'s> {

@@ -3,12 +3,11 @@ use expect_test::expect;
 use crate::tests::utils::{check_analysis, check_analysis_with_fake_sysroot};
 
 #[test]
-fn merged_bindings_present_the_selected_reexport_attributes() {
+fn merged_reexports_keep_a_documented_spelling() {
     check_analysis(
         r#"
 //- /catalog/src/lib.rs crate:catalog root:catalog
 mod source {
-    #[doc(hidden)]
     pub struct Shared {}
 }
 
@@ -29,6 +28,7 @@ pub mod macros {
     #[macro_export]
     macro_rules! facade_macro { () => {} }
 
+    #[doc(inline)]
     pub use facade_macro;
 }
 
@@ -36,13 +36,13 @@ pub mod macros {
 fn use_it() {
     let _: catalog::hidden_first::Sha$0; // complete("visible re-export after hidden source").in_lib("app").matching("Shared")
     let _: catalog::visible_first::Sha$0; // complete("visible re-export before hidden source").in_lib("app").matching("Shared")
-    catalog::macros::facade_$0!(); // complete("macro re-export overrides declaration attributes").in_lib("app").matching("facade_macro")
+    catalog::macros::facade_$0!(); // complete("explicit inline macro re-export").in_lib("app").matching("facade_macro")
 }
 "#,
         expect![[r#"
             st Shared // visible re-export after hidden source
             st Shared // visible re-export before hidden source
-            ma facade_macro // macro re-export overrides declaration attributes
+            ma facade_macro // explicit inline macro re-export
         "#]],
     );
 }
@@ -70,6 +70,7 @@ mod internal {
     pub struct Reexported;
 }
 
+#[doc(inline)]
 pub use internal::Reexported as PublicWidget;
 
 pub mod facade {
@@ -113,34 +114,34 @@ fn values() {
         expect![[r#"
             // coalesced HashMap import
             struct HashMap
-              detail: struct HashMap (use catalog::collections::HashMap)
-              sort: 05-auto-import:0003|00|HashMap|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
+              detail: struct HashMap
+              import: use catalog::collections::HashMap
               replace: 61..66
               additional: 4..34 => "catalog::collections::{BTreeMap, HashMap}"
 
             // ambiguous imports
             struct Widget
-              detail: struct Widget (use catalog::left::Widget)
-              sort: 05-auto-import:0003|00|Widget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(2) } })
+              detail: struct Widget
+              import: use catalog::left::Widget
               replace: 79..82
               additional: 35..35 => "\nuse catalog::left::Widget;"
             struct Widget
-              detail: struct Widget (use catalog::right::Widget)
-              sort: 05-auto-import:0003|00|Widget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
+              detail: struct Widget
+              import: use catalog::right::Widget
               replace: 79..82
               additional: 35..35 => "\nuse catalog::right::Widget;"
 
             // short re-export path
             struct RankedWidget
-              detail: struct RankedWidget (use catalog::RankedWidget)
-              sort: 05-auto-import:0002|00|RankedWidget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(5) } })
+              detail: struct RankedWidget
+              import: use catalog::RankedWidget
               replace: 95..102
               additional: 35..35 => "\nuse catalog::RankedWidget;"
 
             // public re-export
             struct PublicWidget
-              detail: struct PublicWidget (use catalog::PublicWidget)
-              sort: 05-auto-import:0002|00|PublicWidget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(4) } })
+              detail: struct PublicWidget
+              import: use catalog::PublicWidget
               replace: 115..122
               additional: 35..35 => "\nuse catalog::PublicWidget;"
 
@@ -151,8 +152,8 @@ fn values() {
 
             // value auto-import
             fn make_widget
-              detail: pub fn make_widget() (use catalog::make_widget)
-              sort: 05-auto-import:0002|make_widget|06|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), id: Scope }, id: FunctionId(0) })
+              detail: pub fn make_widget()
+              import: use catalog::make_widget
               replace: 229..235
               additional: 35..35 => "\nuse catalog::make_widget;"
               snippet: make_widget()$0
@@ -203,7 +204,7 @@ fn draw(yes: bool, no: u32) {
     no.draw_w$0; // complete("receiver is not a canvas").auto_import().matching("draw_with")
     yes.draw_i$0; // complete("receiver determines a paintable item").auto_import().matching("draw_item")
     no.draw_i$0; // complete("receiver determines an unpaintable item").auto_import().matching("draw_item")
-    yes.draw_f$0; // complete("the other source is chosen by the caller").auto_import().matching("draw_from")
+    yes.draw_f$0; // complete_verbose("the other source is chosen by the caller").auto_import().matching("draw_from")
 }
 "#,
         expect![[r#"
@@ -215,7 +216,14 @@ fn draw(yes: bool, no: u32) {
             <none> // receiver is not a canvas
             tm draw_item // receiver determines a paintable item
             <none> // receiver determines an unpaintable item
-            tm draw_from // the other source is chosen by the caller
+
+            // the other source is chosen by the caller
+            trait_method draw_from
+              detail: fn draw_from<T: Source>(&self, other: T) where Self: Source<Item = T::Item>
+              import: use crate::catalog::Draw as _
+              replace: 1020..1026
+              additional: 0..0 => "use crate::catalog::Draw as _;\n\n"
+              snippet: draw_from(${1:other})$0
         "#]],
     );
 }
@@ -243,9 +251,9 @@ pub fn use_it() {
             md local
 
             // body-local imported value completions
+            vr _typed
             st User
             ct VALUE
-            vr _typed
             md local
             fn use_it
         "#]],
@@ -272,8 +280,8 @@ fn main() {
             fn main
 
             // unqualified value root completions
-            md analysis_unqualified_roots
             fn main
+            md analysis_unqualified_roots
         "#]],
     );
 }
@@ -324,6 +332,10 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // unqualified prelude completions
+            en Option
+            en Result
+            st String
+            st Vec
             tt Clone
             tt Copy
             tt Default
@@ -333,15 +345,11 @@ pub fn use_it() {
             tt FnOnce
             tt IntoIterator
             tt Iterator
-            en Option
             tt Ord
             tt PartialEq
             tt PartialOrd
-            en Result
             tt Send
-            st String
             tt Sync
-            st Vec
             md alloc
             md core
             md std

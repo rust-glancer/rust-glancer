@@ -10,6 +10,11 @@ use rg_semantic_ir::ItemStoreQuery;
 use super::{ImportPathKind, ImportableNameSearch, walk::module_is_exposed};
 use crate::{SymbolKind, lookup::name::NameNamespace};
 
+struct ImportPathBindings {
+    source: ModuleRef,
+    bindings: Vec<(Namespace, NameBinding)>,
+}
+
 impl ImportableNameSearch<'_, '_> {
     /// Resolve the selected trait by its exported spelling, including re-export aliases.
     pub fn trait_for_import(
@@ -17,7 +22,11 @@ impl ImportableNameSearch<'_, '_> {
         module: ModuleRef,
         path: &Path,
     ) -> anyhow::Result<Option<TraitDefRef>> {
-        let bindings = self.selected_bindings(module, path, NamespaceSet::TYPES)?;
+        let Some(ImportPathBindings { source, bindings }) =
+            self.selected_bindings(module, path, NamespaceSet::TYPES)?
+        else {
+            return Ok(None);
+        };
         let [(namespace, binding)] = bindings.as_slice() else {
             return Ok(None);
         };
@@ -25,7 +34,7 @@ impl ImportableNameSearch<'_, '_> {
             return Ok(None);
         };
         if self
-            .binding_name(module, leaf, *namespace, binding)?
+            .binding_name(module, source, leaf, *namespace, binding)?
             .is_none()
         {
             return Ok(None);
@@ -53,7 +62,11 @@ impl ImportableNameSearch<'_, '_> {
         };
         let maps = DefMapQuery::new(self.db);
         let resolver = maps.name_resolver();
-        let bindings = self.selected_bindings(module, path, NamespaceSet::TYPES_VALUES)?;
+        let Some(ImportPathBindings { source, bindings }) =
+            self.selected_bindings(module, path, NamespaceSet::TYPES_VALUES)?
+        else {
+            return Ok(false);
+        };
         let short_path = Path::unqualified_name(label.as_str());
         let available =
             self.available_import_namespaces(module, label, bindings.iter().copied())?;
@@ -77,13 +90,29 @@ impl ImportableNameSearch<'_, '_> {
                     continue;
                 }
             }
-            if let Some(name) = self.binding_name(module, label, ns, &binding)?
+            if let Some(name) = self.binding_name(module, source, label, ns, &binding)?
                 && accepts(name.namespace(), name.kind())
             {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Check a qualified type path synthesized for completion, including its module route.
+    pub fn can_suggest_type_path(&self, module: ModuleRef, path: &Path) -> anyhow::Result<bool> {
+        let Some(ImportPathBindings { source, bindings }) =
+            self.selected_bindings(module, path, NamespaceSet::TYPES)?
+        else {
+            return Ok(false);
+        };
+        let (Some(label), [(namespace, binding)]) = (path.segments().last(), bindings.as_slice())
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .binding_name(module, source, label, *namespace, binding)?
+            .is_some())
     }
 
     /// Follow just the saved route. A public item can remain reachable in Rust even after
@@ -93,9 +122,9 @@ impl ImportableNameSearch<'_, '_> {
         importing_module: ModuleRef,
         path: &Path,
         namespaces: NamespaceSet,
-    ) -> anyhow::Result<Vec<(Namespace, NameBinding)>> {
+    ) -> anyhow::Result<Option<ImportPathBindings>> {
         let Some((leaf, parents)) = path.segments().split_last() else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         // The search starts at self, crate, or an extern crate. Resolve that same root
         // first so an absolute extern path still works when its name is shadowed.
@@ -104,15 +133,18 @@ impl ImportableNameSearch<'_, '_> {
             PathRoot::Relative | PathRoot::Absolute
         ));
         let Some((root, parents)) = parents.split_at_checked(root_len) else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         let maps = DefMapQuery::new(self.db);
         let resolver = maps.name_resolver();
         let Some(mut module) =
             resolver.import_module(importing_module, &Path::new(path.root(), root.to_vec()))?
         else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
+        if !module_is_exposed(self.db, importing_module, module, None)? {
+            return Ok(None);
+        }
         for parent in parents {
             let next = resolver.bindings_in_module(
                 importing_module,
@@ -121,16 +153,24 @@ impl ImportableNameSearch<'_, '_> {
                 NamespaceSet::TYPES,
             )?;
             let [(_, binding)] = next.as_slice() else {
-                return Ok(Vec::new());
+                return Ok(None);
             };
             let DefId::Module(child) = binding.def else {
-                return Ok(Vec::new());
+                return Ok(None);
             };
-            if !module_is_exposed(self.db, importing_module, binding, child)? {
-                return Ok(Vec::new());
+            if !module_is_exposed(self.db, importing_module, child, Some((module, binding)))? {
+                return Ok(None);
             }
             module = child;
         }
-        Ok(resolver.bindings_in_module(importing_module, module, leaf.as_str(), namespaces)?)
+        Ok(Some(ImportPathBindings {
+            source: module,
+            bindings: resolver.bindings_in_module(
+                importing_module,
+                module,
+                leaf.as_str(),
+                namespaces,
+            )?,
+        }))
     }
 }

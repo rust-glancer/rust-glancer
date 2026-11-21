@@ -22,6 +22,7 @@ use crate::{
     TraitRefLowering, Ty,
     lookup::ItemPathQuery,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver},
+    solver::{InferenceSubstitution, InferenceTable, Outcome, Solver, TyShape},
 };
 
 /// One function's parameter types, return type, and qualifiers before choosing call arguments.
@@ -295,6 +296,45 @@ where
             Ok(lowering
                 .type_alias_ty(cx, alias)?
                 .map(|value| cx.raise_ty(value).unwrap_or(Ty::Unknown)))
+        })
+    }
+
+    /// Check whether a bare alias can name the expected nominal type.
+    ///
+    /// In `type Same<T> = Pair<T, T>`, the constructor can infer `T`, but both
+    /// positions use the same variable. Parameters from the use site stay rigid.
+    pub fn type_alias_matches_adt(
+        &self,
+        alias: TypeAliasRef,
+        expected: &Ty,
+        use_owner: Option<GenericDefRef>,
+    ) -> Result<bool, ReadError> {
+        let Ty::Adt(expected_adt) = expected else {
+            return Ok(false);
+        };
+        let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
+        lowering.with_storage(|cx| {
+            let Some(alias_ty) = lowering.type_alias_ty(cx, alias)? else {
+                return Ok(false);
+            };
+            if !matches!(alias_ty.shape(), TyShape::Adt(adt) if adt.def == expected_adt.def) {
+                return Ok(false);
+            }
+            let use_params = use_owner.map_or(&[][..], |owner| cx.params(owner.into()));
+            let expected = cx.lower_ty(expected, use_params);
+            if alias_ty == expected {
+                return Ok(true);
+            }
+            let generics = self
+                .item_paths
+                .generics()
+                .generics(GenericDefRef::TypeAlias(alias))?;
+            let table = InferenceTable::new(Solver::new(cx), Default::default());
+            let mut subst = InferenceSubstitution::new();
+            subst.fresh_for(&table, generics.iter_self().map(|param| param.param()));
+            let instantiated = subst.apply(cx, alias_ty);
+            Ok(table.try_unify(instantiated, expected).is_ok()
+                && table.fulfill() == Outcome::Proven)
         })
     }
 

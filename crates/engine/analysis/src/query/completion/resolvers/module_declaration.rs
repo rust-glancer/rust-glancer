@@ -22,7 +22,7 @@ use crate::{
         CompletionKind, CompletionTarget, SyntheticCompletionTarget,
     },
     query::completion::{
-        render::{CompletionSortPolicy, definition_detail},
+        relevance::CompletionSortPolicy, render::definition_detail,
         site::ModuleDeclarationCompletionSite,
     },
 };
@@ -103,19 +103,12 @@ impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
                 applicability: CompletionApplicability::Known,
                 detail: Some(definition_detail(kind, &label)),
                 documentation: None,
-                sort_text: CompletionSortPolicy::General.sort_text(
-                    None,
-                    &label,
-                    kind,
-                    CompletionApplicability::Known,
-                    target,
-                ),
+                relevance: CompletionSortPolicy::General.relevance(None),
                 insert_text: CompletionInsertText::Plain,
                 edit: Some(edit),
                 import: None,
             });
         }
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

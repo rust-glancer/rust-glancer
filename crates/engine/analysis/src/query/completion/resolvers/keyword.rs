@@ -11,12 +11,14 @@
 //! the actual scope.
 
 use crate::{
+    CompletionRelevance,
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget, KeywordCompletion,
     },
     query::completion::{
         CompletionClientCapabilities,
+        relevance::CompletionSortPriority,
         site::{
             ItemListCompletionContext, ItemListCompletionKind, SyntaxCompletionContext,
             TypeCompletionContext,
@@ -116,7 +118,7 @@ impl KeywordCompletionResolver {
         prefix: &str,
         edit: CompletionEdit,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let mut completions = KeywordCandidate::PATH_ROOTS
+        let completions = KeywordCandidate::PATH_ROOTS
             .iter()
             .filter(|candidate| candidate.label.starts_with(prefix))
             .map(|candidate| {
@@ -127,7 +129,6 @@ impl KeywordCompletionResolver {
                 )
             })
             .collect::<Vec<_>>();
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 
@@ -158,14 +159,11 @@ impl KeywordCompletionResolver {
         let edit = CompletionEdit {
             replace: prefix.span(),
         };
-        let mut completions = candidates
+        candidates
             .iter()
             .filter(|candidate| candidate.label.starts_with(prefix.text()))
             .map(|candidate| candidate.completion_item(edit, sort, self.client_capabilities))
-            .collect::<Vec<_>>();
-
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
-        completions
+            .collect()
     }
 }
 
@@ -177,11 +175,10 @@ enum KeywordSortPosition {
 }
 
 impl KeywordSortPosition {
-    /// Builds a sort bucket for standalone keyword rows or lower-priority overlays.
-    fn sort_text(self, rank: u8, label: &str) -> String {
+    fn priority(self, rank: u8) -> CompletionSortPriority {
         match self {
-            Self::Primary => format!("00-keyword:{rank:02}:{label}"),
-            Self::Overlay => format!("~keyword:{rank:02}:{label}"),
+            Self::Primary => CompletionSortPriority::Keyword { rank },
+            Self::Overlay => CompletionSortPriority::KeywordOverlay { rank },
         }
     }
 }
@@ -568,7 +565,7 @@ impl KeywordCandidate {
             applicability: CompletionApplicability::Known,
             detail: Some(format!("keyword {}", self.label)),
             documentation: None,
-            sort_text: sort.sort_text(self.sort_rank, self.label),
+            relevance: CompletionRelevance::new(sort.priority(self.sort_rank)),
             insert_text: if client_capabilities.snippet_support {
                 self.snippet
                     .map(|snippet| CompletionInsertText::Snippet(snippet.to_string()))

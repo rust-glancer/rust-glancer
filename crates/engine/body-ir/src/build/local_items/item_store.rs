@@ -39,13 +39,15 @@ impl<'source> LocalItemStoreCollector<'source> {
         let mut members = HashMap::new();
         let owners = items
             .traits_with_refs()
-            .map(|(owner, data)| (ItemOwner::Trait(owner.id), data.source))
-            .chain(
-                items
-                    .impls_with_refs()
-                    .map(|(owner, data)| (ItemOwner::Impl(owner.id), data.source)),
-            );
-        for (owner, source) in owners {
+            .map(|(owner, data)| (ItemOwner::Trait(owner.id), data.source, Default::default()))
+            .chain(items.impls_with_refs().map(|(owner, data)| {
+                (
+                    ItemOwner::Impl(owner.id),
+                    data.source,
+                    data.user_facing_attrs,
+                )
+            }));
+        for (owner, source, impl_attrs) in owners {
             let ids = match &reader.item(source)?.kind {
                 ItemKind::Trait(item) => &item.items,
                 ItemKind::Impl(item) => &item.items,
@@ -54,7 +56,7 @@ impl<'source> LocalItemStoreCollector<'source> {
             let mut builder = AssociatedItemStoreBuilder::default();
             for id in ids {
                 let source = source.with_item(*id);
-                builder.lower(source, owner, reader.item(source)?);
+                builder.lower(source, owner, reader.item(source)?, impl_attrs);
             }
             members.insert(owner.item_store(self.def_map.own_ref()).id, builder.build());
         }

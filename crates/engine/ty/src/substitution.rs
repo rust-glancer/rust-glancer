@@ -56,6 +56,10 @@ impl Substitution {
             .find_map(|(candidate, arg)| (*candidate == param).then_some(arg))
     }
 
+    pub(crate) fn bindings(&self) -> &[(GenericParamRef, GenericArg)] {
+        &self.0
+    }
+
     pub fn type_param(&self, param: TypeParamRef) -> Option<&Ty> {
         self.get(GenericParamRef::Type(param))?.as_ty()
     }

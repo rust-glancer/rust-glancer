@@ -64,13 +64,37 @@ where
     }
 
     pub(crate) fn infer_body(self) -> anyhow::Result<BodyFacts> {
+        self.with_inference(None, |inference| inference.infer_body())
+    }
+
+    /// Use the same expression walk as indexing and finalize just the argument's type.
+    pub(crate) fn infer_argument_ty(
+        context: BodyResolutionContext<'query, D, I>,
+        argument: ExprId,
+    ) -> anyhow::Result<rg_ty::Ty> {
+        let body = context.body();
+        Self { context, body }.with_inference(Some(argument), |mut inference| {
+            inference.infer_expressions()?;
+            rg_std::check_cancel!(inference.context, "read inferred argument type");
+            // With no value in the slot, its expectation can still be in the
+            // coercion queue after the surrounding call has settled.
+            let state = inference.finish_coercions();
+            Ok(state.table().finalize(state.expr_ty(argument)))
+        })
+    }
+
+    fn with_inference<R>(
+        self,
+        argument_hole: Option<ExprId>,
+        run: impl for<'s> FnOnce(BodyInference<'s, 'query, D, I>) -> anyhow::Result<R>,
+    ) -> anyhow::Result<R> {
         let ty_context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&ty_context, &self.context);
         declarations
             .with_solver(|solver| {
                 let cx = solver.interner();
                 let env = cx.parameter_environment(self.body.owner().generic_def().into());
-                BodyInference {
+                run(BodyInference {
                     context: self.context.clone(),
                     body: self.body,
                     inference: InferenceState::new(
@@ -89,8 +113,8 @@ where
                     },
                     inference_exhausted: false,
                     depth: 0,
-                }
-                .infer_body()
+                    argument_hole,
+                })
             })
             .context("read solver declarations")?
     }
@@ -118,6 +142,7 @@ struct BodyInference<'s, 'query, D, I> {
     return_target: ReturnTarget<'s>,
     inference_exhausted: bool,
     depth: usize,
+    argument_hole: Option<ExprId>,
 }
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
@@ -146,6 +171,22 @@ where
     /// Infer the body once, finish pending semantic work, then publish durable facts.
     #[rg_std::cancelable("start body inference", token = self.context)]
     pub(crate) fn infer_body(mut self) -> anyhow::Result<BodyFacts> {
+        self.infer_expressions()?;
+        self.resolve_method_declarations()
+            .context("resolve method declarations")?;
+
+        if self.inference_exhausted {
+            tracing::warn!(body = ?self.context.body_ref(), "body inference stopped at a work limit; publishing partial results");
+        }
+
+        // A cancelled solver may return a conservative answer. Do not publish that answer as a
+        // completed body.
+        rg_std::check_cancel!(self.context, "finalize body facts");
+        let initializer = self.context.evaluate_initializer()?;
+        Ok(self.finish_coercions().finish(initializer))
+    }
+
+    fn infer_expressions(&mut self) -> anyhow::Result<()> {
         // Make declaration types available before visiting any parameter uses or return values.
         self.infer_parameters()
             .context("infer function parameters")?;
@@ -172,18 +213,7 @@ where
             self.fulfill_pending()
                 .context("complete inference after async output fallback")?;
         }
-        self.resolve_method_declarations()
-            .context("resolve method declarations")?;
-
-        if self.inference_exhausted {
-            tracing::warn!(body = ?self.context.body_ref(), "body inference stopped at a work limit; publishing partial results");
-        }
-
-        // A cancelled solver may return a conservative answer. Do not publish that answer as a
-        // completed body.
-        rg_std::check_cancel!(self.context, "finalize body facts");
-        let initializer = self.context.evaluate_initializer()?;
-        Ok(self.finish_coercions().finish(initializer))
+        Ok(())
     }
 
     /// Populate editor-facing declarations after inference settles. A uniquely selected call
