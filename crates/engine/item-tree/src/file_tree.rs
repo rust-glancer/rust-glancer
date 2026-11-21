@@ -5,7 +5,7 @@ use rg_ir_model::FileId;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef};
+use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef, UserFacingAttrs};
 
 /// File trees acquired while constructing a target's declarations.
 #[derive(Debug, Default)]
@@ -41,6 +41,7 @@ impl ItemTrees {
 pub struct FileTree {
     pub file: FileId,
     pub docs: Option<Documentation>,
+    pub user_facing_attrs: UserFacingAttrs,
     pub top_level: Vec<ItemTreeId>,
     pub items: Arena<ItemTreeId, ItemNode>,
     /// Whether declaration building must also depend on the file's exact source text.

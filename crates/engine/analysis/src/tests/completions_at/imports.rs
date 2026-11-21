@@ -3,12 +3,11 @@ use expect_test::expect;
 use crate::tests::utils::{check_analysis, check_analysis_with_fake_sysroot};
 
 #[test]
-fn merged_bindings_present_the_selected_reexport_attributes() {
+fn merged_reexports_keep_a_documented_spelling() {
     check_analysis(
         r#"
 //- /catalog/src/lib.rs crate:catalog root:catalog
 mod source {
-    #[doc(hidden)]
     pub struct Shared {}
 }
 
@@ -29,6 +28,7 @@ pub mod macros {
     #[macro_export]
     macro_rules! facade_macro { () => {} }
 
+    #[doc(inline)]
     pub use facade_macro;
 }
 
@@ -36,13 +36,13 @@ pub mod macros {
 fn use_it() {
     let _: catalog::hidden_first::Sha$0; // complete("visible re-export after hidden source").in_lib("app").matching("Shared")
     let _: catalog::visible_first::Sha$0; // complete("visible re-export before hidden source").in_lib("app").matching("Shared")
-    catalog::macros::facade_$0!(); // complete("macro re-export overrides declaration attributes").in_lib("app").matching("facade_macro")
+    catalog::macros::facade_$0!(); // complete("explicit inline macro re-export").in_lib("app").matching("facade_macro")
 }
 "#,
         expect![[r#"
             st Shared // visible re-export after hidden source
             st Shared // visible re-export before hidden source
-            ma facade_macro // macro re-export overrides declaration attributes
+            ma facade_macro // explicit inline macro re-export
         "#]],
     );
 }
@@ -70,6 +70,7 @@ mod internal {
     pub struct Reexported;
 }
 
+#[doc(inline)]
 pub use internal::Reexported as PublicWidget;
 
 pub mod facade {

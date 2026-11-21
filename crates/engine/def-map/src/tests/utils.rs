@@ -735,7 +735,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
         self.project.def_map(crate_ref)?;
 
         let visibility_prefix =
-            if binding.attribute_import().is_none() && binding.has_direct_declaration() {
+            if binding.import_attrs().is_none() && binding.has_direct_declaration() {
                 match binding.def {
                     DefId::Local(local_def) => self
                         .project

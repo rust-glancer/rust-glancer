@@ -56,6 +56,7 @@ impl FileLowering<'_> {
             FileTree {
                 file,
                 docs,
+                user_facing_attrs: UserFacingAttrs::from_ast(&source_file),
                 top_level,
                 items: builder.items,
                 source_sensitive: builder.source_sensitive

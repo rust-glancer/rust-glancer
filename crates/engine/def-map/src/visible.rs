@@ -1,6 +1,7 @@
 //! Visible module-scope definitions produced by DefMap lookup.
 
-use rg_ir_model::{DefId, ImportRef};
+use rg_ir_model::{CrateRef, DefId, ModuleRef};
+use rg_item_tree::UserFacingAttrs;
 use rg_text::Name;
 
 use crate::{NameBinding, Namespace};
@@ -21,10 +22,8 @@ pub struct VisibleScopeDef {
     pub def: DefId,
     /// Lookup source used by unqualified completions to rank familiar names first.
     pub origin: VisibleScopeOrigin,
-    /// Selected outer import whose attributes describe this spelling.
-    pub attribute_import: Option<ImportRef>,
-    /// Whether a same-definition import deliberately re-exported the spelling.
-    pub has_reexport: bool,
+    /// Attributes carried by the spelling, separate from those on the definition.
+    pub import: Option<(CrateRef, UserFacingAttrs)>,
 }
 
 /// Ordered visible definitions plus the namespace-aware shadowing rules used while collecting.
@@ -41,6 +40,7 @@ impl VisibleScopeDefs {
         name: &Name,
         namespace: Namespace,
         binding: &NameBinding,
+        source_module: ModuleRef,
         origin: VisibleScopeOrigin,
         skip_shadowed: bool,
     ) {
@@ -50,8 +50,9 @@ impl VisibleScopeDefs {
                 namespace,
                 def: binding.def,
                 origin,
-                attribute_import: binding.attribute_import(),
-                has_reexport: binding.has_reexport(),
+                import: binding
+                    .import_attrs()
+                    .map(|attrs| (source_module.origin.origin_crate(), attrs)),
             },
             skip_shadowed,
         );

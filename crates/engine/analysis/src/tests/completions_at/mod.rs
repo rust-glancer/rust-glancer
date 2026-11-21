@@ -1,4 +1,5 @@
 mod associated;
+mod doc_hidden;
 mod expected_type;
 mod imports;
 mod keywords;
