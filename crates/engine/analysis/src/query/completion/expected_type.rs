@@ -4,11 +4,14 @@
 //! the types produced by visible candidates. For enums, the expected type can also
 //! supply variants that an unqualified name lookup would miss.
 
-use rg_ir_model::{FunctionRef, PrimitiveTy, TypeDefId, TypeDefRef, identity::DeclarationRef};
+use rg_ir_model::{
+    PrimitiveTy, TypeDefId, TypeDefRef,
+    identity::{DeclarationRef, LexicalScopeRef},
+};
 use rg_ir_view::{
     member::{ConstructorShape, MemberView},
     source::{IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
-    ty::{IndexedType, TyView, locals::CallTarget},
+    ty::{ExpectedCallResult, IndexedCallArguments, IndexedType, TyView, locals::CallTarget},
 };
 
 use super::{
@@ -29,10 +32,11 @@ use crate::{
 /// For an enum variant, the qualifier can also fix the enum's generic arguments.
 pub(super) struct ExpectedTypeRanking {
     expected: IndexedType,
+    scope: LexicalScopeRef,
     parameter_name: Option<String>,
     expression: ValueExpression,
-    member_has_generic_args: bool,
-    qualifier: Option<IndexedType>,
+    member_args: Option<IndexedCallArguments>,
+    enum_qualifier: Option<IndexedType>,
 }
 
 impl ExpectedTypeRanking {
@@ -116,44 +120,33 @@ impl ExpectedTypeRanking {
             return Ok(None);
         };
 
-        let qualifier = match qualifier {
-            Some(qualifier) => types.nominal_qualifier_ty(scope, qualifier)?,
-            None => None,
+        let enum_qualifier = match (qualifier, expected.adt_def()) {
+            (Some(qualifier), Some(owner)) if matches!(owner.id, TypeDefId::Enum(_)) => {
+                types.nominal_qualifier_ty(scope, qualifier)?
+            }
+            _ => None,
         };
         Ok(Some(Self {
             expected,
+            scope,
             parameter_name,
             expression: context.expression,
-            member_has_generic_args: context.member_has_generic_args,
-            qualifier,
+            member_args: context.member_args,
+            enum_qualifier,
         }))
     }
 
-    pub(super) fn is_call(&self) -> bool {
-        matches!(self.expression, ValueExpression::Call)
+    pub(super) fn field_result_type(&self) -> Option<&IndexedType> {
+        (matches!(self.expression, ValueExpression::Path) && self.member_args.is_none())
+            .then_some(&self.expected)
     }
 
-    /// The renderer knows if accepting the candidate inserts an argument list.
-    /// The syntax context tells us if an argument list is already there.
-    pub(super) fn rank_function(
-        &self,
-        types: TyView<'_, '_>,
-        function: FunctionRef,
-        inserts_call: bool,
-        item: &mut CompletionItem,
-    ) -> anyhow::Result<()> {
-        let produces_call = match self.expression {
-            ValueExpression::Call => true,
-            ValueExpression::Path => inserts_call,
-            ValueExpression::Record => false,
-        };
-        if produces_call
-            && item.applicability == CompletionApplicability::Known
-            && types.function_call_ty(function)?.as_ref() == Some(&self.expected)
-        {
-            self.promote_match(item);
-        }
-        Ok(())
+    /// The expected value type, when the syntax and insertion policy produce a call.
+    pub(super) fn call_result_type(&self) -> Option<ExpectedCallResult<'_>> {
+        (!matches!(self.expression, ValueExpression::Record)).then_some(ExpectedCallResult {
+            ty: &self.expected,
+            explicit_args: self.member_args.as_ref(),
+        })
     }
 
     /// At a bare name, the completion can supply the entire constructor.
@@ -162,16 +155,44 @@ impl ExpectedTypeRanking {
         &self,
     ) -> Option<(&IndexedType, TypeDefRef, ValueExpression)> {
         let owner = self.expected.adt_def()?;
-        (!self.member_has_generic_args && matches!(owner.id, TypeDefId::Enum(_))).then_some((
+        (self.member_args.is_none() && matches!(owner.id, TypeDefId::Enum(_))).then_some((
             &self.expected,
             owner,
             self.expression,
         ))
     }
 
-    /// Mark values and constructors that match the expected type after visibility and shadowing
-    /// checks. Functions are checked while choosing their insertion text, since producing a
-    /// return value requires a call.
+    /// Compare free function returns together in the caller's scope. Both plain and
+    /// explicit calls may return an associated type that needs to be normalized.
+    pub(super) fn rank_free_functions(
+        &self,
+        types: TyView<'_, '_>,
+        items: &mut [CompletionItem],
+    ) -> anyhow::Result<()> {
+        let Some(expected) = self.call_result_type() else {
+            return Ok(());
+        };
+        let functions = items.iter().filter_map(|item| {
+            let CompletionTarget::Function(function) = item.target else {
+                return None;
+            };
+            (item.import.is_none() && item.applicability == CompletionApplicability::Known)
+                .then_some(function)
+        });
+        let matches = types.free_functions_with_matching_return(self.scope, functions, expected)?;
+        for item in items {
+            if let CompletionTarget::Function(function) = item.target
+                && matches.contains(&function)
+                && item.import.is_none()
+                && item.applicability == CompletionApplicability::Known
+            {
+                self.promote_match(item);
+            }
+        }
+        Ok(())
+    }
+
+    /// Rank values and constructors after visibility and shadowing checks.
     pub(super) fn rank(
         &self,
         analysis: &Analysis<'_>,
@@ -198,11 +219,6 @@ impl ExpectedTypeRanking {
                 ) if matches!(self.expression, ValueExpression::Path) => {
                     types.value_ty(declaration)?.as_ref() == Some(&self.expected)
                 }
-                (CompletionTarget::Field(field), CompletionKind::Field)
-                    if matches!(self.expression, ValueExpression::Path) =>
-                {
-                    types.ty_for_declaration(field.into())?.as_ref() == Some(&self.expected)
-                }
                 (
                     CompletionTarget::Keyword(KeywordCompletion::False | KeywordCompletion::True),
                     _,
@@ -214,14 +230,14 @@ impl ExpectedTypeRanking {
                     CompletionKind::Struct | CompletionKind::EnumVariant,
                 ) => {
                     // TODO: Substitute generic arguments written on the constructor name.
-                    if self.member_has_generic_args {
+                    if self.member_args.is_some() {
                         continue;
                     }
                     let Some(ty) = types.ty_for_declaration(declaration)? else {
                         continue;
                     };
                     let qualifier = match declaration {
-                        DeclarationRef::EnumVariant(_) => self.qualifier.as_ref(),
+                        DeclarationRef::EnumVariant(_) => self.enum_qualifier.as_ref(),
                         _ => None,
                     };
                     if !self.expected.matches_constructor(&ty, qualifier) {
@@ -243,7 +259,14 @@ impl ExpectedTypeRanking {
         Ok(())
     }
 
-    fn promote_match(&self, item: &mut CompletionItem) {
+    /// Apply a match from member lookup if the completed function will be called.
+    pub(super) fn promote_call_match(&self, item: &mut CompletionItem) {
+        if item.applicability == CompletionApplicability::Known {
+            self.promote_match(item);
+        }
+    }
+
+    pub(super) fn promote_match(&self, item: &mut CompletionItem) {
         item.relevance.set_inference_priority(true);
         let label = item.label.strip_prefix("r#").unwrap_or(&item.label);
         item.relevance.set_parameter_name_priority(

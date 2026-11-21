@@ -3,6 +3,166 @@ use expect_test::expect;
 use crate::tests::utils::check_analysis;
 
 #[test]
+fn preserves_a_written_turbofish_on_an_auto_import_completion() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:turbofish_after_comment
+mod api {
+    pub fn build<T, U>() {}
+}
+
+fn demo() {
+    let function = bui$0 /* keep */ ::<u8, u16>; // complete_verbose("auto-import supplies just the name").auto_import().matching("build")
+}
+"#,
+        expect![[r#"
+            // auto-import supplies just the name
+            fn build
+              detail: pub fn build<T, U>()
+              import: use crate::api::build
+              replace: 72..75
+              additional: 0..0 => "use crate::api::build;\n\n"
+        "#]],
+    );
+}
+
+#[test]
+fn ranks_a_free_function_with_an_associated_return_type() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:free_function_projection
+trait Source { type Output; }
+impl Source for () { type Output = u8; }
+
+fn build_a_other<T>(_: T) -> u16 { 0 }
+fn build_z_value<T>(_: T) -> <() as Source>::Output { 0 }
+
+fn demo() {
+    let _: u8 = build_$0(()); // complete("without a turbofish").matching("build_")
+    let _: u8 = build_$0::<()>(()); // complete("with a turbofish").matching("build_")
+}
+"#,
+        expect![[r#"
+            // without a turbofish
+            fn build_z_value
+            fn build_a_other
+
+            // with a turbofish
+            fn build_z_value
+            fn build_a_other
+        "#]],
+    );
+}
+
+#[test]
+fn ranks_calls_using_generic_arguments_from_the_qualifier() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:qualified_call_relevance
+struct Packet<T>(T);
+type Concrete = Packet<u32>;
+
+impl<T> Packet<T> {
+    fn build_a_other() -> u16 { 0 }
+    fn build_z_value() -> T { loop {} }
+}
+
+trait Source<R> {
+    fn read_a_other() -> u16 { 0 }
+    fn read_z_value() -> R { loop {} }
+}
+
+trait Factory<R>: Source<R> {
+    type Output;
+    fn create_a_other() -> u16 { 0 }
+    fn create_z_value() -> Self::Output { loop {} }
+}
+
+impl<T> Source<T> for Packet<T> {}
+impl<T> Factory<T> for Packet<T> { type Output = T; }
+
+fn demo<T: Factory<u32>>() {
+    let _: u32 = Packet::<u32>::build_$0; // complete("written impl argument").matching("build_")
+    let _: u32 = Concrete::build_$0(); // complete("alias fixes impl argument").matching("build_")
+    let _: u32 = <Packet<u32> as Factory<u32>>::create_$0(); // complete("qualified associated return type").matching("create_")
+    let _: u32 = T::read_$0(); // complete("supertrait argument from a bound").matching("read_")
+}
+"#,
+        expect![[r#"
+            // written impl argument
+            fn build_z_value
+            fn build_a_other
+
+            // alias fixes impl argument
+            fn build_z_value
+            fn build_a_other
+
+            // qualified associated return type
+            fn create_z_value
+            fn create_a_other
+
+            // supertrait argument from a bound
+            fn read_z_value
+            fn read_a_other
+        "#]],
+    );
+}
+
+#[test]
+fn ranks_calls_using_generic_arguments_written_on_the_function() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:explicit_call_relevance
+mod api {
+    pub fn make_a_other<T>() -> u16 { 0 }
+    pub fn make_z_value<T>() -> T { loop {} }
+}
+use api::{make_a_other, make_z_value};
+
+struct Packet<T>(T);
+impl<T> Packet<T> {
+    fn pair_a_other<U>() -> (T, u16) { loop {} }
+    fn pair_z_value<U>() -> (T, U) { loop {} }
+
+    fn get_a_other<U>(&self) -> (T, u16) { loop {} }
+    fn get_z_value<U>(&self) -> (T, U) { loop {} }
+}
+
+fn demo(packet: &Packet<u8>) {
+    struct Local;
+    let _: Local = make_$0::<Local>(); // complete("free function uses caller scope").matching("make_")
+    let _: u32 = api::make_$0::<u32>(); // complete("module-qualified free function").matching("make_")
+    let _: (u8, u32) = Packet::<u8>::pair_$0::<u32>(); // complete("qualifier and function arguments").matching("pair_")
+    let _: (u8, u32) = packet.get_$0::<u32>(); // complete("receiver and method arguments").matching("get_")
+    let callable = api::make_z_$0::<u32>; // complete_verbose("keep the written turbofish").matching("make_z_value")
+}
+"#,
+        expect![[r#"
+            // free function uses caller scope
+            fn make_z_value
+            fn make_a_other
+
+            // module-qualified free function
+            fn make_z_value
+            fn make_a_other
+
+            // qualifier and function arguments
+            fn pair_z_value
+            fn pair_a_other
+
+            // receiver and method arguments
+            im get_z_value
+            im get_a_other
+
+            // keep the written turbofish
+            fn make_z_value
+              detail: pub fn make_z_value<T>() -> T
+              replace: 631..638
+        "#]],
+    );
+}
+
+#[test]
 fn prefers_the_active_parameter_name_among_type_matches() {
     check_analysis(
         r#"

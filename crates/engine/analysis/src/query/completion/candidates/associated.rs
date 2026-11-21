@@ -4,17 +4,20 @@ use anyhow::Context as _;
 use rg_ir_model::{CrateRef, EnumVariantRef, TypeDefRef, identity::DeclarationRef};
 use rg_ir_view::{
     lookup::name::NameNamespace,
-    member::{AssociatedItemFilter, ConstructorShape, MemberAssociatedItem, MemberView},
+    member::{
+        AssociatedItemFilter, ConstructorShape, MemberAssociatedItem,
+        MemberAssociatedItemCandidate, MemberView,
+    },
     source::{
         IndexedAssociatedTypeBindingScope, IndexedAssociatedTypeBindingSite,
         IndexedQualifiedPathScope, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
     },
-    ty::{TyView, locals::BodyView},
+    ty::{ExpectedCallResult, TyView, locals::BodyView},
 };
 
 use super::{CompletionCandidateSource, DefinitionCompletionCandidate};
 use crate::{
-    model::{CompletionApplicability, CompletionKind, CompletionTarget},
+    model::{CompletionApplicability, CompletionTarget},
     query::completion::site::{PathCompletionSite, UnqualifiedCompletionSite},
 };
 
@@ -23,12 +26,14 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ///
     /// Body and signature sites can expose functions, consts, types, and enum variants. Import
     /// sites deliberately expose only enum variants because other associated items cannot be
-    /// imported through a type path.
+    /// imported through a type path. Each result also reports whether qualifier lookup confirmed
+    /// a match for the expected call result.
     pub(crate) fn associated_definition_candidates_for_path(
         &self,
         site: &PathCompletionSite,
         use_crate: CrateRef,
-    ) -> anyhow::Result<Vec<DefinitionCompletionCandidate>> {
+        expected: Option<ExpectedCallResult<'_>>,
+    ) -> anyhow::Result<Vec<(DefinitionCompletionCandidate, bool)>> {
         let members = MemberView::new(self.db);
         let candidates = match site.source().scope() {
             IndexedQualifiedPathScope::Body { scope, .. } => {
@@ -40,6 +45,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                         scope.body_ir(),
                         scope.scope_id(),
                         qualifier,
+                        expected,
                     )
                     .context("collect body associated path candidates")?
             }
@@ -65,7 +71,15 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             }
         };
 
-        self.definition_candidates_from_associated(&members, candidates, use_crate)
+        let mut definitions = Vec::new();
+        for candidate in candidates {
+            if let Some(definition) =
+                Self::definition_candidate_from_associated(&members, candidate, use_crate)?
+            {
+                definitions.push((definition, candidate.return_type_matches()));
+            }
+        }
+        Ok(definitions)
     }
 
     /// Return only associated type declarations valid as binding names for the selected trait.
@@ -87,86 +101,82 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 .trait_associated_item_candidates_for_signature(scope, site.trait_ref())
                 .context("collect signature associated type binding candidates")?,
         };
-        let mut definitions = self
-            .definition_candidates_from_associated(&members, candidates, use_crate)
-            .context("project associated type binding candidates")?;
-        definitions.retain(|candidate| {
-            candidate.kind() == CompletionKind::TypeAlias
+        let mut definitions = Vec::new();
+        for candidate in candidates {
+            if matches!(candidate.item(), MemberAssociatedItem::TypeAlias(_))
+                && let Some(definition) =
+                    Self::definition_candidate_from_associated(&members, candidate, use_crate)?
                 && !site
                     .existing_bindings()
                     .iter()
-                    .any(|name| name == candidate.label())
-        });
+                    .any(|name| name == definition.label())
+            {
+                definitions.push(definition);
+            }
+        }
         Ok(definitions)
     }
 
-    /// Normalize member-view results into the definition vocabulary shared by all renderers.
-    fn definition_candidates_from_associated(
-        &self,
+    /// Normalize a member-view result into the definition vocabulary shared by renderers.
+    fn definition_candidate_from_associated(
         members: &MemberView<'_, '_>,
-        candidates: Vec<rg_ir_view::member::MemberAssociatedItemCandidate>,
+        candidate: MemberAssociatedItemCandidate,
         use_crate: CrateRef,
-    ) -> anyhow::Result<Vec<DefinitionCompletionCandidate>> {
-        let mut definitions = Vec::new();
-        for candidate in candidates {
-            let Some(definition) = members
-                .associated_item_definition(candidate)
-                .context("read associated completion definition")?
-            else {
-                continue;
-            };
-            if !definition.is_suggestible_from(use_crate) {
-                continue;
-            }
-            let Some(kind) = Self::completion_kind(definition.kind()) else {
-                continue;
-            };
-            let item = definition.candidate().item();
-            let (namespace, target, function) = match item {
-                MemberAssociatedItem::Function(function) => (
-                    NameNamespace::Values,
-                    CompletionTarget::Function(function),
-                    Some(function),
-                ),
-                MemberAssociatedItem::TypeAlias(alias) => (
-                    NameNamespace::Types,
-                    CompletionTarget::Declaration(DeclarationRef::from(alias)),
-                    None,
-                ),
-                MemberAssociatedItem::Const(konst) => (
-                    NameNamespace::Values,
-                    CompletionTarget::Declaration(DeclarationRef::from(konst)),
-                    None,
-                ),
-                MemberAssociatedItem::EnumVariant(variant) => {
-                    let namespace = match members
-                        .enum_variant(variant)
-                        .context("read associated enum variant candidate")?
-                        .map(|variant| variant.constructor_shape())
-                    {
-                        Some(ConstructorShape::Record { .. }) => NameNamespace::Types,
-                        Some(ConstructorShape::Unit | ConstructorShape::Tuple { .. }) | None => {
-                            NameNamespace::Values
-                        }
-                    };
-                    (namespace, CompletionTarget::EnumVariant(variant), None)
-                }
-            };
-            definitions.push(DefinitionCompletionCandidate {
-                label: definition.label().to_string(),
-                namespace,
-                module_origin: None,
-                target,
-                kind,
-                applicability: CompletionApplicability::from(
-                    definition.candidate().applicability(),
-                ),
-                documentation: definition.documentation().map(ToString::to_string),
-                function,
-                macro_kind: None,
-            });
+    ) -> anyhow::Result<Option<DefinitionCompletionCandidate>> {
+        let Some(definition) = members
+            .associated_item_definition(candidate)
+            .context("read associated completion definition")?
+        else {
+            return Ok(None);
+        };
+        if !definition.is_suggestible_from(use_crate) {
+            return Ok(None);
         }
-        Ok(definitions)
+        let Some(kind) = Self::completion_kind(definition.kind()) else {
+            return Ok(None);
+        };
+        let item = definition.candidate().item();
+        let (namespace, target, function) = match item {
+            MemberAssociatedItem::Function(function) => (
+                NameNamespace::Values,
+                CompletionTarget::Function(function),
+                Some(function),
+            ),
+            MemberAssociatedItem::TypeAlias(alias) => (
+                NameNamespace::Types,
+                CompletionTarget::Declaration(DeclarationRef::from(alias)),
+                None,
+            ),
+            MemberAssociatedItem::Const(konst) => (
+                NameNamespace::Values,
+                CompletionTarget::Declaration(DeclarationRef::from(konst)),
+                None,
+            ),
+            MemberAssociatedItem::EnumVariant(variant) => {
+                let namespace = match members
+                    .enum_variant(variant)
+                    .context("read associated enum variant candidate")?
+                    .map(|variant| variant.constructor_shape())
+                {
+                    Some(ConstructorShape::Record { .. }) => NameNamespace::Types,
+                    Some(ConstructorShape::Unit | ConstructorShape::Tuple { .. }) | None => {
+                        NameNamespace::Values
+                    }
+                };
+                (namespace, CompletionTarget::EnumVariant(variant), None)
+            }
+        };
+        Ok(Some(DefinitionCompletionCandidate {
+            label: definition.label().to_string(),
+            namespace,
+            module_origin: None,
+            target,
+            kind,
+            applicability: CompletionApplicability::from(definition.candidate().applicability()),
+            documentation: definition.documentation().map(ToString::to_string),
+            function,
+            macro_kind: None,
+        }))
     }
 
     /// Return variants of the expected enum for an unresolved unqualified pattern name.

@@ -19,6 +19,7 @@ pub(super) use self::{
     primitive::PrimitiveTypeCompletionRenderer,
     synthetic::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
 };
+use super::site::{NameCompletionContext, PatternCompletionKind};
 use crate::model::{CompletionInsertText, CompletionKind};
 
 /// Controls whether accepting a callable candidate inserts syntax around the completed name.
@@ -33,6 +34,19 @@ pub(super) enum CallCompletionKind {
 }
 
 impl CallCompletionKind {
+    pub(super) fn for_name_context(context: NameCompletionContext) -> Self {
+        match context {
+            NameCompletionContext::Type
+            | NameCompletionContext::Value
+            | NameCompletionContext::Pattern(PatternCompletionKind::Name) => Self::Call,
+            NameCompletionContext::Const
+            | NameCompletionContext::Import
+            | NameCompletionContext::Pattern(
+                PatternCompletionKind::TupleConstructor | PatternCompletionKind::RecordConstructor,
+            ) => Self::Plain,
+        }
+    }
+
     pub(super) fn inserts_call_syntax(self) -> bool {
         !matches!(self, Self::Plain)
     }

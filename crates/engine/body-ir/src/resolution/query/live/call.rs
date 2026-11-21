@@ -8,15 +8,15 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ExprId, FunctionRef, ItemOwner, ScopeId, SemanticItemRef, identity::DeclarationRef,
+    ExprId, FunctionRef, GenericDefRef, ScopeId, SemanticItemRef, identity::DeclarationRef,
 };
-use rg_item_tree::FieldList;
-use rg_semantic_ir::SemanticItemSource;
+use rg_item_tree::{FieldList, GenericArg};
+use rg_semantic_ir::{Generics, SemanticItemSource};
 use rg_source::ReadError;
 use rg_ty::{
-    ConstructorRef, FnDefRef,
+    ConstructorRef, FnDefRef, Ty as StoredTy,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
-    solver::{InferenceSubstitution, InferenceTable, Outcome, Ty},
+    solver::{DefId, FnDefTy, InferenceSubstitution, InferenceTable, Outcome, Ty},
 };
 
 use super::{FunctionLookup, LiveBodyQuery, member::MemberCandidate};
@@ -65,6 +65,70 @@ where
     D: DefMapSource + Copy,
     I: SemanticItemSource<'query> + Copy,
 {
+    /// Apply arguments written on the callable. The impl or trait's arguments belong to the
+    /// receiver or qualifier and must keep the bindings established by lookup.
+    pub(crate) fn apply_function_args<'s>(
+        &self,
+        scope: ScopeId,
+        generics: &Generics<'_>,
+        explicit: &[GenericArg],
+        table: &InferenceTable<'s>,
+        subst: &mut InferenceSubstitution<'s>,
+    ) -> Result<(), ReadError> {
+        if !explicit.is_empty() {
+            let args = self.generic_args(scope, generics, explicit, table)?;
+            for (param, arg) in generics
+                .iter_self()
+                .zip(args.iter().skip(generics.parent_len()))
+            {
+                subst.insert(param.param(), arg);
+            }
+        }
+        Ok(())
+    }
+
+    /// Compare the instantiated return type with the expected type. For `fn pair<U>() -> (T, U)`
+    /// on `Packet<T>`, `Packet::<u8>::pair::<u32>()` gets `T = u8` from the qualifier and
+    /// `U = u32` from the turbofish.
+    /// Arguments still missing after lookup and syntax lowering stay unknown.
+    pub(crate) fn function_return_matches<'s>(
+        &self,
+        scope: ScopeId,
+        function: FunctionRef,
+        table: &InferenceTable<'s>,
+        subst: &InferenceSubstitution<'s>,
+        expected: (&StoredTy, &[GenericArg]),
+    ) -> Result<bool, ReadError> {
+        let (expected, explicit) = expected;
+        let trial;
+        let mut explicit_subst;
+        let (table, subst) = if explicit.is_empty() {
+            (table, subst)
+        } else {
+            let generics = self
+                .context
+                .item_paths()
+                .generics()
+                .generics(GenericDefRef::Function(function))?;
+            if generics.iter_self().next().is_none() {
+                return Ok(false);
+            }
+            // An argument such as `Vec<_>` creates variables for this candidate's check.
+            trial = table.probe();
+            explicit_subst = subst.clone();
+            self.apply_function_args(scope, &generics, explicit, &trial, &mut explicit_subst)?;
+            (&trial, &explicit_subst)
+        };
+        let cx = table.interner();
+        let params = cx.params(DefId::Function(function));
+        Ok(FnDefTy {
+            def: function.into(),
+            args: subst.args_for(cx, params.iter().copied()),
+        }
+        .signature(cx)
+        .is_some_and(|signature| table.resolves_to(signature.call_return, expected)))
+    }
+
     /// Keep the identity and live generic arguments of a tuple constructor when it becomes a value.
     /// For `let make = Wrapper; make(true)`, the parameter and `Wrapper` result share `?T`.
     pub(crate) fn constructor_value_ty<'s>(
@@ -116,12 +180,8 @@ where
         let ExprKind::MethodCall { method_name, .. } = &data.kind else {
             unreachable!("method lookup owns a dot call")
         };
-        // 1. Build two lists with different jobs. `self_types` gives us the types to
-        // inspect for member declarations, following references and Deref, with an
-        // array-to-slice adjustment. The traversal bounds the chain and stops repeats.
-        // `receivers` gives the order in which a method's self parameter may match:
-        // T, &T, &mut T, then the same three forms for the next dereference step.
-        let cx = table.interner();
+        // The autoderef types tell us where to look for declarations. The adjustments
+        // determine which self parameter wins, including the possible borrows of each type.
         let self_types = table.method_receivers(receiver).collect::<Vec<_>>();
         let receivers = table
             .method_receiver_adjustments(&self_types)
@@ -129,55 +189,24 @@ where
         let items = self.context.item_query();
         let mut selected = Vec::new();
         let mut best_priority = None;
-        // 2. Collect methods for each possible Self, keeping both inherent and trait
-        // methods. Finding a method here is not enough to choose it: its self parameter
-        // may need another borrow, while a method found later may match directly.
         for self_ty in self_types {
-            for mut target in self
-                .function_candidates(
-                    data.scope,
-                    self_ty,
-                    FunctionLookup::Method(method_name),
-                    table,
-                )?
-                .into_iter()
-                .map(LiveCallTarget::from_member)
-            {
-                let Some(function) = items.function_data(target.function)? else {
+            for candidate in self.function_candidates(
+                data.scope,
+                self_ty,
+                FunctionLookup::Method(method_name),
+                table,
+            )? {
+                let Some(function) = items.function_data(candidate.function)? else {
                     continue;
                 };
-                // 3. For Self = Widget, `&self` accepts &Widget. A typed receiver
-                // such as `self: Box<Self>` takes its type from the instantiated
-                // signature instead.
-                let Some(parameter_ty) = Self::method_receiver_type(
-                    cx,
-                    target.function,
-                    function,
-                    &target.subst,
-                    self_ty,
-                ) else {
-                    continue;
-                };
-                // 4. Find the earliest receiver adjustment that matches that parameter.
-                // For a value of type &Widget, a parameter of &Widget matches before
-                // one of &&Widget. Matching can also learn generic arguments, so do it
-                // in this candidate's own trial. Failed matches roll back their bindings;
-                // a successful match keeps its bindings without changing other candidates.
-                let trial = target.table.as_ref().expect("member candidate has a trial");
-                let Some((position, &receiver)) = receivers
-                    .iter()
-                    .enumerate()
-                    .find(|(_, receiver)| trial.try_unify(**receiver, parameter_ty).is_ok())
+                let Some((priority, receiver)) =
+                    candidate.match_receiver(function, self_ty, &receivers)
                 else {
                     continue;
                 };
 
-                // 5. Compare this match with the best ones seen so far. Receiver order
-                // comes first; inherent methods win only at the same receiver position.
-                // For a value of type Widget, a trait's &self method therefore beats an
-                // inherent &mut self method. A better match replaces the saved candidates;
-                // an equal match joins them so we do not resolve ambiguity by search order.
-                let priority = (position, !matches!(function.owner, ItemOwner::Impl(_)));
+                // Keep all ties for navigation. Only one usable target can supply the call
+                // signature, with the receiver adjustment and bindings that matched it.
                 if best_priority.is_some_and(|best| priority > best) {
                     continue;
                 }
@@ -185,9 +214,7 @@ where
                     selected.clear();
                     best_priority = Some(priority);
                 }
-                // 6. Carry the matched receiver along with the candidate's bindings.
-                // Later signature checking needs &Widget for an &self parameter, even
-                // when the impl's Self is Widget. Keeping only Self would lose the borrow.
+                let mut target = LiveCallTarget::from_member(candidate);
                 target.receiver = Some(receiver);
                 selected.push(target);
             }

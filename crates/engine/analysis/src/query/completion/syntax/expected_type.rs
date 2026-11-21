@@ -5,9 +5,10 @@
 //! to that source before asking Body IR for its type.
 
 use rg_ir_model::Span;
+use rg_ir_view::ty::IndexedCallArguments;
 use rg_syntax::{
     AstNode as _, SyntaxKind, SyntaxNode,
-    ast::{self, BlockModifier, HasGenericArgs as _},
+    ast::{self, BlockModifier, HasArgList as _, HasGenericArgs as _},
 };
 
 use super::CompletionSyntaxContext;
@@ -33,18 +34,22 @@ pub(crate) struct ExpectedTypeContext {
     pub(crate) site: ExpectedTypeSite,
     pub(crate) expression: ValueExpression,
     /// Arguments on the name being completed, as in `Po$0::<u8>(0)`.
-    pub(crate) member_has_generic_args: bool,
+    pub(crate) member_args: Option<IndexedCallArguments>,
 }
 
 impl CompletionSyntaxContext<'_> {
     pub(crate) fn expected_type_context(&self) -> Option<ExpectedTypeContext> {
         let mut expr = self.marker.parent_ancestors().find_map(ast::Expr::cast)?;
-        let (name, member_has_generic_args, mut expression) = match &expr {
-            ast::Expr::FieldExpr(field) => (field.name_ref()?, false, ValueExpression::Path),
+        let (name, member_args, mut expression) = match &expr {
+            ast::Expr::FieldExpr(field) => (field.name_ref()?, None, ValueExpression::Path),
             ast::Expr::MethodCallExpr(method) => (
                 method.name_ref()?,
-                method.generic_arg_list().is_some(),
-                ValueExpression::Call,
+                method.generic_arg_list(),
+                if method.arg_list().is_some() {
+                    ValueExpression::Call
+                } else {
+                    ValueExpression::Path
+                },
             ),
             _ => {
                 let (path, expression) = match &expr {
@@ -55,11 +60,7 @@ impl CompletionSyntaxContext<'_> {
                 // In `ta$0::new()` the candidate supplies a qualifier. In `Task::ne$0()`
                 // it supplies the callable whose result the surrounding expression consumes.
                 let member = path.segment()?;
-                (
-                    member.name_ref()?,
-                    member.generic_arg_list().is_some(),
-                    expression,
-                )
+                (member.name_ref()?, member.generic_arg_list(), expression)
             }
         };
         if !name
@@ -81,7 +82,7 @@ impl CompletionSyntaxContext<'_> {
         Some(ExpectedTypeContext {
             site: self.expected_type_site(expr)?,
             expression,
-            member_has_generic_args,
+            member_args: member_args.as_ref().map(IndexedCallArguments::from_ast),
         })
     }
 

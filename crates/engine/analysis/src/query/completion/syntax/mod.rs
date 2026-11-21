@@ -36,6 +36,15 @@ use crate::query::completion::site::{
     StandaloneCompletionSiteSyntax, SyntaxCompletionContext,
 };
 
+/// Syntax following the name being completed.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum CallSuffix {
+    #[default]
+    Absent,
+    TypeArguments,
+    ArgumentList,
+}
+
 /// Speculatively parsed request buffer centered on one completion offset.
 ///
 /// The marker token makes incomplete text traversable with ordinary syntax ancestry. Construction
@@ -139,6 +148,41 @@ impl<'source> CompletionSyntaxContext<'source> {
     /// Returns the completion domain computed while the speculative tree was built.
     pub(super) fn completion_context(&self) -> Option<&SyntaxCompletionContext> {
         self.classification.as_ref()
+    }
+
+    /// Read past trivia so `build /* keep */ ::<T>` keeps its written arguments.
+    pub(super) fn call_suffix(&self) -> CallSuffix {
+        let next_token = |token: &SyntaxToken| {
+            std::iter::successors(token.next_token(), SyntaxToken::next_token)
+                .find(|token| !token.kind().is_trivia())
+        };
+        let Some(next) = next_token(&self.marker) else {
+            return CallSuffix::Absent;
+        };
+        match next.kind() {
+            SyntaxKind::L_PAREN => CallSuffix::ArgumentList,
+            SyntaxKind::COLON2 => {
+                let Some(open) =
+                    next_token(&next).filter(|token| token.kind() == SyntaxKind::L_ANGLE)
+                else {
+                    return CallSuffix::Absent;
+                };
+                // A turbofish may itself be followed by a call. Let the parser find its
+                // closing angle so nested arguments such as `Vec<T>` work here too.
+                let has_call = open
+                    .parent_ancestors()
+                    .find_map(ast::GenericArgList::cast)
+                    .and_then(|args| args.r_angle_token())
+                    .and_then(|close| next_token(&close))
+                    .is_some_and(|token| token.kind() == SyntaxKind::L_PAREN);
+                if has_call {
+                    CallSuffix::ArgumentList
+                } else {
+                    CallSuffix::TypeArguments
+                }
+            }
+            _ => CallSuffix::Absent,
+        }
     }
 
     /// Returns all syntax-to-semantic routing facts computed with the request's one tree walk.

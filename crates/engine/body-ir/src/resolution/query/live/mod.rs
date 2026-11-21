@@ -6,7 +6,7 @@ mod index;
 mod member;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TypeDefId};
+use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, ScopeId, TypeDefId};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_semantic_ir::{Generics, SemanticItemSource};
 use rg_source::ReadError;
@@ -18,7 +18,10 @@ use rg_ty::{
     },
 };
 
-pub(crate) use self::{call::LiveCallTarget, member::FunctionLookup};
+pub(crate) use self::{
+    call::LiveCallTarget,
+    member::{FunctionLookup, MemberCandidate, MethodPriority},
+};
 use crate::{body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Looks up declarations without turning the body's live types into saved types along the way.
@@ -117,11 +120,8 @@ where
             let Some(field_ref) = self.context.item_query().field_for_type(adt.def, field)? else {
                 continue;
             };
-            let paths = self.context.item_paths();
-            let lowering = TypeLoweringQuery::new(&paths, &self.context);
-            let ty = lowering
-                .field_ty(table.interner(), field_ref)?
-                .map(|ty| self.instantiate_field(adt, ty, table))
+            let ty = self
+                .field_ty_on_receiver(adt, field_ref, table)?
                 .unwrap_or(table.interner().unknown());
             return Ok(Some((
                 BodyResolution::Declarations([field_ref.into()].into_iter().collect()),
@@ -129,6 +129,20 @@ where
             )));
         }
         Ok(None)
+    }
+
+    /// Project a field using the generic arguments at this step of the receiver chain.
+    pub(crate) fn field_ty_on_receiver<'s>(
+        &self,
+        receiver: AdtTy<'s>,
+        field: FieldRef,
+        table: &InferenceTable<'s>,
+    ) -> Result<Option<Ty<'s>>, ReadError> {
+        let paths = self.context.item_paths();
+        let lowering = TypeLoweringQuery::new(&paths, &self.context);
+        Ok(lowering
+            .field_ty(table.interner(), field)?
+            .map(|ty| self.instantiate_field(receiver, ty, table)))
     }
 
     fn instantiate_field<'s>(

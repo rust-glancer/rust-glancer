@@ -23,7 +23,7 @@ use crate::{
     body::BodyResolutionView,
     lookup::resolution::ResolutionView,
     source::{IndexedAssociatedPathQualifier, IndexedSignatureTypeScope},
-    ty::IndexedType,
+    ty::{ExpectedCallResult, IndexedType},
 };
 
 impl<'a, 'db> MemberView<'a, 'db> {
@@ -37,10 +37,16 @@ impl<'a, 'db> MemberView<'a, 'db> {
         body: BodyRef,
         scope: ScopeId,
         qualifier: &IndexedAssociatedPathQualifier,
+        expected: Option<ExpectedCallResult<'_>>,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
         let prefix = Self::body_associated_prefix(qualifier);
         let Some(candidates) = BodyResolutionView::new(self.db)
-            .associated_item_candidate_refs(body, scope, &prefix)
+            .associated_item_candidate_refs(
+                body,
+                scope,
+                &prefix,
+                expected.map(ExpectedCallResult::raw),
+            )
             .context("resolve body associated item candidates")?
         else {
             return Ok(Vec::new());
@@ -405,14 +411,15 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 continue;
             };
             candidates.extend((0..data.variants.len()).map(|index| {
-                MemberAssociatedItemCandidate {
-                    item: MemberAssociatedItem::EnumVariant(EnumVariantRef {
+                MemberAssociatedItemCandidate(AssociatedItemCandidateRef::new(
+                    AssociatedItemRef::EnumVariant(EnumVariantRef {
                         origin: nominal.def.origin,
                         enum_id,
                         index,
                     }),
-                    applicability: TraitApplicability::Yes,
-                }
+                    TraitApplicability::Yes,
+                    false,
+                ))
             }));
         }
         Ok(candidates)
@@ -432,29 +439,21 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }
     }
 
-    /// Convert compiler refs once and merge overlapping impl evidence by declaration.
+    /// Merge overlapping impl evidence before exposing each declaration to analysis.
     fn project_associated_candidates(
         candidates: Vec<AssociatedItemCandidateRef>,
     ) -> Vec<MemberAssociatedItemCandidate> {
-        let mut projected: Vec<MemberAssociatedItemCandidate> = Vec::new();
+        let mut merged: Vec<MemberAssociatedItemCandidate> = Vec::new();
         for candidate in candidates {
-            let item = match candidate.item() {
-                AssociatedItemRef::Function(function) => MemberAssociatedItem::Function(function),
-                AssociatedItemRef::TypeAlias(alias) => MemberAssociatedItem::TypeAlias(alias),
-                AssociatedItemRef::Const(konst) => MemberAssociatedItem::Const(konst),
-                AssociatedItemRef::EnumVariant(variant) => {
-                    MemberAssociatedItem::EnumVariant(variant)
-                }
-            };
-            if let Some(existing) = projected.iter_mut().find(|existing| existing.item == item) {
-                existing.applicability = existing.applicability.or(candidate.applicability());
-                continue;
+            if let Some(existing) = merged
+                .iter_mut()
+                .find(|existing| existing.0.item() == candidate.item())
+            {
+                existing.0 = existing.0.merge(candidate);
+            } else {
+                merged.push(MemberAssociatedItemCandidate(candidate));
             }
-            projected.push(MemberAssociatedItemCandidate {
-                item,
-                applicability: candidate.applicability(),
-            });
         }
-        projected
+        merged
     }
 }

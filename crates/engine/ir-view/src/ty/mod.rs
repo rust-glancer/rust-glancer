@@ -25,6 +25,7 @@ use rg_ty::{
     signature::SemanticSignatureQuery,
 };
 
+pub use self::expression::{ExpectedCallResult, IndexedCallArguments};
 use crate::{
     IndexedViewDb,
     body::BodyResolutionView,

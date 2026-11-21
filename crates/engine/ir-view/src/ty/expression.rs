@@ -3,14 +3,18 @@
 //! In `let user: User = cached`, the declared type of `user` describes what belongs
 //! on the right. The binding type of `cached` describes what it can supply.
 
+use std::collections::HashSet;
+
 use rg_body_ir::{ExprKind, StmtKind};
 use rg_ir_model::{
     BodyRef, DefMapRef, ExprId, FileId, FunctionRef, ImplRef, ItemStoreId, Path, SemanticItemRef,
     Span,
     identity::{DeclarationRef, LexicalScopeRef},
 };
+use rg_item_tree::{FromAst as _, GenericArg, NoSource};
 use rg_semantic_ir::{GenericsQuery, ItemStoreQuery, TypePathResolution};
 use rg_std::ExpectedUnique;
+use rg_syntax::ast;
 use rg_ty::{
     ClosureTy, FnDefRef, Substitution, Ty,
     signature::{CallableSignature, SemanticSignatureQuery},
@@ -22,7 +26,51 @@ use super::{
 };
 use crate::{body::BodyResolutionView, member::MemberView, source::IndexedAssociatedPathQualifier};
 
+/// Written generic arguments on a callable, such as the `u32` in `build::<u32>()`.
+pub struct IndexedCallArguments(Vec<GenericArg>);
+
+impl IndexedCallArguments {
+    pub fn from_ast(args: &ast::GenericArgList) -> Self {
+        Self(
+            args.generic_args()
+                .map(|arg| GenericArg::from_ast(&arg, &mut NoSource))
+                .collect(),
+        )
+    }
+}
+
+/// The result expected at a call site and any generic arguments written on its name.
+#[derive(Clone, Copy)]
+pub struct ExpectedCallResult<'a> {
+    pub ty: &'a IndexedType,
+    pub explicit_args: Option<&'a IndexedCallArguments>,
+}
+
+impl<'a> ExpectedCallResult<'a> {
+    pub(crate) fn raw(self) -> (&'a Ty, &'a [GenericArg]) {
+        let args = self.explicit_args.map_or(&[][..], |args| args.0.as_slice());
+        (self.ty.raw(), args)
+    }
+}
+
 impl TyView<'_, '_> {
+    /// Compare free function results in the caller's scope, using any written generic arguments.
+    /// Associated items use the bindings established during member lookup.
+    pub fn free_functions_with_matching_return(
+        &self,
+        scope: LexicalScopeRef,
+        functions: impl IntoIterator<Item = FunctionRef>,
+        expected: ExpectedCallResult<'_>,
+    ) -> anyhow::Result<HashSet<FunctionRef>> {
+        BodyResolutionView::new(self.db).functions_with_matching_return(
+            scope,
+            functions
+                .into_iter()
+                .filter(|function| !function.is_associated()),
+            expected.raw(),
+        )
+    }
+
     /// Look up the declared type of a value, including constants and statics behind a re-export.
     pub fn value_ty(&self, declaration: DeclarationRef) -> anyhow::Result<Option<IndexedType>> {
         let item = match declaration {
@@ -42,16 +90,9 @@ impl TyView<'_, '_> {
         Ok(ty.map(IndexedType::new))
     }
 
-    /// Return the type produced by calling the function. Async functions produce a future.
-    pub fn function_call_ty(&self, function: FunctionRef) -> anyhow::Result<Option<IndexedType>> {
-        Ok(self
-            .function_signature(function)?
-            .map(|signature| IndexedType::new(signature.call_return)))
-    }
-
     /// Read the arity of an associated function that constructs its own type.
     pub fn constructor_arity(&self, function: FunctionRef) -> anyhow::Result<Option<usize>> {
-        if function.store.id == ItemStoreId::Scope {
+        if !function.is_associated() {
             return Ok(None);
         }
         let members = MemberView::new(self.db);
@@ -76,7 +117,8 @@ impl TyView<'_, '_> {
             return Ok(None);
         };
         let Some(output) = self
-            .function_call_ty(function)?
+            .function_signature(function)?
+            .map(|signature| IndexedType::new(signature.call_return))
             .filter(IndexedType::is_known)
         else {
             return Ok(None);

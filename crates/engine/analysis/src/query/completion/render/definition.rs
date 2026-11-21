@@ -69,8 +69,8 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
                 return Ok(None);
             };
             return Ok(Some(
-                FunctionCompletionRenderer::new(self.analysis.view_db(), self.query, self.syntax)
-                    .completion(FunctionCompletionRequest {
+                FunctionCompletionRenderer::new(self.query, self.syntax).completion(
+                    FunctionCompletionRequest {
                         function,
                         label_override: Some(request.candidate.label()),
                         kind: request.candidate.kind(),
@@ -79,8 +79,8 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
                         call_completion: request.call_completion,
                         sort_policy: request.sort_policy,
                         sort_priority: request.sort_priority,
-                    })?
-                    .item,
+                    },
+                ),
             ));
         }
 

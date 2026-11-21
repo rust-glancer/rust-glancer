@@ -231,18 +231,13 @@ where
                 .generics()
                 .generics(GenericDefRef::Function(function))?;
             let mut subst = target.subst;
-            if !explicit_args.is_empty() {
-                let args =
-                    self.context
-                        .live()
-                        .generic_args(scope, &generics, explicit_args, table)?;
-                for (param, arg) in generics
-                    .iter_self()
-                    .zip(args.iter().skip(generics.parent_len()))
-                {
-                    subst.insert(param.param(), arg);
-                }
-            }
+            self.context.live().apply_function_args(
+                scope,
+                &generics,
+                explicit_args,
+                table,
+                &mut subst,
+            )?;
             subst.fresh_for(table, generics.iter().map(|p| p.param()));
             Ok(table.instantiate_function_item(function, &subst))
         })?;

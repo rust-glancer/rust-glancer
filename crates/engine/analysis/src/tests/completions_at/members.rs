@@ -8,6 +8,106 @@ use crate::tests::utils::{
 };
 
 #[test]
+fn ranks_the_method_at_the_best_receiver_adjustment() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:receiver_relevance
+struct Record;
+impl Record {
+    fn read_a_other(&self) -> bool { false }
+}
+
+mod extension {
+    pub trait Read {
+        type Output;
+        fn read_z_value(&self) -> Self::Output { loop {} }
+    }
+    impl Read for super::Record { type Output = u8; }
+    impl Read for &super::Record { type Output = u16; }
+}
+
+mod in_scope {
+    use super::{Record, extension::Read};
+    fn demo(record: &Record) {
+        let _: u8 = record.read_$0(); // complete("in-scope method").matching("read_")
+        let result = record.read_z_value()$0; // ty("call inference uses the same adjustment")
+    }
+}
+
+fn out_of_scope(record: &Record) {
+    let _: u8 = record.read_$0(); // complete("extension method").auto_import().matching("read_")
+}
+"#,
+        expect![[r#"
+            // in-scope method
+            tm read_z_value
+            im read_a_other
+
+            u8 // call inference uses the same adjustment
+
+            // extension method
+            tm read_z_value
+            im read_a_other
+        "#]],
+    );
+}
+
+#[test]
+fn ranks_dot_members_using_the_receivers_generic_arguments() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:generic_member_relevance
+struct Packet<T> {
+    field_a_other: u16,
+    field_z_value: T,
+}
+
+impl<T> Packet<T> {
+    fn get_a_other(&self) -> u16 { 0 }
+    fn get_z_value(&self) -> T { loop {} }
+}
+
+trait Available<T> {
+    fn get_y_trait(&self) -> T { loop {} }
+}
+impl<T> Available<T> for Packet<T> {}
+
+mod extensions {
+    pub trait Extension {
+        type Output;
+        fn get_x_extension(&self) -> Self::Output { loop {} }
+    }
+    impl<T> Extension for super::Packet<T> {
+        type Output = T;
+    }
+}
+
+fn inspect(packet: &Packet<u32>) {
+    let _: u32 = packet.field_$0; // complete("field behind a reference").matching("field_")
+    let _: u32 = packet.get_$0(); // complete("inherent and trait methods").matching("get_")
+    let _: u32 = packet.get_$0; // complete("extension with an associated return type").auto_import().matching("get_")
+}
+"#,
+        expect![[r#"
+            // field behind a reference
+            fd field_z_value
+            fd field_a_other
+
+            // inherent and trait methods
+            im get_z_value
+            tm get_y_trait
+            im get_a_other
+
+            // extension with an associated return type
+            im get_z_value
+            tm get_y_trait
+            tm get_x_extension
+            im get_a_other
+        "#]],
+    );
+}
+
+#[test]
 fn balances_dot_member_origin_and_expected_type() {
     check_analysis(
         r#"

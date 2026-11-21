@@ -37,7 +37,8 @@ use rg_ir_view::{
 
 pub use self::relevance::CompletionRelevance;
 use self::{
-    candidates::CompletionCandidateSource, expected_type::ExpectedTypeRanking, site::CompletionSite,
+    candidates::CompletionCandidateSource, expected_type::ExpectedTypeRanking,
+    render::CallCompletionKind, site::CompletionSite, syntax::CallSuffix,
 };
 pub(crate) use self::{
     resolvers::CompletionResolver,
@@ -177,9 +178,20 @@ pub(crate) struct CompletionContext<'a> {
     pub(crate) client_capabilities: CompletionClientCapabilities,
     pub(crate) auto_import_budget: Duration,
     expected_type: Option<&'a ExpectedTypeRanking>,
+    call_suffix: CallSuffix,
 }
 
 impl CompletionContext<'_> {
+    fn inserts_call(&self, kind: CallCompletionKind) -> bool {
+        self.call_suffix == CallSuffix::Absent
+            && self.client_capabilities.snippet_support
+            && kind.inserts_call_syntax()
+    }
+
+    fn completes_call(&self, kind: CallCompletionKind) -> bool {
+        self.call_suffix == CallSuffix::ArgumentList || self.inserts_call(kind)
+    }
+
     /// Start the search budget when a resolver reaches an eligible prefix.
     pub(crate) fn auto_import_deadline(&self, prefix: &str) -> Option<Instant> {
         (self.client_capabilities.auto_import && ImportableNameSearch::supports_prefix(prefix))

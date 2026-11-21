@@ -78,6 +78,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 client_capabilities: query.client_capabilities,
                 auto_import_budget: query.auto_import_budget,
                 expected_type: None,
+                call_suffix: Default::default(),
             },
         }
     }
@@ -180,6 +181,9 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         let ranking = ExpectedTypeRanking::at(self.analysis, self.query, syntax_context, &site)?;
         let query = CompletionContext {
             expected_type: ranking.as_ref(),
+            call_suffix: syntax_context
+                .map(CompletionSyntaxContext::call_suffix)
+                .unwrap_or_default(),
             ..self.query
         };
         let mut items = match site {

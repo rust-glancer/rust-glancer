@@ -5,7 +5,7 @@
 //! algorithms still live in Body IR; this adapter constructs their shared context in one place and
 //! preserves body-local modules and impl overlays for `ir-view` callers.
 
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 use anyhow::Context as _;
 use rg_body_ir::{
@@ -17,7 +17,7 @@ use rg_ir_model::{
     ScopeId, TraitDefRef,
     identity::{DeclarationRef, ExprRef, LexicalScopeRef},
 };
-use rg_item_tree::TypeRef;
+use rg_item_tree::{GenericArg, TypeRef};
 use rg_semantic_ir::{ItemLookupQuery, TypePathResolution};
 use rg_text::Name;
 use rg_ty::{
@@ -328,11 +328,12 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
     }
 
     /// Return fields using the body's assumptions and declaration overlay during autoderef.
-    pub(crate) fn field_candidate_refs_for_ty(
+    pub(crate) fn field_candidates_for_ty(
         &self,
         body_ref: BodyRef,
         ty: &Ty,
-    ) -> anyhow::Result<Vec<FieldRef>> {
+        expected: Option<&Ty>,
+    ) -> anyhow::Result<Vec<(FieldRef, bool)>> {
         let Some((body, item_lookup_query)) = self
             .body_with_lookup(body_ref)
             .context("load body field context")?
@@ -348,7 +349,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db.cancellation().clone(),
         )
         .fields()
-        .field_candidates_for_ty(ty)
+        .field_candidates_for_ty(ty, expected)
         .context("resolve body field candidates")
     }
 
@@ -359,6 +360,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         ty: &Ty,
         name: Option<&str>,
+        expected: Option<(&Ty, &[GenericArg])>,
     ) -> anyhow::Result<Option<Vec<MemberMethodCandidateRef>>> {
         let Some((body, item_lookup_query)) = self
             .body_with_lookup(body_ref)
@@ -377,7 +379,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db.cancellation().clone(),
             )
             .methods()
-            .method_candidates_for_ty(scope, ty, name)
+            .method_candidates_for_ty(scope, ty, name, expected)
             .context("resolve body method candidates")?,
         ))
     }
@@ -388,7 +390,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         ty: &Ty,
         names: impl Iterator<Item = &'name (Name, TraitDefRef)>,
         budget: Option<(&mut usize, Instant)>,
-    ) -> anyhow::Result<Vec<FunctionRef>> {
+        expected: Option<(&Ty, &[GenericArg])>,
+    ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         let body_ref = scope.body_ir();
         let Some((body, item_lookup_query)) = self.body_with_lookup(body_ref)? else {
             return Ok(Vec::new());
@@ -402,7 +405,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db.cancellation().clone(),
         )
         .methods()
-        .extension_methods_for_ty(scope.scope_id(), ty, names, budget)
+        .extension_methods_for_ty(scope.scope_id(), ty, names, budget, expected)
         .context("resolve extension methods")
     }
 
@@ -416,6 +419,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         prefix: &BodyAssociatedPathPrefix,
+        expected: Option<(&Ty, &[GenericArg])>,
     ) -> anyhow::Result<Option<Vec<AssociatedItemCandidateRef>>> {
         let Some((body, item_lookup_query)) = self
             .body_with_lookup(body_ref)
@@ -433,9 +437,35 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 &item_lookup_query,
                 self.db.cancellation().clone(),
             )
-            .associated_item_candidates(scope, prefix)
+            .associated_item_candidates(scope, prefix, expected)
             .context("resolve body associated item candidates")?,
         ))
+    }
+
+    pub(crate) fn functions_with_matching_return(
+        &self,
+        scope: LexicalScopeRef,
+        functions: impl IntoIterator<Item = FunctionRef>,
+        expected: (&Ty, &[GenericArg]),
+    ) -> anyhow::Result<HashSet<FunctionRef>> {
+        let mut functions = functions.into_iter().peekable();
+        if functions.peek().is_none() {
+            return Ok(HashSet::new());
+        }
+        let body_ref = scope.body_ir();
+        let Some((body, lookup)) = self.body_with_lookup(body_ref)? else {
+            return Ok(HashSet::new());
+        };
+        BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &lookup,
+            self.db.cancellation().clone(),
+        )
+        .functions_with_matching_return(scope.scope_id(), functions, expected)
+        .context("match call result in body scope")
     }
 
     /// Resolve declarations from the trait used by an associated type binding.

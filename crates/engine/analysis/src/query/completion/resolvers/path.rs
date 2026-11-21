@@ -24,7 +24,7 @@ use crate::{
         pattern::{PatternCandidateRole, PatternCompletionPolicy},
         relevance::CompletionSortPolicy,
         render::{CallCompletionKind, DefinitionCompletionRenderer, DefinitionCompletionRequest},
-        site::{NameCompletionContext, PathCompletionSite, PatternCompletionKind},
+        site::{NameCompletionContext, PathCompletionSite},
     },
 };
 
@@ -52,42 +52,41 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         };
         let context = site.context();
         let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
-        let mut candidates = completion_candidates
+        let module_candidates = completion_candidates
             .module_candidates_for_path(&site)
             .context("collect module path completion candidates")?;
-        candidates.extend(
-            completion_candidates
-                .associated_definition_candidates_for_path(&site, self.query.crate_ref)
-                .context("collect associated path completion candidates")?,
-        );
-        self.module_path_completions(
+        let call_completion = CallCompletionKind::for_name_context(context);
+        let associated_candidates = completion_candidates
+            .associated_definition_candidates_for_path(
+                &site,
+                self.query.crate_ref,
+                self.query
+                    .expected_type
+                    .filter(|_| self.query.completes_call(call_completion))
+                    .and_then(|ranking| ranking.call_result_type()),
+            )
+            .context("collect associated path completion candidates")?;
+        // Associated lookup can confirm a return type using the qualifier's bindings. Functions
+        // from a module path are ranked with the other free functions after rendering.
+        let candidates = module_candidates
+            .into_iter()
+            .map(|candidate| (candidate, false))
+            .chain(associated_candidates);
+        self.render_path_completions(
             &completion_candidates,
             candidates,
             edit,
             context,
-            match context {
-                NameCompletionContext::Type | NameCompletionContext::Value => {
-                    CallCompletionKind::Call
-                }
-                NameCompletionContext::Const => CallCompletionKind::Plain,
-                NameCompletionContext::Pattern(PatternCompletionKind::Name) => {
-                    CallCompletionKind::Call
-                }
-                NameCompletionContext::Pattern(
-                    PatternCompletionKind::TupleConstructor
-                    | PatternCompletionKind::RecordConstructor,
-                ) => CallCompletionKind::Plain,
-                NameCompletionContext::Import => CallCompletionKind::Plain,
-            },
+            call_completion,
         )
         .context("render path completions")
     }
 
-    /// Renders definitions visible from a resolved module qualifier.
-    fn module_path_completions(
+    /// Renders the definitions that fit the context after resolving the written qualifier.
+    fn render_path_completions(
         &self,
         source: &CompletionCandidateSource<'_, '_>,
-        candidates: Vec<DefinitionCompletionCandidate>,
+        candidates: impl Iterator<Item = (DefinitionCompletionCandidate, bool)>,
         edit: CompletionEdit,
         context: NameCompletionContext,
         call_completion: CallCompletionKind,
@@ -107,7 +106,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             | NameCompletionContext::Import => None,
         };
 
-        for candidate in candidates {
+        for (candidate, return_type_matches) in candidates {
             rg_std::check_cancel!(self.analysis, "completion candidate");
             if pattern_policy.is_some()
                 && candidate.kind() == CompletionKind::Macro
@@ -162,7 +161,16 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             {
                 completion.relevance.set_constructor_priority(arity > 0);
             }
+            if return_type_matches && let Some(ranking) = self.query.expected_type {
+                ranking.promote_call_match(&mut completion);
+            }
             completions.push(completion);
+        }
+
+        if self.query.completes_call(call_completion)
+            && let Some(ranking) = self.query.expected_type
+        {
+            ranking.rank_free_functions(types, &mut completions)?;
         }
 
         Ok(completions)

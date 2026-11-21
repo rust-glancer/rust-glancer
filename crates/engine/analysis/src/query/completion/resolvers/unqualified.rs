@@ -74,6 +74,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         site: UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let context = site.context();
+        let module_call_completion = CallCompletionKind::for_name_context(context);
         let filter = UnqualifiedCompletionFilter::from(context);
         let pattern_policy = match context {
             NameCompletionContext::Pattern(kind) => Some(PatternCompletionPolicy::new(
@@ -136,6 +137,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             )
             .context("render lexical completion candidate")?;
         }
+
+        let lexical_end = completions.len();
 
         // Signature generics follow lexical names but precede module/prelude candidates. This also
         // supplies inherited owner parameters and impl `Self` for declaration-owned sites.
@@ -213,26 +216,29 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     | NameCompletionContext::Pattern(_) => VisibleScopeSort::ByOrigin,
                     NameCompletionContext::Import => VisibleScopeSort::General,
                 },
-                call_completion: match context {
-                    NameCompletionContext::Type | NameCompletionContext::Value => {
-                        CallCompletionKind::Call
-                    }
-                    NameCompletionContext::Const => CallCompletionKind::Plain,
-                    NameCompletionContext::Pattern(PatternCompletionKind::Name) => {
-                        CallCompletionKind::Call
-                    }
-                    NameCompletionContext::Pattern(
-                        PatternCompletionKind::TupleConstructor
-                        | PatternCompletionKind::RecordConstructor,
-                    ) => CallCompletionKind::Plain,
-                    NameCompletionContext::Import => CallCompletionKind::Plain,
-                },
+                call_completion: module_call_completion,
             },
             pattern_policy,
             &hidden,
             &mut completions,
         )
         .context("render module completion candidates")?;
+
+        if self.query.completes_call(module_call_completion)
+            && let Some(ranking) = self.query.expected_type
+        {
+            // Lexical functions insert just their name. Their return types matter when
+            // the argument list is already present.
+            let start = if self.query.completes_call(CallCompletionKind::Plain) {
+                0
+            } else {
+                lexical_end
+            };
+            ranking.rank_free_functions(
+                TyView::new(self.analysis.view_db()),
+                &mut completions[start..],
+            )?;
+        }
 
         if !auto_import_candidates.is_empty() {
             self.push_auto_import_completions(
@@ -593,21 +599,21 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             else {
                 return Ok(());
             };
-            let completion =
-                FunctionCompletionRenderer::new(self.analysis.view_db(), self.query, syntax)
-                    .completion(FunctionCompletionRequest {
-                        function,
-                        label_override: Some(candidate.label()),
-                        kind: candidate.kind(),
-                        applicability: CompletionApplicability::Known,
-                        edit,
-                        call_completion: CallCompletionKind::Plain,
-                        sort_policy: filter.sort_policy(),
-                        sort_priority: Some(CompletionSortPriority::body_scope(
-                            candidate.scope_distance(),
-                        )),
-                    })?;
-            completions.push(completion.item);
+            let completion = FunctionCompletionRenderer::new(self.query, syntax).completion(
+                FunctionCompletionRequest {
+                    function,
+                    label_override: Some(candidate.label()),
+                    kind: candidate.kind(),
+                    applicability: CompletionApplicability::Known,
+                    edit,
+                    call_completion: CallCompletionKind::Plain,
+                    sort_policy: filter.sort_policy(),
+                    sort_priority: Some(CompletionSortPriority::body_scope(
+                        candidate.scope_distance(),
+                    )),
+                },
+            );
+            completions.push(completion);
             return Ok(());
         }
 

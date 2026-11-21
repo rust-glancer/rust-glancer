@@ -19,7 +19,10 @@ use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind, UserFacingAtt
 pub use rg_semantic_ir::AssociatedItemFilter;
 use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemStoreQuery};
 use rg_syntax::{Edition, LexedStr, SyntaxKind};
-use rg_ty::lookup::MemberMethodOrigin as TyMemberMethodOrigin;
+use rg_ty::lookup::{
+    AssociatedItemCandidateRef, AssociatedItemRef, MemberMethodCandidateRef,
+    MemberMethodOrigin as TyMemberMethodOrigin,
+};
 
 use crate::{IndexedViewDb, SymbolKind, item::path::PathView};
 
@@ -286,20 +289,27 @@ impl<'a> MemberEnumVariant<'a> {
     }
 }
 
-/// One method candidate with enough origin information for UI ranking and labels.
+/// A receiver lookup result together with the method's borrowed declaration.
 #[derive(Debug, Clone, Copy)]
 pub struct MemberMethodCandidate<'a> {
-    function: MemberFunction<'a>,
-    origin: MemberMethodOrigin,
+    candidate: MemberMethodCandidateRef,
+    data: &'a FunctionData,
 }
 
 impl<'a> MemberMethodCandidate<'a> {
     pub fn function(&self) -> MemberFunction<'a> {
-        self.function
+        MemberFunction {
+            function: self.candidate.function(),
+            data: self.data,
+        }
     }
 
     pub fn origin(&self) -> MemberMethodOrigin {
-        self.origin
+        self.candidate.origin().into()
+    }
+
+    pub fn return_type_matches(&self) -> bool {
+        self.candidate.return_type_matches()
     }
 }
 
@@ -356,18 +366,24 @@ impl MemberAssociatedItem {
 /// Projection keeps one declaration and combines that evidence before analysis ranks or filters
 /// the result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MemberAssociatedItemCandidate {
-    item: MemberAssociatedItem,
-    applicability: TraitApplicability,
-}
+pub struct MemberAssociatedItemCandidate(AssociatedItemCandidateRef);
 
 impl MemberAssociatedItemCandidate {
+    pub fn return_type_matches(self) -> bool {
+        self.0.return_type_matches()
+    }
+
     pub fn item(self) -> MemberAssociatedItem {
-        self.item
+        match self.0.item() {
+            AssociatedItemRef::Function(function) => MemberAssociatedItem::Function(function),
+            AssociatedItemRef::TypeAlias(alias) => MemberAssociatedItem::TypeAlias(alias),
+            AssociatedItemRef::Const(konst) => MemberAssociatedItem::Const(konst),
+            AssociatedItemRef::EnumVariant(variant) => MemberAssociatedItem::EnumVariant(variant),
+        }
     }
 
     pub fn applicability(self) -> TraitApplicability {
-        self.applicability
+        self.0.applicability()
     }
 }
 

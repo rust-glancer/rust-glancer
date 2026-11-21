@@ -4,9 +4,11 @@
 //! cancellation, and body providers together. This context keeps that routing in one place while
 //! still exposing only read-only access to the active body.
 
+use std::collections::HashSet;
+
 use rg_def_map::{DefMapQuery, DefMapSource};
-use rg_ir_model::{BodyRef, ExprId, Path, ScopeId};
-use rg_item_tree::TypeRef;
+use rg_ir_model::{BodyRef, ExprId, FunctionRef, Path, ScopeId};
+use rg_item_tree::{GenericArg, TypeRef};
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, SemanticItemSource, TypePathResolution};
 use rg_source::ReadError;
 use rg_std::CancellationToken;
@@ -15,6 +17,7 @@ use rg_ty::{
     lookup::{AssociatedItemCandidateRef, ImplQuery, ItemPathQuery},
     lowering::{TypeLoweringAnchor, TypePathResolver},
     signature::SemanticSignatureQuery,
+    solver::{InferenceSubstitution, SemanticDeclarations},
 };
 
 use super::{
@@ -193,8 +196,32 @@ where
         &self,
         scope: ScopeId,
         prefix: &crate::BodyAssociatedPathPrefix,
+        expected: Option<(&Ty, &[GenericArg])>,
     ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
-        self.associated_items().candidates_for_prefix(scope, prefix)
+        self.associated_items()
+            .candidates_for_prefix(scope, prefix, expected)
+    }
+
+    /// Match ordinary functions in one caller scope, including any written generic arguments.
+    pub fn functions_with_matching_return(
+        &self,
+        scope: ScopeId,
+        functions: impl IntoIterator<Item = FunctionRef>,
+        expected: (&Ty, &[GenericArg]),
+    ) -> Result<HashSet<FunctionRef>, ReadError> {
+        let context = self.ty_context();
+        SemanticDeclarations::new(&context, self).with_table(|table, _| {
+            let live = self.live();
+            let subst = InferenceSubstitution::new();
+            let mut matches = HashSet::new();
+            for function in functions {
+                rg_std::check_cancel!(self, "match function return types");
+                if live.function_return_matches(scope, function, &table, &subst, expected)? {
+                    matches.insert(function);
+                }
+            }
+            Ok(matches)
+        })?
     }
 
     /// Return declarations from the explicitly named trait and its supertraits.
