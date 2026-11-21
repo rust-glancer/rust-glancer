@@ -58,9 +58,7 @@ pub const fn neighbor() -> u8 { 1 }
                 for &(marker, expected) in expected.iter().chain(
                     [
                         ("EXPANDED:", "pub const EXPANDED: usize = seed!(); // 5"),
-                        // Item-position macro bodies are not yet lowered. Their source preview remains
-                        // available independently of whether evaluation can produce a value.
-                        ("GENERATED;", "pub const GENERATED: usize = 9 + 9"),
+                        ("GENERATED;", "pub const GENERATED: usize = 9 + 9 ; // 18"),
                     ]
                     .iter(),
                 ) {

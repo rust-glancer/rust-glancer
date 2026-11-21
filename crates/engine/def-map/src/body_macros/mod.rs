@@ -26,27 +26,25 @@ pub use self::{
     call::{BodyMacroCallOrigin, BodyMacroCallSite},
     expanded::{
         BodyMacroExpansionOutcome, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
-        BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
-        ExpandedBodyMacro,
+        BodyMacroInputSources, BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome,
+        BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
     },
 };
 
 const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
 
-/// Counts one level of nested macro expansion.
+/// Keeps a nested expansion's depth active while its generated syntax is lowered.
 ///
 /// Keep this guard alive while visiting the generated syntax: it may contain another macro call.
 /// Dropping the guard restores the previous depth, including when visiting stops early.
-pub struct BodyMacroExpansionScope(Rc<Cell<usize>>);
+pub struct BodyMacroExpansionScope {
+    depth: Rc<Cell<usize>>,
+    previous: usize,
+}
 
 impl Drop for BodyMacroExpansionScope {
     fn drop(&mut self) {
-        self.0.set(
-            self.0
-                .get()
-                .checked_sub(1)
-                .expect("balanced macro expansion depth"),
-        );
+        self.depth.set(self.previous);
     }
 }
 
@@ -78,8 +76,20 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         if depth >= BODY_MACRO_EXPANSION_DEPTH_LIMIT {
             return None;
         }
-        self.depth.set(depth + 1);
-        Some(BodyMacroExpansionScope(Rc::clone(&self.depth)))
+        Some(self.resume_expansion(depth + 1))
+    }
+
+    pub fn expansion_depth(&self) -> usize {
+        self.depth.get()
+    }
+
+    /// Restore the depth of a deferred body until its lowering finishes.
+    pub fn resume_expansion(&self, depth: usize) -> BodyMacroExpansionScope {
+        let previous = self.depth.replace(depth);
+        BodyMacroExpansionScope {
+            depth: Rc::clone(&self.depth),
+            previous,
+        }
     }
 
     /// Resolves one expression-position macro call to generated syntax or a builtin marker.
@@ -118,8 +128,9 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                     | BuiltinMacroExprKind::FormatArgsNl => resolved_call
                         .invocation(&site, ast_call)
                         .and_then(|invocation| {
-                            let ExpansionSyntax { parse, span_map } =
-                                ExpansionSyntax::from_builtin_arguments(invocation.args());
+                            let ExpansionSyntax {
+                                parse, span_map, ..
+                            } = ExpansionSyntax::from_builtin_arguments(invocation.args());
                             ExpandedBodyMacro::new(
                                 parse,
                                 span_map,
@@ -309,8 +320,9 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             .arms()
             .iter()
             .find(|arm| cfg.is_predicate_enabled(&arm.predicate))?;
-        let ExpansionSyntax { parse, span_map } =
-            ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
+        let ExpansionSyntax {
+            parse, span_map, ..
+        } = ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
 
         Some(ExpandedBodyMacro::new(
             parse,
@@ -333,7 +345,9 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             resolved.declarative_definition()?,
             parse_kind,
         );
-        let ExpansionSyntax { parse, span_map } = self.runtime.expand_now(request)?;
+        let ExpansionSyntax {
+            parse, span_map, ..
+        } = self.runtime.expand_now(request)?;
 
         Some(ExpandedBodyMacro::new(
             parse,

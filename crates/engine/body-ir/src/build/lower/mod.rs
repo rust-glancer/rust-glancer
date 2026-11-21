@@ -20,7 +20,7 @@ use rg_ir_model::BodyId;
 pub(super) use self::{
     builder::{LoweredBodyData, PendingBindingResolution},
     macro_expansion::BodyMacroExpansion,
-    task::{BodyLoweringTask, BodyTaskLowering},
+    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource},
 };
 /// The growing owner worklist, retaining source-ambiguous bindings until preparation settles them.
 #[derive(Default)]

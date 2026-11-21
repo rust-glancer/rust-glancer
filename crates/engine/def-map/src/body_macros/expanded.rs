@@ -1,35 +1,41 @@
 use std::sync::Arc;
 
 use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef, PackageSlot, Span};
-use rg_syntax::{AstNode, Parse, SyntaxNode, TextRange, ast};
+use rg_item_tree::DeclarationSourceStore;
+use rg_syntax::{AstNode, Parse, SyntaxError, SyntaxNode, TextRange, ast};
 use rg_tt::{
-    Span as TtSpan, TokenOwner,
+    Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, TokenSourceMap},
 };
+
+use super::BodyMacroCallOrigin;
 
 /// Generated body syntax plus the macro-definition origin needed while lowering it.
 ///
 /// Output tokens can come from invocation arguments or from the macro definition. Keep the full
-/// token map while lowering this syntax; Body IR only needs the proven argument spans afterward.
+/// token map during lowering so Body IR can keep the proven physical ranges after dropping the
+/// expansion.
 ///
 /// `source_map` goes from expanded syntax offsets to token origins. `input_sources` goes from
 /// this invocation's token IDs to physical ranges. A source lookup follows both maps and checks
 /// the call's ownership, so a template token cannot borrow an argument's range merely because
 /// their numeric IDs happen to match.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpandedBodyMacro<T> {
     syntax: T,
     source_map: Arc<ExpansionSpanMap>,
-    input_sources: Arc<TokenSourceMap>,
+    input_sources: BodyMacroInputSources,
     call_site: TtSpan,
     call_package: PackageSlot,
     dollar_crate: CrateRef,
+    parse_errors: Vec<SyntaxError>,
 }
 
 impl<T> ExpandedBodyMacro<T> {
-    pub(super) fn new(
+    pub(crate) fn new(
         syntax: T,
         source_map: ExpansionSpanMap,
-        input_sources: Arc<TokenSourceMap>,
+        input_sources: BodyMacroInputSources,
         call_site: TtSpan,
         call_package: PackageSlot,
         dollar_crate: CrateRef,
@@ -41,19 +47,23 @@ impl<T> ExpandedBodyMacro<T> {
             call_site,
             call_package,
             dollar_crate,
+            parse_errors: Vec::new(),
         }
     }
 
-    pub fn call_site(&self) -> TtSpan {
-        self.call_site
+    pub fn call_origin(&self) -> BodyMacroCallOrigin {
+        BodyMacroCallOrigin::Generated {
+            dollar_crate: self.dollar_crate,
+            source_map: Arc::clone(&self.source_map),
+            input_sources: self.input_sources.clone(),
+            call_site: self.call_site,
+        }
     }
 
-    pub fn input_sources(&self) -> Arc<TokenSourceMap> {
-        Arc::clone(&self.input_sources)
-    }
-
-    pub fn source_map(&self) -> Arc<ExpansionSpanMap> {
-        Arc::clone(&self.source_map)
+    pub fn has_parse_errors_in(&self, range: TextRange) -> bool {
+        self.parse_errors
+            .iter()
+            .any(|error| range.intersect(error.range()).is_some())
     }
 
     /// Return the original argument span when this node contains exactly one copied token.
@@ -76,19 +86,6 @@ impl<T> ExpandedBodyMacro<T> {
         self.source_for_token_range(call_source, token.text_range())
     }
 
-    /// Find copied input tokens, including tokens forwarded through nested expansions.
-    pub fn argument_spans(&self, call_source: BodySource) -> impl Iterator<Item = Span> + '_
-    where
-        T: AstNode,
-    {
-        self.syntax
-            .syntax()
-            .descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .filter(|token| !token.kind().is_trivia())
-            .filter_map(move |token| self.source_for_token_range(call_source, token.text_range()))
-    }
-
     /// Accept only unchanged tokens copied from this invocation.
     ///
     /// Compare the complete source file identity: caller and definition packages can reuse file IDs.
@@ -104,10 +101,10 @@ impl<T> ExpandedBodyMacro<T> {
             self.call_package.0,
             call_source.file_id.as_raw(),
         )?;
-        if span.anchor.owner != TokenOwner::Body {
+        if span.anchor != self.call_site.anchor {
             return None;
         }
-        let span = Span::from_text_range(self.input_sources.resolve(span.origins)?);
+        let span = self.input_sources.span(span)?;
         (call_source.span.contains_span(span) && span.len() == u32::from(range.len()))
             .then_some(span)
     }
@@ -128,6 +125,7 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
             call_site,
             call_package,
             dollar_crate,
+            parse_errors,
         } = self;
         let context_syntax = syntax.syntax().clone();
         (
@@ -139,12 +137,22 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
                 call_site,
                 call_package,
                 dollar_crate,
+                parse_errors,
             },
         )
     }
 }
 
 impl ExpandedBodyMacro<SyntaxNode> {
+    /// Find copied input tokens, including copies outside the body being lowered.
+    pub fn argument_spans(&self, call_source: BodySource) -> impl Iterator<Item = Span> + '_ {
+        self.syntax
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+            .filter_map(move |token| self.source_for_token_range(call_source, token.text_range()))
+    }
+
     /// Remap one token, a range within it, or a name node with parser-inserted whitespace.
     /// Compound generated ranges still cannot pass as copied arguments.
     pub fn source_for_range(&self, call_source: BodySource, range: TextRange) -> Option<Span> {
@@ -189,6 +197,7 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
             call_site,
             call_package,
             dollar_crate,
+            ..
         } = self;
         let root = parse.syntax_node();
         let syntax = N::cast(root.clone()).or_else(|| root.children().find_map(N::cast))?;
@@ -199,7 +208,26 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
             call_site,
             call_package,
             dollar_crate,
+            parse_errors: parse.parse_errors().to_vec(),
         })
+    }
+}
+
+/// The source table that owns an expansion's input token IDs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyMacroInputSources {
+    /// A transient table from tokenizing a call found during body lowering.
+    Body(Arc<TokenSourceMap>),
+    /// The file's declaration table supplied the IDs in an item macro's input.
+    Declaration(Arc<DeclarationSourceStore<Span>>),
+}
+
+impl BodyMacroInputSources {
+    fn span(&self, token: TtSpan) -> Option<Span> {
+        match self {
+            Self::Body(sources) => sources.resolve(token.origins).map(Span::from_text_range),
+            Self::Declaration(sources) => sources.token_span(token),
+        }
     }
 }
 
@@ -228,7 +256,7 @@ pub struct BodyMacroExpansionOutcome<T> {
 }
 
 impl<T> BodyMacroExpansionOutcome<T> {
-    pub(super) fn new(definition: LocalDefRef, expansion: Option<T>) -> Self {
+    pub(crate) fn new(definition: LocalDefRef, expansion: Option<T>) -> Self {
         Self {
             definition,
             expansion,

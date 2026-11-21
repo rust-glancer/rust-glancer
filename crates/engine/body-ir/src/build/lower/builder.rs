@@ -1,6 +1,9 @@
 //! Build-only body storage between syntax lowering and binding materialization.
 
+use std::collections::HashMap;
+
 use rg_arena::Arena;
+use rg_def_map::GeneratedBodySyntax;
 use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, SourceId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 
@@ -17,6 +20,9 @@ use crate::body::{
 pub(crate) struct LoweredBodyData {
     body: BodyData,
     pub(crate) sources: BodySourceStore,
+    /// Temporary syntax and expansion depth for generated items. The key is the declaration's
+    /// occurrence ID, which is available before the nested item gets a semantic owner.
+    pub(crate) generated_bodies: HashMap<SourceId, (GeneratedBodySyntax, usize)>,
     pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
 }
 
@@ -66,6 +72,7 @@ pub(super) struct BodyBuilder {
     pub(super) source_items: BodySourceItems,
     pub(super) macro_calls: Vec<BodyMacroCallData>,
     pub(super) sources: BodySourceStore,
+    pub(super) generated_bodies: HashMap<SourceId, (GeneratedBodySyntax, usize)>,
     pub(super) scopes: Arena<ScopeId, ScopeData>,
     pub(super) bindings: Arena<BindingId, BindingData>,
     pub(super) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
@@ -92,6 +99,7 @@ impl BodyBuilder {
             source_items,
             macro_calls,
             mut sources,
+            generated_bodies,
             scopes,
             bindings,
             pending_binding_resolutions,
@@ -124,6 +132,7 @@ impl BodyBuilder {
                 unmodeled_syntax,
             ),
             sources,
+            generated_bodies,
             pending_binding_resolutions,
         }
     }

@@ -368,6 +368,40 @@ fn references_keep_both_meanings_of_a_copied_macro_name() {
 }
 
 #[test]
+fn selected_cfg_arm_bodies_use_the_written_token_ranges() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:cfg_arm_body
+pub fn calculate() -> u8 { 1 }
+cfg_select! {
+    true => {
+        cfg_select! {
+            true => {
+                pub fn selected() -> u8 { cal$call$culate() }
+            }
+        }
+    }
+}
+"#,
+        &[
+            AnalysisQuery::hover("call in selected arm", "call").in_lib("cfg_arm_body"),
+            AnalysisQuery::goto("call in selected arm", "call").in_lib("cfg_arm_body"),
+        ],
+        expect![[r#"
+            // call in selected arm
+            range: 6:43-6:52
+            block:
+              kind: fn
+              path: cfg_arm_body::calculate
+              signature:
+                pub fn calculate() -> u8
+
+            fn calculate @ 1:8-1:17 // call in selected arm
+        "#]],
+    );
+}
+
+#[test]
 fn macro_arguments_keep_external_crate_provenance() {
     check_analysis_queries(
         r#"

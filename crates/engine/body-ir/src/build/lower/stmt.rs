@@ -416,7 +416,7 @@ impl BodyLowering<'_> {
         };
         let dollar_crate = self.dollar_crate();
         let source = self.source(item.syntax());
-        self.with_sources(|locations| {
+        let node = self.with_sources(|locations| {
             if let Some(node) = LocalItemLowering::declaration(item, source, locations) {
                 return Some(node);
             }
@@ -498,7 +498,9 @@ impl BodyLowering<'_> {
                 locations.record_as(item.syntax().text_range(), SourceRole::Declaration),
                 source.file_id,
             ))
-        })
+        })?;
+        self.defer_generated_body(&node, item.syntax());
+        Some(node)
     }
 
     fn lower_source_module_item(&mut self, item: &ast::Module) -> ModuleItem {
@@ -559,7 +561,6 @@ impl BodyLowering<'_> {
 
     pub(super) fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
         let item = LocalItemLowering::associated(item)?;
-        let source = self.source(item.syntax());
-        self.with_sources(|locations| LocalItemLowering::declaration(&item, source, locations))
+        self.lower_source_item(&item)
     }
 }

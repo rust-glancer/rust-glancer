@@ -1,9 +1,11 @@
 //! Shared lowering context for expression bodies.
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
+use rg_def_map::{
+    BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro, GeneratedBodySyntax,
+};
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceId, Span};
-use rg_item_tree::{RecordSource, SourceRole};
+use rg_item_tree::{ItemKind, ItemNode, RecordSource, SourceRole};
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
 
 use super::{
@@ -199,12 +201,7 @@ impl BodyLowering<'_> {
     /// generated syntax keep the generating definition's `$crate` identity and token map.
     pub(super) fn macro_call_origin(&self) -> BodyMacroCallOrigin {
         match &self.generated_context {
-            Some(context) => BodyMacroCallOrigin::Generated {
-                dollar_crate: context.expanded.dollar_crate(),
-                source_map: context.expanded.source_map(),
-                input_sources: context.expanded.input_sources(),
-                call_site: context.expanded.call_site(),
-            },
+            Some(context) => context.expanded.call_origin(),
             None => BodyMacroCallOrigin::Source,
         }
     }
@@ -231,19 +228,58 @@ impl BodyLowering<'_> {
         expanded: ExpandedBodyMacro<Syntax>,
         f: impl FnOnce(&mut Self, Syntax) -> Output,
     ) -> Output {
-        // Save the proven input spans in Body IR while the full expansion tree is still available.
-        // The tree and its token map only need to live through recursive lowering.
-        self.builder
-            .sources
-            .provenance
-            .record_expansion_arguments(expanded.argument_spans(call_source));
         let (syntax, expanded_context) = expanded.into_syntax_and_context();
-        let context = GeneratedBodyMacroContext::new(call_source, expanded_context);
         // A nested expansion uses its own map, then restores the parent before lowering continues.
-        let previous = self.generated_context.replace(context);
+        let previous = self.generated_context.take();
+        self.set_expansion(call_source, expanded_context);
         let result = f(self, syntax);
         self.generated_context = previous;
         result
+    }
+
+    pub(super) fn set_expansion(
+        &mut self,
+        source: BodySource,
+        expanded: ExpandedBodyMacro<SyntaxNode>,
+    ) {
+        self.builder
+            .sources
+            .provenance
+            .record_expansion_arguments(expanded.argument_spans(source));
+        self.generated_context = Some(GeneratedBodyMacroContext { source, expanded });
+    }
+
+    /// Keep a generated item's syntax until its body-local declaration gets a semantic owner.
+    pub(super) fn defer_generated_body(&mut self, item: &ItemNode, syntax: &SyntaxNode) {
+        let Some(context) = &self.generated_context else {
+            return;
+        };
+        let has_body = match &item.kind {
+            ItemKind::Function(function) => function.has_body,
+            ItemKind::Const(konst) => konst.has_value,
+            ItemKind::Static(_) => {
+                ast::Static::cast(syntax.clone()).is_some_and(|item| item.body().is_some())
+            }
+            _ => false,
+        };
+        if has_body {
+            self.builder.generated_bodies.insert(
+                item.location,
+                (
+                    GeneratedBodySyntax {
+                        syntax: syntax.clone(),
+                        expansion: context.expanded.clone(),
+                        // The invocation may be handwritten. This generated item's range
+                        // is a fallback shared with any siblings from the same call.
+                        source: BodySource::macro_generated(
+                            context.source.file_id,
+                            context.source.span,
+                        ),
+                    },
+                    self.macro_expansion.expansion_depth(),
+                ),
+            );
+        }
     }
 
     /// Record a user-written macro call as a navigation/reference candidate.
@@ -355,10 +391,4 @@ impl BodyLowering<'_> {
 struct GeneratedBodyMacroContext {
     source: BodySource,
     expanded: ExpandedBodyMacro<SyntaxNode>,
-}
-
-impl GeneratedBodyMacroContext {
-    fn new(source: BodySource, expanded: ExpandedBodyMacro<SyntaxNode>) -> Self {
-        Self { source, expanded }
-    }
 }

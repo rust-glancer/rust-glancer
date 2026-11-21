@@ -14,7 +14,7 @@ use rg_tt::{
     },
 };
 
-use super::ExpandedBodyMacro;
+use super::{BodyMacroInputSources, ExpandedBodyMacro};
 use crate::MacroDefinitionView;
 
 /// Source context carried from one body macro invocation to the next.
@@ -30,7 +30,7 @@ pub enum BodyMacroCallOrigin {
         dollar_crate: CrateRef,
         /// Maps offsets in the parent expansion's text back to original token spans.
         source_map: Arc<ExpansionSpanMap>,
-        input_sources: Arc<TokenSourceMap>,
+        input_sources: BodyMacroInputSources,
         call_site: TtSpan,
     },
 }
@@ -105,12 +105,7 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
     /// Its `$crate` paths belong to the macro definition that produced the output.
     pub(super) fn in_expansion<T>(&self, expanded: &ExpandedBodyMacro<T>) -> Self {
         Self {
-            origin: BodyMacroCallOrigin::Generated {
-                dollar_crate: expanded.dollar_crate(),
-                source_map: expanded.source_map(),
-                input_sources: expanded.input_sources(),
-                call_site: expanded.call_site(),
-            },
+            origin: expanded.call_origin(),
             ..self.clone()
         }
     }
@@ -200,7 +195,7 @@ pub(super) struct BodyMacroInvocation {
     args: TopSubtree,
     call_package: PackageSlot,
     call_site: TtSpan,
-    input_sources: Arc<TokenSourceMap>,
+    input_sources: BodyMacroInputSources,
 }
 
 impl BodyMacroInvocation {
@@ -231,7 +226,11 @@ impl BodyMacroInvocation {
                 let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
                     sources.record(span_factory, range)
                 });
-                (args, Arc::new(sources), call_site)
+                (
+                    args,
+                    BodyMacroInputSources::Body(Arc::new(sources)),
+                    call_site,
+                )
             }
             BodyMacroCallOrigin::Generated {
                 source_map,
@@ -242,7 +241,7 @@ impl BodyMacroInvocation {
                 let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
                     source_map.span_for_range(range).unwrap_or(*call_site)
                 });
-                (args, Arc::clone(input_sources), *call_site)
+                (args, input_sources.clone(), *call_site)
             }
         };
 
@@ -263,8 +262,8 @@ impl BodyMacroInvocation {
         &self.args
     }
 
-    pub(super) fn input_sources(&self) -> Arc<TokenSourceMap> {
-        Arc::clone(&self.input_sources)
+    pub(super) fn input_sources(&self) -> BodyMacroInputSources {
+        self.input_sources.clone()
     }
 
     pub(super) fn call_package(&self) -> PackageSlot {
