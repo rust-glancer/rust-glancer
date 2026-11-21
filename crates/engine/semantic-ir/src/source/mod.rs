@@ -11,7 +11,9 @@ use rg_def_map::{
     GeneratedExpansionLocations, GeneratedLocations, GeneratedSourceStore, GeneratedSourceStoreId,
     ItemSource, ItemSourceKind,
 };
-use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, Span};
+use rg_ir_model::{
+    CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, SourceLocationKind, Span,
+};
 use rg_item_tree::{DeclarationSourceStore, SourceLocations, file_declaration_sources};
 use rg_source::QueryContext;
 
@@ -130,7 +132,11 @@ impl SourceLocations for ItemSourceView<'_> {
                 let sources = inputs.iter().find(|(key, _)| *key == input)?.1;
                 Some(SourceLocation {
                     span: sources.token_span(location.origin)?,
-                    editable: location.editable,
+                    kind: if location.editable {
+                        SourceLocationKind::MacroArgument
+                    } else {
+                        SourceLocationKind::NavigationFallback
+                    },
                 })
             }
         }

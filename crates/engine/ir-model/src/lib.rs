@@ -52,7 +52,7 @@ pub use self::{
     path::{Path, PathRoot},
     primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
     source_id::SourceId,
-    source_location::SourceLocation,
+    source_location::{SourceLocation, SourceLocationKind},
     span::Span,
 };
 

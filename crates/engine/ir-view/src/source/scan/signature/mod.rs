@@ -25,7 +25,8 @@ mod collector;
 mod walker;
 
 use rg_ir_model::{
-    CrateRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, Path, Span,
+    CrateRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, Path,
+    SourceLocation, Span,
 };
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemStoreQuery, SemanticItemSource as _, SourceSelection, TypePathContext};
@@ -85,15 +86,15 @@ pub(crate) enum SignatureCompletionSite {
 pub(crate) enum SignatureSourceCandidate {
     Field {
         field: FieldRef,
-        span: Span,
+        location: SourceLocation,
     },
     Function {
         function: FunctionRef,
-        span: Span,
+        location: SourceLocation,
     },
     EnumVariant {
         variant: EnumVariantRef,
-        span: Span,
+        location: SourceLocation,
     },
     TypePath {
         scope: SignatureTypePathScope,
@@ -101,17 +102,17 @@ pub(crate) enum SignatureSourceCandidate {
         // Only cursor queries retain full type syntax. Keep broad reference scans compact.
         type_ref: Option<Box<TypeRef>>,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
     },
 }
 
 impl SignatureSourceCandidate {
     fn span(&self) -> Span {
         match self {
-            Self::Field { span, .. }
-            | Self::Function { span, .. }
-            | Self::EnumVariant { span, .. }
-            | Self::TypePath { span, .. } => *span,
+            Self::Field { location, .. }
+            | Self::Function { location, .. }
+            | Self::EnumVariant { location, .. }
+            | Self::TypePath { location, .. } => location.span,
         }
     }
 }

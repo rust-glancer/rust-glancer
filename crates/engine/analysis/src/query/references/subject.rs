@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 
 use rg_ir_model::{
-    BodyKey, CrateRef, DefMapRef, FileId, SemanticItemRef, Span, identity::DeclarationRef,
+    BodyKey, CrateRef, DefMapRef, FileId, SemanticItemRef, SourceLocation, identity::DeclarationRef,
 };
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
@@ -106,16 +106,16 @@ impl ReferenceSubject {
                 }
             }
 
-            // Navigation may lead to a whole macro invocation. Only an actual source occurrence
-            // can be projected back into references, which rename also consumes as editable text.
+            // References need the declaration's written name. Keep its origin along with the
+            // range so rename can check whether changing the declaration edits macro input.
             if let Some(declaration) = declaration
-                && let Some(span) = declaration.editable_span()
+                && let Some(location) = declaration.exact_name_location()
             {
                 declaration_locations.push(ReferenceSourceLocation {
                     declaration: *declaration_ref,
                     crate_ref: declaration.crate_ref(),
                     file_id: declaration.file_id(),
-                    span,
+                    location,
                 });
             }
         }
@@ -226,5 +226,5 @@ pub(super) struct ReferenceSourceLocation {
     pub(super) declaration: DeclarationRef,
     pub(super) crate_ref: CrateRef,
     pub(super) file_id: FileId,
-    pub(super) span: Span,
+    pub(super) location: SourceLocation,
 }

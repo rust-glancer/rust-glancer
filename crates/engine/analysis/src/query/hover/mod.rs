@@ -3,7 +3,7 @@
 mod formatting;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, SemanticItemRef, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, SemanticItemRef, SourceLocation, identity::DeclarationRef};
 use rg_ir_view::{
     display::ty_label::TypeRenderer,
     item::{
@@ -40,7 +40,12 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         {
             return self.hover_for_source_symbol(
                 crate_ref,
-                SourceSymbol::plain_declaration(link.declaration, crate_ref, file_id, link.span),
+                SourceSymbol::plain_declaration(
+                    link.declaration,
+                    crate_ref,
+                    file_id,
+                    SourceLocation::direct(link.span),
+                ),
             );
         }
         let symbols = self

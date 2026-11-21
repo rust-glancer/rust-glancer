@@ -10,14 +10,6 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::BodySourceMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(crate) struct BodyLocation {
-    pub(crate) source: BodySource,
-    // A copied macro argument is still generated syntax, but its original bytes can be edited.
-    // This is separate from BodySource's direct-written/generated distinction.
-    pub(crate) editable: bool,
-}
-
 /// Source data for a single body's occurrence IDs. Nested bodies have their own store.
 ///
 /// All occurrences in this store use owner zero. Unlike a file's declaration table, a body is
@@ -25,25 +17,18 @@ pub(crate) struct BodyLocation {
 /// recording sequence. Comments and changing byte offsets do not change that sequence.
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodySourceStore {
-    entries: Vec<BodyLocation>,
+    entries: Vec<BodySource>,
     initializer_previews: HashMap<SourceId, String>,
     pub(crate) provenance: BodySourceMap,
 }
 
 impl BodySourceStore {
     pub(crate) fn record(&mut self, source: BodySource) -> SourceId {
-        self.record_location(BodyLocation {
-            source,
-            editable: source.is_written(),
-        })
-    }
-
-    fn record_location(&mut self, location: BodyLocation) -> SourceId {
         let id = SourceId {
             owner: 0,
             local: u32::try_from(self.entries.len()).expect("body occurrences fit u32"),
         };
-        self.entries.push(location);
+        self.entries.push(source);
         id
     }
 
@@ -51,7 +36,7 @@ impl BodySourceStore {
     /// relationship, rather than a source occurrence that happens to be uneditable.
     pub fn source(&self, id: SourceId) -> BodySource {
         assert_eq!(id.owner, 0, "body occurrence belongs to this source table");
-        self.entries[id.local as usize].source
+        self.entries[id.local as usize]
     }
 
     pub fn span(&self, id: SourceId) -> Span {
@@ -75,7 +60,7 @@ impl BodySourceStore {
 
     pub(crate) fn recorder<'a>(
         &'a mut self,
-        map: &'a dyn Fn(TextRange, SourceRole) -> BodyLocation,
+        map: &'a dyn Fn(TextRange, SourceRole) -> BodySource,
     ) -> BodySourceRecorder<'a> {
         BodySourceRecorder { store: self, map }
     }
@@ -86,11 +71,7 @@ impl SourceLocations for BodySourceStore {
         if id.owner != 0 {
             return None;
         }
-        let entry = self.entries.get(id.local as usize)?;
-        Some(SourceLocation {
-            span: entry.source.span,
-            editable: entry.editable,
-        })
+        Some(self.entries.get(id.local as usize)?.location())
     }
 }
 
@@ -98,12 +79,12 @@ impl SourceLocations for BodySourceStore {
 /// therefore use the same declaration/type lowerers without changing the meaning of stored IDs.
 pub(crate) struct BodySourceRecorder<'a> {
     store: &'a mut BodySourceStore,
-    map: &'a dyn Fn(TextRange, SourceRole) -> BodyLocation,
+    map: &'a dyn Fn(TextRange, SourceRole) -> BodySource,
 }
 
 impl RecordSource for BodySourceRecorder<'_> {
     fn record_as(&mut self, range: TextRange, role: SourceRole) -> SourceId {
-        self.store.record_location((self.map)(range, role))
+        self.store.record((self.map)(range, role))
     }
 
     fn record_initializer(&mut self, initializer: &ast::Expr) -> SourceId {

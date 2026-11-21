@@ -13,7 +13,8 @@
 use anyhow::Context as _;
 use rg_def_map::{DefMapView, ModuleOrigin};
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, FileId, LocalDefRef, ModuleId, ModuleRef, Path, Span,
+    CrateRef, DefId, DefMapRef, FileId, LocalDefRef, ModuleId, ModuleRef, Path, SourceLocation,
+    Span,
 };
 use rg_item_tree::SourceLocations as _;
 
@@ -28,19 +29,19 @@ pub(crate) enum DefinitionSourceCandidate {
     Def {
         def: DefId,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
     },
     UsePath {
         module: ModuleRef,
         path: Path,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
     },
     ImportAlias {
         module: ModuleRef,
         path: Path,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
     },
 }
 
@@ -131,14 +132,14 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
             let locations = self
                 .db
                 .declaration_source(module_ref.origin, declaration_source)?;
-            let Some(span) = locations.editable_span(Some(span)) else {
+            let Some(location) = locations.exact_location(Some(span)) else {
                 continue;
             };
-            if self.offset_matches(span) {
+            if self.offset_matches(location.span) {
                 candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Module(module_ref),
                     file_id: declaration_source.file_id,
-                    span,
+                    location,
                 });
             }
         }
@@ -160,14 +161,14 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
             let locations = self
                 .db
                 .declaration_source(local_def_ref.origin, local_def.source)?;
-            let Some(span) = locations.editable_span(local_def.name_location) else {
+            let Some(location) = locations.exact_location(local_def.name_location) else {
                 continue;
             };
-            if self.offset_matches(span) {
+            if self.offset_matches(location.span) {
                 candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Local(local_def_ref),
                     file_id: local_def.file_id,
-                    span,
+                    location,
                 });
             }
         }
@@ -191,28 +192,27 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
             };
             let locations = self.db.declaration_source(module.origin, import.source)?;
             for (path, span) in prefixes {
-                let Some(span) = locations.editable_span(Some(span)) else {
+                let Some(location) = locations.exact_location(Some(span)) else {
                     continue;
                 };
-                if self.offset_matches(span) {
+                if self.offset_matches(location.span) {
                     candidates.push(DefinitionSourceCandidate::UsePath {
                         module,
                         path,
                         file_id: import.source.file_id,
-                        span,
+                        location,
                     });
                 }
             }
 
-            let alias_span = locations.editable_span(import.alias_location);
-            if let Some(alias_span) = alias_span
-                && self.offset_matches(alias_span)
+            if let Some(location) = locations.exact_location(import.alias_location)
+                && self.offset_matches(location.span)
             {
                 candidates.push(DefinitionSourceCandidate::ImportAlias {
                     module,
                     path: import.path.semantic().clone(),
                     file_id: import.source.file_id,
-                    span: alias_span,
+                    location,
                 });
             }
         }

@@ -39,8 +39,8 @@ pub fn demo(user: User) {
 
 pub struct First;
 pub struct Second;
-impl First { pub fn run(&self) -> u32 { 1 } }
-impl Second { pub fn run(&self) -> u32 { 2 } }
+impl First { pub fn $first$run(&self) -> u32 { 1 } }
+impl Second { pub fn $second$run(&self) -> u32 { 2 } }
 macro_rules! both { ($member:ident) => { (First.$member(), Second.$member()) }; }
 pub fn repeated_meanings() { let _ = both!($ambiguous$run); }
 "#;
@@ -348,6 +348,26 @@ pub fn demo() {
 }
 
 #[test]
+fn references_keep_both_meanings_of_a_copied_macro_name() {
+    check_analysis_queries(
+        FIXTURE,
+        &[
+            AnalysisQuery::references("first method", "first", ReferenceQuery::all()),
+            AnalysisQuery::references("second method", "second", ReferenceQuery::all()),
+        ],
+        expect![[r#"
+            // first method
+            `run` @ src/lib.rs:33:21-33:24
+            `run` @ src/lib.rs:36:44-36:47
+
+            // second method
+            `run` @ src/lib.rs:34:22-34:25
+            `run` @ src/lib.rs:36:44-36:47
+        "#]],
+    );
+}
+
+#[test]
 fn macro_arguments_keep_external_crate_provenance() {
     check_analysis_queries(
         r#"
@@ -647,6 +667,81 @@ pub fn demo(user: User, café: u32, number: f64, width: usize, precision: usize,
               kind: variable
               signature:
                 let self: &User
+        "#]],
+    );
+}
+
+#[test]
+fn copied_member_names_and_single_segment_pattern_paths_are_occurrences() {
+    check_analysis_queries(
+        r#"
+//- /src/lib.rs crate:copied_names
+enum Choice { Chosen(u8) }
+use Choice::Chosen;
+macro_rules! declare {
+    ($field:ident, $variant:ident) => {
+        struct Hidden { $field: u8 }
+        enum Local { $variant }
+    };
+}
+macro_rules! read {
+    ($variant:ident) => { match Chosen(1) { $variant(value) => value } };
+}
+pub fn demo() {
+    declare!(co$field$pied, Na$variant$med);
+    let _ = Hidden { copied: 0 };
+    let _ = Local::Named;
+    let _ = read!(Cho$pattern$sen);
+}
+"#,
+        &[
+            AnalysisQuery::references("copied field declaration", "field", ReferenceQuery::all()),
+            AnalysisQuery::references(
+                "copied variant declaration",
+                "variant",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::goto("copied pattern constructor", "pattern"),
+            AnalysisQuery::references(
+                "copied pattern constructor",
+                "pattern",
+                ReferenceQuery::all(),
+            ),
+        ],
+        expect![[r#"
+            // copied field declaration
+            `copied` @ src/lib.rs:13:14-13:20
+            `copied` @ src/lib.rs:14:22-14:28
+
+            // copied variant declaration
+            `Named` @ src/lib.rs:13:22-13:27
+            `Named` @ src/lib.rs:15:20-15:25
+
+            variant Chosen @ 1:15-1:21 // copied pattern constructor
+
+            // copied pattern constructor
+            `Chosen` @ src/lib.rs:1:15-1:21
+            `Chosen` @ src/lib.rs:2:13-2:19
+            `Chosen` @ src/lib.rs:16:19-16:25
+        "#]],
+    );
+}
+
+#[test]
+fn rename_preserves_the_format_capture_spelling_of_keywords() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:format_rename
+pub fn demo(va$rename$lue: u8) {
+    let _ = format_args!("{value}");
+}
+"#,
+        &[AnalysisQuery::rename("rename as keyword", "rename", "type").in_lib("format_rename")],
+        expect![[r#"
+            // rename as keyword
+            target `value` @ format_rename/src/lib.rs:1:13-1:18
+            `value` -> `r#type` @ format_rename/src/lib.rs:1:13-1:18
+            `value` -> `type` @ format_rename/src/lib.rs:2:28-2:33
         "#]],
     );
 }

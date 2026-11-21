@@ -11,7 +11,7 @@ use super::{
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
 };
-use crate::body::{BodyLocation, BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
+use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 pub(super) struct BodyLowering<'a> {
     pub(super) owner: BodyOwner,
@@ -122,13 +122,13 @@ impl BodyLowering<'_> {
 
     pub(super) fn source(&self, syntax: &SyntaxNode) -> BodySource {
         if let Some(context) = &self.generated_context {
-            // Macro expansion provenance is intentionally token-sized. A larger generated node can
-            // contain substituted input while still being structurally created by the transcriber.
+            // In `($member:ident) => { receiver.$member() }`, the call as a whole maps to
+            // the invocation. The member token can have an exact location of its own.
             if let Some(span) = context
                 .expanded
                 .source_for_exact_syntax(context.source, syntax)
             {
-                return BodySource::macro_generated(context.source.file_id, span);
+                return BodySource::macro_argument(context.source.file_id, span);
             }
             return BodySource::macro_generated(context.source.file_id, context.source.span);
         }
@@ -136,10 +136,8 @@ impl BodyLowering<'_> {
         source_for(self.body_source.file_id, syntax)
     }
 
-    /// Translate a range within one expansion token back to the original macro argument.
-    ///
-    /// Path segments and member names need the same copied-token check as expression sources;
-    /// template tokens get the whole call span as a non-editable navigation fallback.
+    /// Record a range within a node, such as its method name. In an expansion, use the whole
+    /// invocation as a navigation fallback when the range has no exact copy in the input.
     pub(super) fn source_location(&mut self, range: TextRange) -> SourceId {
         self.with_sources(|sources| sources.record(range))
     }
@@ -151,10 +149,16 @@ impl BodyLowering<'_> {
 
     /// Keep an occurrence only when its bytes belong to written source. Generated template text
     /// can have a navigation fallback, but that fallback cannot stand in for a format name.
-    pub(super) fn written_source_span(&self, range: TextRange) -> Option<Span> {
+    pub(super) fn written_source(&self, range: TextRange) -> Option<BodySource> {
         match &self.generated_context {
-            Some(context) => context.expanded.source_for_range(context.source, range),
-            None => Some(Span::from_text_range(range)),
+            Some(context) => {
+                let span = context.expanded.source_for_range(context.source, range)?;
+                Some(BodySource::macro_argument(context.source.file_id, span))
+            }
+            None => Some(BodySource::written(
+                self.body_source.file_id,
+                Span::from_text_range(range),
+            )),
         }
     }
 
@@ -171,18 +175,14 @@ impl BodyLowering<'_> {
                 let copied = matches!(role, SourceRole::Syntax)
                     .then(|| context.expanded.source_for_range(context.source, range))
                     .flatten();
-                BodyLocation {
-                    source: BodySource::macro_generated(
-                        context.source.file_id,
-                        copied.unwrap_or(context.source.span),
-                    ),
-                    editable: copied.is_some(),
+                match copied {
+                    Some(span) => BodySource::macro_argument(context.source.file_id, span),
+                    None => {
+                        BodySource::macro_generated(context.source.file_id, context.source.span)
+                    }
                 }
             }
-            None => BodyLocation {
-                source: BodySource::written(self.body_source.file_id, Span::from_text_range(range)),
-                editable: true,
-            },
+            None => BodySource::written(self.body_source.file_id, Span::from_text_range(range)),
         };
         lower(&mut self.builder.sources.recorder(&map))
     }

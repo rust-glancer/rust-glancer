@@ -153,6 +153,7 @@ pub fn use_it() {
                 "Text",
                 r#"
                     local_def @ 1:12-1:16
+                    macro_argument type_path Text @ 8:16-8:20
                 "#,
             ),
             (

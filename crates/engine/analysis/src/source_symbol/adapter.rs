@@ -1,6 +1,6 @@
 //! Adapter from indexed source occurrences into analysis cursor symbols.
 
-use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, SourceLocation, Span, identity::DeclarationRef};
 pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 use rg_ir_view::source::{
     IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceProvenance, IndexedSourceSurface,
@@ -57,8 +57,9 @@ impl SourceSymbol {
         declaration: DeclarationRef,
         crate_ref: CrateRef,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
     ) -> Self {
+        let span = location.span;
         Self {
             symbol: SymbolAt::Declaration { declaration, span },
             crate_ref,
@@ -66,7 +67,7 @@ impl SourceSymbol {
             span,
             role: SourceSymbolRole::Declaration,
             surface: IndexedSourceSurface::Plain,
-            provenance: IndexedSourceProvenance::Direct,
+            provenance: IndexedSourceProvenance::from_exact_location(location),
         }
     }
 

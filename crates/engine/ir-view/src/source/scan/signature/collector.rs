@@ -87,10 +87,10 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
         }
 
         for (idx, segment) in path.segments.iter().enumerate() {
-            let Some(span) = locations.editable_span(segment.location) else {
+            let Some(location) = locations.exact_location(segment.location) else {
                 continue;
             };
-            if !self.offset_matches(span) {
+            if !self.offset_matches(location.span) {
                 continue;
             }
             let Some(def_map_path) = path.as_def_map_path_prefix(idx) else {
@@ -108,7 +108,7 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
                     }))
                 }),
                 file_id,
-                span,
+                location,
             });
         }
     }

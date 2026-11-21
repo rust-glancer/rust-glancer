@@ -404,27 +404,27 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
     }
 
     fn push_field(&mut self, field: FieldRef, location: SourceId) {
-        let Some(span) = self.locations.editable_span(Some(location)) else {
+        let Some(location) = self.locations.exact_location(Some(location)) else {
             return;
         };
         self.collector
-            .push_candidate(SignatureSourceCandidate::Field { field, span });
+            .push_candidate(SignatureSourceCandidate::Field { field, location });
     }
 
     fn push_function(&mut self, function: FunctionRef, location: SourceId) {
-        let Some(span) = self.locations.editable_span(Some(location)) else {
+        let Some(location) = self.locations.exact_location(Some(location)) else {
             return;
         };
         self.collector
-            .push_candidate(SignatureSourceCandidate::Function { function, span });
+            .push_candidate(SignatureSourceCandidate::Function { function, location });
     }
 
     fn push_enum_variant(&mut self, variant: EnumVariantRef, location: SourceId) {
-        let Some(span) = self.locations.editable_span(Some(location)) else {
+        let Some(location) = self.locations.exact_location(Some(location)) else {
             return;
         };
         self.collector
-            .push_candidate(SignatureSourceCandidate::EnumVariant { variant, span });
+            .push_candidate(SignatureSourceCandidate::EnumVariant { variant, location });
     }
 
     fn owner_context(&self, owner: ItemOwner) -> anyhow::Result<Option<TypePathContext>> {

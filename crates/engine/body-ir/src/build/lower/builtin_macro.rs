@@ -61,16 +61,14 @@ impl BodyLowering<'_> {
                 return;
             }
             let range = part.range + string.syntax().text_range().start();
-            let written_span = self.written_source_span(range);
-            let mut source = source;
-            source.span = written_span.unwrap_or(source.span);
-            let expr = self.lower_format_capture(name, source, scope);
+            let written = self.written_source(range);
+            let expr = self.lower_format_capture(name, written.unwrap_or(source), scope);
             args.push(expr);
-            if let Some(span) = written_span {
+            if let Some(written) = written {
                 self.builder
                     .sources
                     .provenance
-                    .record_format_capture(expr, span);
+                    .record_format_capture(expr, written.span);
             }
         });
         args

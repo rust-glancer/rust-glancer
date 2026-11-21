@@ -43,6 +43,61 @@ async fn rename_returns_workspace_edit_for_clean_document() {
 }
 
 #[tokio::test]
+async fn copied_macro_names_are_references_and_block_partial_rename() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_macro_argument_references"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        macro_rules! increment { ($target:expr) => { $target += 1 }; }
+        macro_rules! bind {
+            ($name:ident => $body:expr) => { if let Some($name) = Some(1_u8) { $body } };
+        }
+
+        pub fn demo() {
+            let mut ac$acc$c = 0_u8; // references("accumulator references", true)
+            increment!(acc);
+            bind!(i$0t => drop(it)); // references("copied binding references", true)
+            bind!(value => drop(val$0ue)); // highlight("copied binding highlights")
+        }
+        "#,
+    )
+    .await;
+    fixture.did_open_saved("src/lib.rs", 1).await;
+
+    fixture
+        .check(expect![[r#"
+            // accumulator references
+            /src/lib.rs:6:12-6:15
+            /src/lib.rs:7:15-7:18
+
+            // copied binding references
+            /src/lib.rs:8:10-8:12
+            /src/lib.rs:8:21-8:23
+
+            // copied binding highlights
+            read 9:10-9:15
+            read 9:24-9:29
+        "#]])
+        .await;
+    fixture
+        .check_rename(
+            "decline partial macro rename",
+            "acc",
+            "total",
+            expect![[r#"
+                none // decline partial macro rename
+            "#]],
+        )
+        .await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn dirty_global_queries_and_versioned_rename_share_the_editor_view() {
     let fixture = LspEngineFixture::initialized(
         r#"

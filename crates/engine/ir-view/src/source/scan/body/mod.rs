@@ -17,6 +17,7 @@
 //! ```
 
 mod cursor;
+mod declarations;
 mod dot_completion_site;
 mod label;
 mod path_completion_site;
@@ -28,9 +29,10 @@ mod source;
 mod unqualified_completion_site;
 mod walk;
 
+use rg_body_ir::{BodyMacroCallData, BodySourceStore};
 use rg_ir_model::{
-    BindingId, BodyRef, EnumVariantRef, ExprId, FieldKey, FieldRef, FileId, FunctionRef,
-    GenericDefRef, LocalDefRef, Path, ScopeId, SemanticItemRef, Span,
+    BindingId, BodyRef, ExprId, FieldKey, FileId, GenericDefRef, LocalDefRef, Path, ScopeId,
+    SourceLocation, Span, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
 
@@ -235,12 +237,16 @@ pub(crate) enum ValueReferenceSurface {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BodySourceCandidate {
     /// Fallback source for a function body when no narrower body-local node owns the cursor.
-    Body { body: BodyRef, span: Span },
+    Body {
+        body: BodyRef,
+        location: SourceLocation,
+    },
     /// Local binding introduced by a parameter or pattern, e.g. `user` in `let user = input;`.
     Binding {
         body: BodyRef,
         binding: BindingId,
-        span: Span,
+        file_id: FileId,
+        location: SourceLocation,
         surface: BindingSurface,
     },
     /// Lowered expression node with its useful source spelling, e.g. `id` in `user.id` or `User`
@@ -248,30 +254,21 @@ pub(crate) enum BodySourceCandidate {
     Expr {
         body: BodyRef,
         expr: ExprId,
-        span: Span,
+        file_id: FileId,
+        location: SourceLocation,
     },
     /// Macro invocation path written inside a body, e.g. `format` in `format!("{}", value)`.
     MacroCall {
         body: BodyRef,
         definition: LocalDefRef,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
     },
-    /// Body-local type-namespace item, e.g. `User` in `fn f() { struct User; }`.
-    ///
-    /// This also covers local `enum`, `union`, `type`, and `trait` declarations.
-    LocalItem { item: SemanticItemRef, span: Span },
-    /// Body-local value-namespace item, e.g. `DEFAULT` in `fn f() { const DEFAULT: u8 = 0; }`.
-    ///
-    /// This covers local `const` and `static` declarations, not `let` bindings.
-    LocalValueItem { item: SemanticItemRef, span: Span },
-    /// Field declared on a body-local struct or union,
-    /// e.g. `id` in `fn f() { struct User { id: Id } }`.
-    LocalField { field: FieldRef, span: Span },
-    /// Variant declared on a body-local enum, e.g. `Start` in `enum Action { Start }`.
-    LocalEnumVariant { variant: EnumVariantRef, span: Span },
-    /// Body-local function-like item, e.g. `helper` in `fn f() { fn helper() {} }`.
-    LocalFunction { function: FunctionRef, span: Span },
+    /// An item or member declared in a body-local item store.
+    LocalDeclaration {
+        declaration: DeclarationRef,
+        location: SourceLocation,
+    },
     /// Record field key, e.g. `name` in either `User { name: value }` or `User { name }`.
     RecordFieldKey {
         body: BodyRef,
@@ -279,7 +276,7 @@ pub(crate) enum BodySourceCandidate {
         owner: Path,
         key: FieldKey,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
         surface: RecordFieldKeySurface,
     },
     /// Value-namespace reference, e.g. `user`, `Status::Ready`, or `name` in `User { name }`.
@@ -288,7 +285,7 @@ pub(crate) enum BodySourceCandidate {
         scope: ScopeId,
         source: ValueReferenceSource,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
         surface: ValueReferenceSurface,
     },
     /// Type-namespace path inside a body, e.g. `User` in `let user: User;`.
@@ -298,25 +295,43 @@ pub(crate) enum BodySourceCandidate {
         path: Path,
         type_ref: Option<TypeRef>,
         file_id: FileId,
-        span: Span,
+        location: SourceLocation,
     },
 }
 
 impl BodySourceCandidate {
+    pub(super) fn macro_call(
+        body: BodyRef,
+        call: &BodyMacroCallData,
+        sources: &BodySourceStore,
+        file_id: Option<FileId>,
+    ) -> Option<Self> {
+        let name = sources.source(call.name_location);
+        let location = name.location();
+        (location.is_exact() && file_id.is_none_or(|file| file == name.file_id)).then_some(
+            Self::MacroCall {
+                body,
+                definition: call.definition,
+                file_id: name.file_id,
+                location,
+            },
+        )
+    }
+
     pub(crate) fn span(&self) -> Span {
+        self.location().span
+    }
+
+    pub(crate) fn location(&self) -> SourceLocation {
         match self {
-            Self::Body { span, .. }
-            | Self::Binding { span, .. }
-            | Self::Expr { span, .. }
-            | Self::MacroCall { span, .. }
-            | Self::LocalItem { span, .. }
-            | Self::LocalValueItem { span, .. }
-            | Self::LocalField { span, .. }
-            | Self::LocalEnumVariant { span, .. }
-            | Self::LocalFunction { span, .. }
-            | Self::RecordFieldKey { span, .. }
-            | Self::ValueReference { span, .. }
-            | Self::TypePath { span, .. } => *span,
+            Self::Body { location, .. }
+            | Self::Binding { location, .. }
+            | Self::Expr { location, .. }
+            | Self::MacroCall { location, .. }
+            | Self::LocalDeclaration { location, .. }
+            | Self::RecordFieldKey { location, .. }
+            | Self::ValueReference { location, .. }
+            | Self::TypePath { location, .. } => *location,
         }
     }
 }

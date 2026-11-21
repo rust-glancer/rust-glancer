@@ -117,10 +117,7 @@ impl DeclarationSourceStore<Span> {
 
 impl SourceLocations for DeclarationSourceStore<Span> {
     fn location(&self, occurrence: SourceId) -> Option<SourceLocation> {
-        self.get(occurrence).map(|span| SourceLocation {
-            span: *span,
-            editable: true,
-        })
+        self.get(occurrence).copied().map(SourceLocation::direct)
     }
 }
 
@@ -207,8 +204,8 @@ impl<T> TypeSource for DeclarationSourceBuilder<'_, T> {
 /// provide the surrounding source context; the ID alone cannot choose it. Opening a source view
 /// handles query reads before this interface is used to walk its occurrences.
 ///
-/// Use [`Self::span`] for navigation, including fallbacks. Use [`Self::editable_span`] when a
-/// scanner needs a real source occurrence, such as an identifier to include in references.
+/// Use [`Self::span`] for navigation, including fallbacks. Use [`Self::exact_location`] to
+/// find a written name for references and keep track of whether it came through an expansion.
 pub trait SourceLocations {
     /// `None` means there is no mapping for this occurrence in the selected source. Callers that
     /// require a declaration location should report that absence rather than invent a range.
@@ -219,10 +216,16 @@ pub trait SourceLocations {
         self.location(occurrence).map(|location| location.span)
     }
 
-    /// Also accepts source-free type syntax (`None`), and excludes navigation-only mappings.
-    fn editable_span(&self, occurrence: Option<SourceId>) -> Option<Span> {
+    /// Finds the exact location of a written occurrence. Types parsed for lookup, such as a
+    /// rustdoc link, can pass `None` because they have no occurrence ID in this table.
+    fn exact_location(&self, occurrence: Option<SourceId>) -> Option<SourceLocation> {
         self.location(occurrence?)
-            .filter(|location| location.editable)
+            .filter(|location| location.is_exact())
+    }
+
+    /// Gets the written range alone. Editing copied input needs a separate safety check.
+    fn editable_span(&self, occurrence: Option<SourceId>) -> Option<Span> {
+        self.exact_location(occurrence)
             .map(|location| location.span)
     }
 }

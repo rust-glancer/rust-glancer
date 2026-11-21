@@ -179,7 +179,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     symbol.role() == SourceSymbolRole::Declaration
                         && symbol.crate_ref() == location.crate_ref
                         && symbol.file_id() == location.file_id
-                        && symbol.span() == location.span
+                        && symbol.span() == location.location.span
                 }) {
                     continue;
                 }
@@ -187,7 +187,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     location.declaration,
                     location.crate_ref,
                     location.file_id,
-                    location.span,
+                    location.location,
                 ));
             }
         }

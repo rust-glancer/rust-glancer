@@ -4,7 +4,7 @@
 //! stricter policy: only declaration-like names with unambiguous source occurrences become edits.
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, SourceLocationKind, Span, identity::DeclarationRef};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
@@ -103,24 +103,20 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         // rewrite, because shorthand records may need a larger replacement than the selected span.
         let symbols = ReferenceResolver::new(self.analysis, query)
             .source_symbols_matching_declarations(&declarations, ReferenceSearchKind::Rename)?;
-        // A duplicated literal can also be ordinary string data or belong to an unlowered body.
-        // Those uses will not appear in the reference results. Reject the whole rename when a
-        // capture cannot be edited, rather than returning a partial set of changes.
-        if symbols.iter().any(|symbol| {
-            matches!(symbol.surface(), IndexedSourceSurface::FormatCapture)
-                && !Self::is_renameable_source(symbol)
-        }) {
-            return Ok(None);
-        }
         let mut edits = Vec::new();
         for symbol in symbols {
-            let Some(edit) = self
-                .rename_edit_for_symbol(symbol, old_name, new_name)
-                .context("while attempting to plan rename edits")?
-            else {
+            if self.source_symbol_uses_different_spelling(&symbol, old_name)? {
                 continue;
-            };
-            edits.push(edit);
+            }
+            // A rename of `acc` must also update `increment!(acc)`. If we cannot rewrite
+            // that use safely, decline the whole rename so the declaration and use stay in sync.
+            if !Self::is_renameable_source(&symbol) {
+                return Ok(None);
+            }
+            edits.push(
+                self.rename_edit_for_symbol(symbol, new_name)
+                    .context("plan rename edit")?,
+            );
         }
 
         // A semantic occurrence can be reached through more than one source scanner. Collapse exact
@@ -138,15 +134,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     fn rename_edit_for_symbol(
         &self,
         symbol: SourceSymbol,
-        old_name: &str,
         new_name: &str,
-    ) -> anyhow::Result<Option<RenameEdit>> {
-        if !Self::is_renameable_source(&symbol)
-            || self.source_symbol_uses_different_spelling(&symbol, old_name)?
-        {
-            return Ok(None);
-        }
-
+    ) -> anyhow::Result<RenameEdit> {
         let syntax =
             SyntaxRenderer::new(self.analysis.view_db().crate_edition(symbol.crate_ref())?);
         let new_identifier = syntax.identifier(new_name).to_string();
@@ -206,13 +195,13 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             }
         };
 
-        Ok(Some(RenameEdit {
+        Ok(RenameEdit {
             crate_ref: symbol.crate_ref(),
             file_id: symbol.file_id(),
             span,
             old_text,
             new_text,
-        }))
+        })
     }
 
     /// Returns whether rename should leave this occurrence untouched because it uses an alias.
@@ -350,14 +339,6 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             return Ok(None);
         };
 
-        // TODO: Rename through a macro argument must account for every expanded use, including
-        // the mapped declaration when the request starts from an ordinary reference elsewhere.
-        if SourceOccurrenceView::new(self.analysis.view_db())
-            .declaration_is_macro_argument(*declaration_ref)?
-        {
-            return Ok(None);
-        }
-
         // If the cursor was on a declaration occurrence, require it to be the canonical source
         // declaration. This avoids renaming through generated or alternate declaration-like spans.
         if !Self::declaration_occurrence_matches_canonical(&symbol, &declaration) {
@@ -385,15 +366,17 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         }))
     }
 
-    /// Only format names have a supported rewrite inside copied macro input. Require their token
-    /// to survive without duplication so the edit cannot change a second, unrelated interpretation.
+    /// Copied input is eligible only for format captures with a known single copy of the literal.
+    /// A second copy of `"{name}"` may be ordinary string data that would change along with
+    /// the capture.
     fn is_renameable_source(symbol: &SourceSymbol) -> bool {
         match symbol.provenance() {
             IndexedSourceProvenance::Direct => true,
             IndexedSourceProvenance::MacroArgument { duplicated } => {
                 // TODO: Permit duplicated inputs once every active output use can be checked,
                 // including ordinary string data and generated bodies that are not lowered.
-                !duplicated && matches!(symbol.surface(), IndexedSourceSurface::FormatCapture)
+                duplicated == Some(false)
+                    && matches!(symbol.surface(), IndexedSourceSurface::FormatCapture)
             }
         }
     }
@@ -429,14 +412,20 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
 
         symbol.crate_ref() == declaration.crate_ref()
             && symbol.file_id() == declaration.file_id()
-            && Some(symbol.span()) == declaration.editable_span()
+            && Some(symbol.span())
+                == declaration
+                    .exact_name_location()
+                    .map(|location| location.span)
     }
 
     /// Returns whether the declaration kind and canonical name can safely be renamed.
     fn is_renameable_declaration(declaration: &Declaration) -> bool {
-        // A template-generated name has a navigation destination but no editable declaration.
-        // Renaming only its references would leave the declared name unchanged.
-        if declaration.editable_span().is_none()
+        let Some(location) = declaration.exact_name_location() else {
+            return false;
+        };
+        // TODO: Allow editing copied declaration names once every affected use of the input
+        // can be checked. Rename can start on an ordinary reference to one of these names.
+        if location.kind == SourceLocationKind::MacroArgument
             || matches!(declaration.kind(), SymbolKind::Impl | SymbolKind::Module)
         {
             return false;

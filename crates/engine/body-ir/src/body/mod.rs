@@ -23,7 +23,6 @@ mod view;
 
 pub use rg_ir_model::{BodySource, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LiteralKind};
 
-pub(crate) use self::source_store::BodyLocation;
 pub use self::{
     binding::{BindingData, BindingKind},
     data::{BodyData, FunctionParamData},
