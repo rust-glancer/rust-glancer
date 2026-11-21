@@ -10,6 +10,8 @@ extern crate ra_ap_rustc_lexer as rustc_lexer;
 mod builtins;
 mod mbe;
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use rg_syntax::{AstNode as _, Parse, SyntaxNode, ast};
 use rg_tt::{
@@ -187,6 +189,8 @@ pub struct ExpansionSyntax {
     pub parse: Parse<SyntaxNode>,
     /// Offset-to-span map for generated tokens.
     pub span_map: ExpansionSpanMap,
+    /// Item bodies can be opened later from these tokens, with jointness and origins intact.
+    pub item_tokens: Option<Arc<TopSubtree>>,
 }
 
 impl ExpansionSyntax {
@@ -217,13 +221,23 @@ impl ExpansionSyntax {
 
     /// Parses an expanded token tree using the requested syntax entry point.
     pub fn from_token_tree(token_tree: TopSubtree, parse_kind: ExpansionParseKind) -> Self {
-        let mut span_to_edition = |ctx: SyntaxContext| ctx.edition();
-        let (parse, span_map) = token_tree_to_syntax_node(
-            &token_tree,
+        let (parse, span_map) = Self::parse_token_tree(&token_tree, parse_kind);
+        Self {
+            parse,
+            span_map,
+            item_tokens: (parse_kind == ExpansionParseKind::Items).then(|| Arc::new(token_tree)),
+        }
+    }
+
+    pub fn parse_token_tree(
+        tokens: &TopSubtree,
+        parse_kind: ExpansionParseKind,
+    ) -> (Parse<SyntaxNode>, ExpansionSpanMap) {
+        token_tree_to_syntax_node(
+            tokens,
             parse_kind.top_entry_point(),
-            &mut span_to_edition,
-        );
-        Self { parse, span_map }
+            &mut |ctx: SyntaxContext| ctx.edition(),
+        )
     }
 }
 

@@ -68,9 +68,9 @@ pub use self::{
         ResolvePathResult,
     },
     source::{
-        BodyItemSourceRef, GeneratedExpansionLocations, GeneratedItemRef, GeneratedItemStore,
-        GeneratedLocation, GeneratedLocations, GeneratedSourceId, GeneratedSourceStore,
-        GeneratedSourceStoreId, ItemSource, ItemSourceKind,
+        BodyItemSourceRef, GeneratedBodySyntax, GeneratedExpansionLocations, GeneratedItemRef,
+        GeneratedItemStore, GeneratedLocation, GeneratedLocations, GeneratedSourceId,
+        GeneratedSourceStore, GeneratedSourceStoreId, ItemSource, ItemSourceKind,
     },
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };

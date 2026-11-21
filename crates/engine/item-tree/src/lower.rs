@@ -1,5 +1,7 @@
 //! File-local AST lowering. Source discovery interprets module and include paths separately.
 
+use std::{cell::RefCell, sync::Arc};
+
 use rg_arena::Arena;
 use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_macro_expand::CfgSelect;
@@ -22,7 +24,7 @@ use super::{
     MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, StaticItem,
     StructItem, TraitItem, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
 };
-use crate::{DeclarationSourceStore, RecordSource, SourceRole};
+use crate::{DeclarationSourceStore, ExpandedItemBodies, RecordSource, SourceRole};
 
 /// Build declaration meaning and its source table in the same traversal.
 ///
@@ -40,7 +42,11 @@ impl FileLowering<'_> {
         file: FileId,
         edition: RustEdition,
         syntax: &Parse<ast::SourceFile>,
-    ) -> (FileTree, DeclarationSourceStore<Span>) {
+    ) -> (
+        FileTree,
+        DeclarationSourceStore<Span>,
+        Vec<ExpandedItemBodies>,
+    ) {
         let package = u32::try_from(package.0).expect("package slot should fit macro span storage");
         let mut builder = FileTreeBuilder::new(package, file);
         let source_file = syntax.tree();
@@ -62,6 +68,7 @@ impl FileLowering<'_> {
                     || Self::has_declaration_parse_errors(syntax),
             },
             builder.sources,
+            builder.cfg_select_bodies,
         )
     }
 
@@ -170,6 +177,9 @@ impl FileLowering<'_> {
         } else {
             None
         };
+        let body_range = self
+            .expansion
+            .and_then(|_| ExpandedItemBodies::item_range(&item));
         let result = match item {
             ast::Item::AsmExpr(item) => {
                 // Keep an exact-text dependency because this item omits the assembly payload.
@@ -369,6 +379,9 @@ impl FileLowering<'_> {
             )),
         };
         builder.sources.finish_owner(recorder);
+        if let (Some(expansion), Some(item), Some(range)) = (self.expansion, result, body_range) {
+            expansion.body_items.borrow_mut().push((item, range));
+        }
         // The call's input table is complete before cfg_select arms refer back to it.
         if let (Some(call), Some(id)) = (macro_call, result) {
             let builtin = self.lower_builtin_macro(builder, id, &call);
@@ -424,7 +437,9 @@ impl FileLowering<'_> {
         let ItemKind::MacroCall(call) = &builder.items[id].kind else {
             return None;
         };
-        let select = CfgSelect::parse(call.input.as_ref()?.args.as_ref()?)?;
+        let input = call.input.as_ref()?;
+        let select = CfgSelect::parse(input.args.as_ref()?)?;
+        let call_site = input.call_site;
         let arms = select
             .arms()
             .iter()
@@ -448,12 +463,24 @@ impl FileLowering<'_> {
                     tokens: span_map,
                     positions,
                     invocation,
+                    body_items: RefCell::default(),
                 };
                 let lowering = FileLowering {
                     edition: self.edition,
                     expansion: Some(&expansion),
                 };
                 let items = lowering.collect_items(builder, file.items());
+                // Keep this arm's tokens with the ranges recorded in its parse. A nested
+                // `cfg_select!` saves its own arm separately because it has a different parse.
+                let body_items = expansion.body_items.into_inner();
+                if !body_items.is_empty() {
+                    builder.cfg_select_bodies.push(ExpandedItemBodies {
+                        tokens: Arc::new(arm.payload.clone()),
+                        call_site,
+                        dollar_crate: None,
+                        items: body_items,
+                    });
+                }
                 CfgSelectArmItem::lowered(arm.predicate.clone(), items)
             })
             .collect();
@@ -540,6 +567,7 @@ struct FileExpansionSource {
     tokens: ExpansionSpanMap,
     positions: Vec<(TextSize, Span)>,
     invocation: Span,
+    body_items: RefCell<Vec<(ItemTreeId, Span)>>,
 }
 
 impl FileExpansionSource {
@@ -564,6 +592,7 @@ struct FileTreeBuilder {
     items: Arena<ItemTreeId, ItemNode>,
     sources: DeclarationSourceStore<Span>,
     source_sensitive: bool,
+    cfg_select_bodies: Vec<ExpandedItemBodies>,
 }
 
 impl FileTreeBuilder {
@@ -574,6 +603,7 @@ impl FileTreeBuilder {
             items: Arena::new(),
             sources: DeclarationSourceStore::default(),
             source_sensitive: false,
+            cfg_select_bodies: Vec::new(),
         }
     }
 

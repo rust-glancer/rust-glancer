@@ -8,8 +8,8 @@ mod ownership;
 mod resolve;
 
 use rg_def_map::{
-    GeneratedExpansionLocations, GeneratedLocations, GeneratedSourceStore, GeneratedSourceStoreId,
-    ItemSource, ItemSourceKind,
+    GeneratedBodySyntax, GeneratedExpansionLocations, GeneratedItemRef, GeneratedLocations,
+    GeneratedSourceStore, GeneratedSourceStoreId, ItemSource, ItemSourceKind,
 };
 use rg_ir_model::{
     CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, SourceLocationKind, Span,
@@ -61,17 +61,7 @@ impl<'db> ItemSourceView<'db> {
                 ItemSourceKind::Generated(generated) | ItemSourceKind::Synthetic(generated) => {
                     // Expansion slots are local to the query that produced them. The source ref
                     // routes directly to module output or one member owner, without searching others.
-                    let sources = match generated.source_store() {
-                        GeneratedSourceStoreId::Target => target_declarations(db, krate)?
-                            .generated_sources
-                            .value_ref(db)?,
-                        GeneratedSourceStoreId::TraitMembers(id) => {
-                            Self::member_sources(db, krate, ItemStoreId::Trait(id))?
-                        }
-                        GeneratedSourceStoreId::ImplMembers(id) => {
-                            Self::member_sources(db, krate, ItemStoreId::Impl(id))?
-                        }
-                    };
+                    let sources = Self::generated_sources(db, krate, generated.source_store())?;
                     let locations = sources
                         .get(generated.source())
                         .ok_or_else(|| ajika::Error::application("generated source is absent"))?;
@@ -98,6 +88,32 @@ impl<'db> ItemSourceView<'db> {
                 }
             }
         }
+    }
+
+    /// Open body syntax from its original expansion store, independently of its semantic owner.
+    pub fn generated_body_syntax(
+        db: &'db QueryContext<'db>,
+        krate: CrateRef,
+        item: GeneratedItemRef,
+    ) -> ajika::Result<Option<GeneratedBodySyntax>> {
+        Self::generated_sources(db, krate, item.source_store())?.body_syntax(db, krate, item)
+    }
+
+    fn generated_sources(
+        db: &'db QueryContext<'db>,
+        krate: CrateRef,
+        store: GeneratedSourceStoreId,
+    ) -> ajika::Result<&'db GeneratedSourceStore> {
+        let owner = match store {
+            GeneratedSourceStoreId::Target => {
+                return target_declarations(db, krate)?
+                    .generated_sources
+                    .value_ref(db);
+            }
+            GeneratedSourceStoreId::TraitMembers(id) => ItemStoreId::Trait(id),
+            GeneratedSourceStoreId::ImplMembers(id) => ItemStoreId::Impl(id),
+        };
+        Self::member_sources(db, krate, owner)
     }
 
     fn member_sources(

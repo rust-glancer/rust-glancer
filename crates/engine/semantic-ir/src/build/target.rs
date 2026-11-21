@@ -292,7 +292,7 @@ impl TargetItemData {
             lookup_hints.insert(owner.id, hints);
         }
         drop(trees);
-        let generated_sources = generated_items.into_sources();
+        let generated_sources = generated_items.into_sources(db)?;
 
         // Read the active target locally so header resolution never asks for its unpublished
         // outputs. Only completed dependencies go through the supplied readers.

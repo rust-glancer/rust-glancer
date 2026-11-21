@@ -1,22 +1,21 @@
 //! Lowers declarative macro output into an item-tree-shaped generated source.
 //!
-//! The generated payload intentionally lives in def-map, not item-tree: macro expansion is
-//! crate-local, import-dependent, and `$crate`-sensitive. Keeping the payload item-tree-shaped
-//! lets later phases reuse normal semantic lowering without pretending generated items came from a
-//! real parsed file.
+//! DefMap owns this payload because expansion depends on the target's imports and `$crate` context.
+//! It collects the result as item-tree nodes so semantic lowering can read the declarations in
+//! the usual shape.
 
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use rg_arena::Arena;
-use rg_ir_model::{CrateRef, FileId};
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_item_tree::{
-    CfgExpr, ConstItem, DeclarationSourceStore, Documentation, EnumItem, ExternBlockItem,
-    ExternCrateItem, FromAst, FunctionItem, ImplItem, InnerDocs, ItemKind, ItemNode, ItemTreeId,
-    ItemTreeRef, LangItem, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext,
-    MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem,
-    ModuleSource, OuterDocs, RecordSource, SourceRole, StaticItem, StructItem, TraitItem,
-    TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
+    CfgExpr, ConstItem, DeclarationSourceStore, Documentation, EnumItem, ExpandedItemBodies,
+    ExternBlockItem, ExternCrateItem, FromAst, FunctionItem, ImplItem, InnerDocs, ItemKind,
+    ItemNode, ItemTreeId, ItemTreeRef, LangItem, MacroCallContext, MacroCallItem, MacroDefAst,
+    MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr,
+    MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, RecordSource, SourceRole, StaticItem,
+    StructItem, TraitItem, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::ExpansionSyntax;
 use rg_syntax::{
@@ -32,9 +31,9 @@ use crate::source::{
 
 /// Lowers one parsed macro expansion into retained generated item payloads.
 ///
-/// The parsed tree has its own byte offsets. A recorder assigns fresh IDs to the declarations
-/// lowered here and stores how each occurrence relates to input tokens. Semantic lowering can
-/// then copy the declaration meaning without retaining either the parsed tree or its offsets.
+/// Record how each declaration occurrence maps to the input. Also save the expanded range of
+/// each item with a body. The ranges and tokens let body lowering reopen those items after this
+/// parse is dropped.
 pub(super) struct GeneratedSourceLowering {
     file_id: FileId,
     dollar_crate: Option<CrateRef>,
@@ -42,6 +41,7 @@ pub(super) struct GeneratedSourceLowering {
     span_map: Arc<ExpansionSpanMap>,
     locations: DeclarationSourceStore<GeneratedLocation>,
     items: Arena<ItemTreeId, ItemNode>,
+    body_items: Vec<(ItemTreeId, Span)>,
 }
 
 impl GeneratedSourceLowering {
@@ -52,7 +52,11 @@ impl GeneratedSourceLowering {
         dollar_crate: Option<CrateRef>,
         expansion: ExpansionSyntax,
     ) -> Result<GeneratedSourceData> {
-        let ExpansionSyntax { parse, span_map } = expansion;
+        let ExpansionSyntax {
+            parse,
+            span_map,
+            item_tokens,
+        } = expansion;
         let file = ast::MacroItems::cast(parse.syntax_node())
             .context("while attempting to cast macro expansion syntax root")?;
         // Unmapped tokens belong to the invocation as a whole. Prepare this once so nested
@@ -65,6 +69,7 @@ impl GeneratedSourceLowering {
             span_map: Arc::new(span_map),
             locations: DeclarationSourceStore::default(),
             items: Arena::new(),
+            body_items: Vec::new(),
         };
         let top_level = lowering
             .collect_items(file.items().collect())
@@ -75,6 +80,12 @@ impl GeneratedSourceLowering {
             locations: GeneratedLocations::Expansion(GeneratedExpansionLocations::new(
                 lowering.locations,
             )),
+            bodies: (!lowering.body_items.is_empty()).then(|| ExpandedItemBodies {
+                tokens: item_tokens.expect("item expansion keeps its expanded tokens"),
+                call_site,
+                dollar_crate,
+                items: lowering.body_items,
+            }),
             origin_source,
             top_level,
             items: lowering.items,
@@ -119,6 +130,7 @@ impl GeneratedSourceLowering {
         };
         let mut recorder = self.locations.start_owner(&mut map);
         let source: &mut dyn RecordSource = &mut recorder;
+        let body_range = ExpandedItemBodies::item_range(&item);
         let item_id = match item {
             ast::Item::AsmExpr(item) => Some(self.alloc_item(
                 ItemKind::AsmExpr,
@@ -295,6 +307,9 @@ impl GeneratedSourceLowering {
         };
 
         self.locations.finish_owner(recorder);
+        if let (Some(item), Some(range)) = (item_id, body_range) {
+            self.body_items.push((item, range));
+        }
         Ok(item_id)
     }
 

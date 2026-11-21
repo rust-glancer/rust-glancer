@@ -4,13 +4,21 @@
 //! IDs. Generated declarations also need the connection back to input tokens: their parsed syntax
 //! is temporary, and its offsets are not positions that an editor can navigate to or edit.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use rg_arena::Arena;
-use rg_ir_model::{BodyRef, FileId, ImplId, PackageSlot, SourceId, TraitId};
-use rg_item_tree::{DeclarationSourceStore, ItemNode, ItemTreeId, ItemTreeRef};
+use rg_ir_model::{BodyRef, BodySource, CrateRef, FileId, ImplId, PackageSlot, SourceId, TraitId};
+use rg_item_tree::{
+    DeclarationSourceStore, ExpandedItemBodies, ItemNode, ItemTreeId, ItemTreeRef,
+    file_declarations,
+};
+use rg_macro_runtime::{ExpansionParseKind, ExpansionSyntax};
+use rg_source::QueryContext;
 use rg_std::{MemorySize, Shrink};
+use rg_syntax::{AstNode as _, SyntaxNode, TextRange, ast};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::{ExpandedBodyMacro, body_macros::BodyMacroInputSources};
 
 /// Stable identifier of one macro expansion within its owning source store.
 ///
@@ -49,8 +57,8 @@ pub enum GeneratedSourceStoreId {
 
 /// Source identity for one generated item within a target or member expansion store.
 ///
-/// During Semantic IR lowering this addresses [`GeneratedItemStore`]. Later phases retain it only
-/// as provenance and use the semantic declaration data copied during lowering.
+/// During Semantic IR lowering this addresses [`GeneratedItemStore`]. Later phases use the
+/// same identity to open occurrence mappings or the tokens needed to lower a body.
 ///
 /// Two independently expanded impls can both allocate `GeneratedSourceId(0)`. `source_store` selects
 /// which owner's expansion table to open before `source` and `item` select entries inside it.
@@ -189,11 +197,13 @@ pub enum ItemSourceKind {
 /// Item-tree-shaped payload produced for one macro expansion or synthetic declaration.
 ///
 /// DefMap uses this while collecting scopes, and Semantic IR copies the declaration facts it
-/// needs. The item payload is then dropped; `locations` moves into [`GeneratedSourceStore`].
+/// needs. The item payload is then dropped. Locations and handles to body tokens move into
+/// [`GeneratedSourceStore`].
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
 pub(crate) struct GeneratedSourceData {
     pub(crate) origin_file_id: FileId,
     pub(crate) locations: GeneratedLocations,
+    pub(crate) bodies: Option<ExpandedItemBodies>,
     pub(crate) origin_source: ItemTreeRef,
     pub(crate) top_level: Vec<ItemTreeId>,
     pub(crate) items: Arena<ItemTreeId, ItemNode>,
@@ -236,15 +246,19 @@ impl GeneratedItemStore {
 
     /// Keep provenance after Semantic IR has copied the generated declaration meaning. Preserve
     /// expansion slot order so existing [`GeneratedSourceId`] values still select the same source.
-    pub fn into_sources(self) -> GeneratedSourceStore {
-        GeneratedSourceStore {
-            sources: self
-                .sources
-                .into_vec()
-                .into_iter()
-                .map(|source| source.locations)
-                .collect(),
+    pub fn into_sources(self, db: &QueryContext<'_>) -> ajika::Result<GeneratedSourceStore> {
+        let mut sources = Vec::with_capacity(self.sources.len());
+        let mut bodies = Vec::new();
+        for (index, source) in self.sources.into_vec().into_iter().enumerate() {
+            if let Some(data) = source.bodies {
+                // A source lookup can open the locations without loading the expanded tokens.
+                let output = db.output(("generated bodies", index), Arc::new(data))?;
+                bodies.push((GeneratedSourceId(index), output));
+            }
+            sources.push(source.locations);
         }
+        bodies.shrink_to_fit();
+        Ok(GeneratedSourceStore { sources, bodies })
     }
 
     pub(crate) fn alloc_source(&mut self, source: GeneratedSourceData) -> GeneratedSourceId {
@@ -346,18 +360,133 @@ pub enum GeneratedLocations {
     Inherited(ItemSource),
 }
 
-/// Source mappings retained by a target or member query after generated items have been released.
+/// Source mappings and body-token handles published by a target or member query.
 ///
 /// [`GeneratedSourceId`] selects an expansion or inherited source here; [`SourceId`] selects an
 /// occurrence inside that source. Keeping this store separate from declaration meaning lets a
-/// source reader acquire provenance only when it needs physical positions.
+/// source reader acquire provenance only when it needs physical positions. Body lowering opens
+/// tokens through a separate output. Declaration lookups can read just the locations.
 #[derive(Debug, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct GeneratedSourceStore {
     sources: Vec<GeneratedLocations>,
+    #[memsize(skip)]
+    #[shrink(skip)]
+    bodies: Vec<(GeneratedSourceId, ajika::Output<ExpandedItemBodies>)>,
 }
 
 impl GeneratedSourceStore {
     pub fn get(&self, source: GeneratedSourceId) -> Option<&GeneratedLocations> {
         self.sources.get(source.0)
     }
+
+    pub fn body_syntax(
+        &self,
+        db: &QueryContext<'_>,
+        krate: CrateRef,
+        generated: GeneratedItemRef,
+    ) -> ajika::Result<Option<GeneratedBodySyntax>> {
+        let Ok(index) = self
+            .bodies
+            .binary_search_by_key(&generated.source.0, |(id, _)| id.0)
+        else {
+            return Ok(None);
+        };
+        GeneratedBodySyntax::open(db, krate, self.bodies[index].1.clone(), generated.item)
+    }
+}
+
+/// The selected item and the expansion context needed to lower it.
+///
+/// `syntax` selects one function or initializer. `expansion` maps its tokens back to the input.
+/// `source` gives the invocation range to use when a generated node has no exact written range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedBodySyntax {
+    pub syntax: SyntaxNode,
+    pub expansion: ExpandedBodyMacro<SyntaxNode>,
+    pub source: BodySource,
+}
+
+impl GeneratedBodySyntax {
+    /// A `cfg_select!` arm keeps its declarations in the file's item tree. The ordinary file
+    /// parse sees the arm as tokens, so parse the saved arm tokens when preparing one of its bodies.
+    pub fn for_file_item(
+        db: &QueryContext<'_>,
+        krate: CrateRef,
+        item: ItemTreeRef,
+    ) -> ajika::Result<Option<Self>> {
+        let declarations = file_declarations(db, krate.package, item.file_id)?;
+        let bodies = declarations.cfg_select_bodies.value_ref(db)?;
+        let Some(output) = bodies.get(item.item) else {
+            return Ok(None);
+        };
+        Self::open(db, krate, output.clone(), item.item)
+    }
+
+    fn open(
+        db: &QueryContext<'_>,
+        krate: CrateRef,
+        output: ajika::Output<ExpandedItemBodies>,
+        item: ItemTreeId,
+    ) -> ajika::Result<Option<Self>> {
+        let parsed = parsed_generated_bodies(db, krate, output)?;
+        let Some((_, range)) = parsed.data.items.iter().find(|(id, _)| *id == item) else {
+            return Ok(None);
+        };
+        // An invocation can generate several owners at the same physical range. These offsets
+        // select the item in the reproduced expansion, where each owner has a distinct range.
+        let range = TextRange::new(range.start.into(), range.end.into());
+        let syntax = parsed
+            .root
+            .covering_element(range)
+            .ancestors()
+            .find(|node| node.text_range() == range && ast::Item::can_cast(node.kind()))
+            .ok_or_else(|| ajika::Error::contract("generated body is absent from its expansion"))?;
+        Ok(Some(Self {
+            syntax,
+            expansion: parsed.expansion.clone(),
+            source: parsed.source,
+        }))
+    }
+}
+
+struct ParsedGeneratedBodies {
+    root: SyntaxNode,
+    data: Arc<ExpandedItemBodies>,
+    source: BodySource,
+    expansion: ExpandedBodyMacro<SyntaxNode>,
+}
+
+/// Reparse the packed tokens once per operation so sibling bodies can borrow the same tree.
+/// The saved token IDs resolve through this snapshot's declaration source table. Moving the
+/// invocation can shift every written range while leaving the packed tokens unchanged.
+#[ajika::query(transient, returns(ref))]
+fn parsed_generated_bodies(
+    db: &QueryContext<'_>,
+    krate: CrateRef,
+    output: ajika::Output<ExpandedItemBodies>,
+) -> ajika::Result<ParsedGeneratedBodies> {
+    let data = output.value(db)?;
+    let (parse, span_map) =
+        ExpansionSyntax::parse_token_tree(&data.tokens, ExpansionParseKind::Items);
+    let package = PackageSlot(data.call_site.anchor.package as usize);
+    let file = FileId::from_raw(data.call_site.anchor.file_id.raw_file_id());
+    let inputs = file_declarations(db, package, file)?.sources.value(db)?;
+    let span = inputs
+        .token_span(data.call_site)
+        .ok_or_else(|| ajika::Error::contract("generated body invocation range is absent"))?;
+    let root = parse.syntax_node();
+    let expansion = ExpandedBodyMacro::new(
+        root.clone(),
+        span_map,
+        BodyMacroInputSources::Declaration(inputs),
+        data.call_site,
+        package,
+        data.dollar_crate.unwrap_or(krate),
+    );
+    Ok(ParsedGeneratedBodies {
+        root,
+        data,
+        source: BodySource::macro_generated(file, span),
+        expansion,
+    })
 }
