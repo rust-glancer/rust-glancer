@@ -3,6 +3,34 @@ use expect_test::expect;
 use crate::tests::utils::check_analysis;
 
 #[test]
+fn prefers_the_active_parameter_name_among_type_matches() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:argument_relevance
+struct Client;
+impl Client {
+    fn send(&self, _: bool, delay_timeout: u32) {}
+}
+fn demo(client: Client, delay_backup: u32, delay_timeout: u32) {
+    client.send(true, delay_$0); // complete("matching parameter name").matching("delay_")
+}
+fn mismatched(client: Client, delay_backup: u32, delay_timeout: bool) {
+    client.send(true, $0); // complete("type matters more than name").matching("delay_")
+}
+"#,
+        expect![[r#"
+            // matching parameter name
+            vr delay_timeout
+            vr delay_backup
+
+            // type matters more than name
+            vr delay_backup
+            vr delay_timeout
+        "#]],
+    );
+}
+
+#[test]
 fn infers_generic_arguments_for_an_alias_of_the_expected_enum() {
     check_analysis(
         r#"

@@ -8,7 +8,7 @@ use rg_ir_model::{FunctionRef, PrimitiveTy, TypeDefId, TypeDefRef, identity::Dec
 use rg_ir_view::{
     member::{ConstructorShape, MemberView},
     source::{IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
-    ty::{IndexedType, TyView},
+    ty::{IndexedType, TyView, locals::CallTarget},
 };
 
 use super::{
@@ -29,6 +29,7 @@ use crate::{
 /// For an enum variant, the qualifier can also fix the enum's generic arguments.
 pub(super) struct ExpectedTypeRanking {
     expected: IndexedType,
+    parameter_name: Option<String>,
     expression: ValueExpression,
     member_has_generic_args: bool,
     qualifier: Option<IndexedType>,
@@ -64,11 +65,13 @@ impl ExpectedTypeRanking {
                 };
                 (scope, site.source().associated_qualifier())
             }
+            CompletionSite::Dot(site) => (site.source().scope(), None),
             _ => return Ok(None),
         };
 
         let types = TyView::new(analysis.view_db());
         let body = scope.body_ir();
+        let mut parameter_name = None;
         let expected = match context.site {
             ExpectedTypeSite::Argument { call_start } => {
                 // The marker parse and the original source both need to point to the
@@ -84,7 +87,21 @@ impl ExpectedTypeRanking {
                     ActiveArgument::Written(span) => Some(span),
                     ActiveArgument::Disabled => return Ok(None),
                 };
-                types.call_parameter_ty(active.call(), active.argument_index(), argument)?
+                let call = active.call();
+                let expected = types.call_parameter_ty(call, active.argument_index(), argument)?;
+                if expected.as_ref().is_some_and(IndexedType::is_known)
+                    && let CallTarget::Function(function) = call.target()
+                {
+                    // Dot calls omit `self` from the written arguments.
+                    parameter_name = MemberView::new(analysis.view_db())
+                        .function(*function)?
+                        .and_then(|function| {
+                            function.parameter(active.argument_index() + call.param_offset())
+                        })
+                        .and_then(|parameter| parameter.simple_binding_name())
+                        .map(str::to_owned);
+                }
+                expected
             }
             ExpectedTypeSite::Let { statement_start } => {
                 types.let_annotation_ty(body, query.file_id, statement_start)?
@@ -105,6 +122,7 @@ impl ExpectedTypeRanking {
         };
         Ok(Some(Self {
             expected,
+            parameter_name,
             expression: context.expression,
             member_has_generic_args: context.member_has_generic_args,
             qualifier,
@@ -133,7 +151,7 @@ impl ExpectedTypeRanking {
             && item.applicability == CompletionApplicability::Known
             && types.function_call_ty(function)?.as_ref() == Some(&self.expected)
         {
-            item.relevance.set_inference_priority(true);
+            self.promote_match(item);
         }
         Ok(())
     }
@@ -180,6 +198,11 @@ impl ExpectedTypeRanking {
                 ) if matches!(self.expression, ValueExpression::Path) => {
                     types.value_ty(declaration)?.as_ref() == Some(&self.expected)
                 }
+                (CompletionTarget::Field(field), CompletionKind::Field)
+                    if matches!(self.expression, ValueExpression::Path) =>
+                {
+                    types.ty_for_declaration(field.into())?.as_ref() == Some(&self.expected)
+                }
                 (
                     CompletionTarget::Keyword(KeywordCompletion::False | KeywordCompletion::True),
                     _,
@@ -214,10 +237,20 @@ impl ExpectedTypeRanking {
             };
 
             if fits {
-                item.relevance.set_inference_priority(true);
+                self.promote_match(item);
             }
         }
         Ok(())
+    }
+
+    fn promote_match(&self, item: &mut CompletionItem) {
+        item.relevance.set_inference_priority(true);
+        let label = item.label.strip_prefix("r#").unwrap_or(&item.label);
+        item.relevance.set_parameter_name_priority(
+            self.parameter_name
+                .as_deref()
+                .is_some_and(|name| name.strip_prefix("r#").unwrap_or(name) == label),
+        );
     }
 }
 

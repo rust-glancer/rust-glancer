@@ -11,11 +11,13 @@
 //! domains, and stable target identity removes overlap before insertion policy is applied.
 
 use anyhow::Context as _;
-use rg_ir_view::lookup::name::NameNamespace;
+use rg_ir_view::{lookup::name::NameNamespace, ty::TyView};
 
 use crate::{
     Analysis,
-    model::{CompletionEdit, CompletionItem, CompletionKind},
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
+    },
     query::completion::{
         CompletionContext,
         candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
@@ -92,6 +94,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create path completion renderer")?;
+        let types = TyView::new(self.analysis.view_db());
         let mut completions: Vec<CompletionItem> = Vec::new();
         let pattern_policy = match context {
             NameCompletionContext::Pattern(kind) => Some(PatternCompletionPolicy::new(
@@ -151,6 +154,13 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
                 existing.target == completion.target && existing.label == completion.label
             }) {
                 continue;
+            }
+            if context == NameCompletionContext::Value
+                && completion.applicability == CompletionApplicability::Known
+                && let CompletionTarget::Function(function) = completion.target
+                && let Some(arity) = types.constructor_arity(function)?
+            {
+                completion.relevance.set_constructor_priority(arity > 0);
             }
             completions.push(completion);
         }

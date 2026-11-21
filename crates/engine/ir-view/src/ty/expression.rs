@@ -5,7 +5,8 @@
 
 use rg_body_ir::{ExprKind, StmtKind};
 use rg_ir_model::{
-    BodyRef, DefMapRef, ExprId, FileId, FunctionRef, Path, SemanticItemRef, Span,
+    BodyRef, DefMapRef, ExprId, FileId, FunctionRef, ImplRef, ItemStoreId, Path, SemanticItemRef,
+    Span,
     identity::{DeclarationRef, LexicalScopeRef},
 };
 use rg_semantic_ir::{GenericsQuery, ItemStoreQuery, TypePathResolution};
@@ -19,7 +20,7 @@ use super::{
     IndexedType, TyView,
     locals::{CallTarget, ResolvedCall},
 };
-use crate::{body::BodyResolutionView, source::IndexedAssociatedPathQualifier};
+use crate::{body::BodyResolutionView, member::MemberView, source::IndexedAssociatedPathQualifier};
 
 impl TyView<'_, '_> {
     /// Look up the declared type of a value, including constants and statics behind a re-export.
@@ -46,6 +47,45 @@ impl TyView<'_, '_> {
         Ok(self
             .function_signature(function)?
             .map(|signature| IndexedType::new(signature.call_return)))
+    }
+
+    /// Read the arity of an associated function that constructs its own type.
+    pub fn constructor_arity(&self, function: FunctionRef) -> anyhow::Result<Option<usize>> {
+        if function.store.id == ItemStoreId::Scope {
+            return Ok(None);
+        }
+        let members = MemberView::new(self.db);
+        let Some(member) = members.function(function)? else {
+            return Ok(None);
+        };
+        let signature = &member.data().signature;
+        let Some(output) = signature.ret_ty() else {
+            return Ok(None);
+        };
+        if member.has_self_receiver() || signature.qualifiers().is_async {
+            return Ok(None);
+        }
+
+        let arity = member.parameters().len();
+        // `-> Self` gives the answer directly. A written type or alias can also denote `Self`
+        // if its lowered type and generic arguments agree with the impl header.
+        if output.is_self_type() {
+            return Ok(Some(arity));
+        }
+        let ItemStoreId::Impl(id) = function.store.id else {
+            return Ok(None);
+        };
+        let Some(output) = self
+            .function_call_ty(function)?
+            .filter(IndexedType::is_known)
+        else {
+            return Ok(None);
+        };
+        let header = SemanticSignatureQuery::new(self.db, self.db)
+            .impl_header(ImplRef::new(function.store.origin, id))?;
+        Ok(header
+            .is_some_and(|header| output.raw() == &header.self_ty)
+            .then_some(arity))
     }
 
     /// Return the type expected by the function body, including for async functions.

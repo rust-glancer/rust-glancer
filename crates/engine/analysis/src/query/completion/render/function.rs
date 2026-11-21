@@ -92,11 +92,14 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
             edit: Some(request.edit),
             import: None,
         };
+        // Dot auto-import candidates already have a proven receiver match. A matching return
+        // type can make an extension method worth its import.
         if let Some(expected) = self.query.expected_type
-            && !matches!(
-                request.sort_priority,
-                Some(CompletionSortPriority::AutoImport { .. })
-            )
+            && (matches!(request.call_completion, CallCompletionKind::MethodCall)
+                || !matches!(
+                    request.sort_priority,
+                    Some(CompletionSortPriority::AutoImport { .. })
+                ))
         {
             expected.rank_function(
                 TyView::new(self.db),

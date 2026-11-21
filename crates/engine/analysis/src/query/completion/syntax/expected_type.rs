@@ -39,15 +39,29 @@ pub(crate) struct ExpectedTypeContext {
 impl CompletionSyntaxContext<'_> {
     pub(crate) fn expected_type_context(&self) -> Option<ExpectedTypeContext> {
         let mut expr = self.marker.parent_ancestors().find_map(ast::Expr::cast)?;
-        let path = match &expr {
-            ast::Expr::PathExpr(path) => path.path()?,
-            ast::Expr::RecordExpr(record) => record.path()?,
-            _ => return None,
+        let (name, member_has_generic_args, mut expression) = match &expr {
+            ast::Expr::FieldExpr(field) => (field.name_ref()?, false, ValueExpression::Path),
+            ast::Expr::MethodCallExpr(method) => (
+                method.name_ref()?,
+                method.generic_arg_list().is_some(),
+                ValueExpression::Call,
+            ),
+            _ => {
+                let (path, expression) = match &expr {
+                    ast::Expr::PathExpr(path) => (path.path()?, ValueExpression::Path),
+                    ast::Expr::RecordExpr(record) => (record.path()?, ValueExpression::Record),
+                    _ => return None,
+                };
+                // In `ta$0::new()` the candidate supplies a qualifier. In `Task::ne$0()`
+                // it supplies the callable whose result the surrounding expression consumes.
+                let member = path.segment()?;
+                (
+                    member.name_ref()?,
+                    member.generic_arg_list().is_some(),
+                    expression,
+                )
+            }
         };
-        // In `ta$0::new()` the candidate supplies a qualifier. In `Task::ne$0()`
-        // it supplies the callable whose result the surrounding expression consumes.
-        let member = path.segment()?;
-        let name = member.name_ref()?;
         if !name
             .syntax()
             .text_range()
@@ -56,21 +70,18 @@ impl CompletionSyntaxContext<'_> {
             return None;
         }
 
-        let expression = if let Some(call) = expr.syntax().parent().and_then(ast::CallExpr::cast)
+        if !matches!(expression, ValueExpression::Call)
+            && let Some(call) = expr.syntax().parent().and_then(ast::CallExpr::cast)
             && call.expr().as_ref() == Some(&expr)
         {
             expr = ast::Expr::CallExpr(call);
-            ValueExpression::Call
-        } else if matches!(expr, ast::Expr::RecordExpr(_)) {
-            ValueExpression::Record
-        } else {
-            ValueExpression::Path
-        };
+            expression = ValueExpression::Call;
+        }
 
         Some(ExpectedTypeContext {
             site: self.expected_type_site(expr)?,
             expression,
-            member_has_generic_args: member.generic_arg_list().is_some(),
+            member_has_generic_args,
         })
     }
 

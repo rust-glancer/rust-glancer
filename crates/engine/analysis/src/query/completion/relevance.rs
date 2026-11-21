@@ -4,12 +4,14 @@ use std::hash::{BuildHasher as _, BuildHasherDefault, DefaultHasher};
 
 use rg_ir_view::lookup::name::NameOrigin;
 
-use crate::model::CompletionItem;
+use crate::model::{CompletionApplicability, CompletionItem, CompletionKind};
 
 /// Ranking hints gathered as each completion candidate is built.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CompletionRelevance {
     matches_expected_type: bool,
+    matches_parameter_name: bool,
+    constructor: ConstructorPriority,
     priority: CompletionSortPriority,
     policy: CompletionSortPolicy,
 }
@@ -28,8 +30,51 @@ impl CompletionRelevance {
         self.matches_expected_type = prioritize;
     }
 
-    /// Put inferred type matches first, then compare priority groups. The sort policy orders
-    /// candidates within each group.
+    /// Prefer the active parameter's name among candidates that produce the expected type.
+    pub(crate) fn set_parameter_name_priority(&mut self, prioritize: bool) {
+        self.matches_parameter_name = prioritize;
+    }
+
+    /// Boost an associated function that constructs `Self`. A call with no arguments is easier
+    /// to insert and gets a slightly larger boost.
+    pub(crate) fn set_constructor_priority(&mut self, has_arguments: bool) {
+        self.constructor = if has_arguments {
+            ConstructorPriority::WithArguments
+        } else {
+            ConstructorPriority::WithoutArguments
+        };
+    }
+
+    fn score(self, item: &CompletionItem) -> i16 {
+        // A type match should outweigh member and import preferences. Matching the parameter
+        // name only helps once the candidate is known to produce the right type.
+        let mut score = 0;
+        if self.matches_expected_type {
+            score += 32;
+            if self.matches_parameter_name {
+                score += 2;
+            }
+        }
+        score += match self.constructor {
+            ConstructorPriority::None => 0,
+            ConstructorPriority::WithArguments => 8,
+            ConstructorPriority::WithoutArguments => 10,
+        };
+        if item.kind == CompletionKind::TraitMethod {
+            if self.priority == CompletionSortPriority::Member {
+                score -= 3;
+                if item.applicability == CompletionApplicability::Maybe {
+                    score -= 6;
+                }
+            }
+            if item.import.is_some() {
+                score -= 12;
+            }
+        }
+        score
+    }
+
+    /// Compare relevance scores first. Priority groups and labels break ties.
     pub(crate) fn sort(items: &mut [CompletionItem]) {
         // Type positions and specialized rows group by kind before comparing labels.
         let kind_before_label = |item: &CompletionItem| match item.relevance.policy {
@@ -46,8 +91,8 @@ impl CompletionRelevance {
             let left_relevance = left.relevance;
             let right_relevance = right.relevance;
             right_relevance
-                .matches_expected_type
-                .cmp(&left_relevance.matches_expected_type)
+                .score(right)
+                .cmp(&left_relevance.score(left))
                 .then_with(|| left_relevance.priority.cmp(&right_relevance.priority))
                 .then_with(|| kind_before_label(left).cmp(&kind_before_label(right)))
                 // Compare whole labels so a name like `alloc` sorts before `alloc_zeroed`.
@@ -64,6 +109,14 @@ impl CompletionRelevance {
                 })
         });
     }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum ConstructorPriority {
+    #[default]
+    None,
+    WithArguments,
+    WithoutArguments,
 }
 
 /// Chooses how to compare labels and item kinds within a priority group.

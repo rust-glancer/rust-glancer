@@ -8,6 +8,57 @@ use crate::tests::utils::{
 };
 
 #[test]
+fn balances_dot_member_origin_and_expected_type() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:member_relevance
+struct Widget;
+impl Widget {
+    fn pick_z_inherent(&self) -> bool { false }
+}
+
+trait Available {
+    fn pick_a_trait(&self) -> u32 { 0 }
+}
+impl Available for Widget {}
+
+mod extensions {
+    pub trait Extension {
+        fn pick_b_extension(&self) -> u16 { 0 }
+    }
+    impl Extension for super::Widget {}
+}
+
+fn demo(widget: Widget) {
+    widget.$0; // complete("untyped member list").matching("pick_")
+    widget.pick_$0; // complete("in scope methods first").auto_import().matching("pick_")
+    let _: u32 = widget.pick_$0(); // complete("written call matches the trait result").matching("pick_")
+    let _: u16 = widget.pick_$0; // complete("matching extension is worth its import").auto_import().matching("pick_")
+}
+"#,
+        expect![[r#"
+            // untyped member list
+            im pick_z_inherent
+            tm pick_a_trait
+
+            // in scope methods first
+            im pick_z_inherent
+            tm pick_a_trait
+            tm pick_b_extension
+
+            // written call matches the trait result
+            tm pick_a_trait
+            im pick_z_inherent
+
+            // matching extension is worth its import
+            tm pick_b_extension
+            im pick_z_inherent
+            tm pick_a_trait
+        "#]],
+    );
+}
+
+#[test]
 fn finds_methods_from_trait_objects_without_importing_the_trait() {
     check_analysis(
         r#"
@@ -653,8 +704,8 @@ pub fn use_it(wrapper: Wrapper<User>) {
 "#,
         expect![[r#"
             // generic trait completions
-            tm generic_trait_name
             fd value
+            tm generic_trait_name
         "#]],
     );
 }

@@ -187,8 +187,9 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)
                     .completions(site)
             }
-            CompletionSite::Dot(site) => DotCompletionResolver::new(self.analysis, self.query)
-                .completions(site, syntax_context),
+            CompletionSite::Dot(site) => {
+                DotCompletionResolver::new(self.analysis, query).completions(site, syntax_context)
+            }
             CompletionSite::ModuleDeclaration(site) => ModuleDeclarationCompletionResolver::new(
                 self.analysis,
                 self.query.crate_ref,

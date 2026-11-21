@@ -3,6 +3,32 @@ use expect_test::expect;
 use crate::tests::utils::check_analysis;
 
 #[test]
+fn prefers_associated_functions_that_construct_the_type() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:constructor_relevance
+struct Widget<T>(T);
+impl<T> Widget<T> {
+    fn pick_a_new() -> u32 { 0 }
+    fn pick_b_from(value: T) -> Self { Self(value) }
+    fn pick_y_explicit() -> Widget<T> { loop {} }
+    fn pick_z_default() -> Self { loop {} }
+}
+fn demo() {
+    let _ = Widget::<u8>::$0; // complete("constructors before other functions").matching("pick_")
+}
+"#,
+        expect![[r#"
+            // constructors before other functions
+            fn pick_y_explicit
+            fn pick_z_default
+            fn pick_b_from
+            fn pick_a_new
+        "#]],
+    );
+}
+
+#[test]
 fn completes_unkeyed_associated_items() {
     check_analysis(
         r#"
@@ -32,10 +58,10 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // primitive associated items
+            fn from_be_bytes
             ct DEFAULT
             ct MAX
             fn count_ones
-            fn from_be_bytes
             fn make
         "#]],
     );
@@ -111,6 +137,7 @@ pub fn inspect_signature<T: Factory>(_: T::Out$0) -> <T as Factory>::Par$1 { // 
             ev Stop
 
             // concrete associated items
+            fn new
             ct LIMIT
             ta Output
             ct PARENT
@@ -118,11 +145,11 @@ pub fn inspect_signature<T: Factory>(_: T::Out$0) -> <T as Factory>::Par$1 { // 
             ct ZERO
             fn inspect
             fn make
-            fn new
             fn parent_fn
             fn touch
 
             // alias associated items
+            fn new
             ct LIMIT
             ta Output
             ct PARENT
@@ -130,7 +157,6 @@ pub fn inspect_signature<T: Factory>(_: T::Out$0) -> <T as Factory>::Par$1 { // 
             ct ZERO
             fn inspect
             fn make
-            fn new
             fn parent_fn
             fn touch
 
@@ -266,20 +292,20 @@ pub fn use_local() {
 "#,
         expect![[r#"
             // body local Self associated items
+            fn create
             ct EMPTY
             ta Output
             ct READY
             fn build
-            fn create
             fn inside
             fn inspect
 
             // body local value associated items
+            fn create
             ct EMPTY
             ta Output
             ct READY
             fn build
-            fn create
             fn inside
             fn inspect
 
