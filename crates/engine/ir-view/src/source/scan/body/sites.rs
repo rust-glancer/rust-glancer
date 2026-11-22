@@ -17,7 +17,7 @@
 //! ```
 
 use rg_body_ir::{BodyPath, BodyView, ExprData, ExprKind, PatKind, StmtKind};
-use rg_ir_model::{BodyRef, BodySource, ExprId, FileId, PatId, ScopeId};
+use rg_ir_model::{BodyRef, BodySource, ExprId, FileId, PatId, ScopeId, SourceId};
 use rg_item_tree::{
     FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ItemTreeId,
     ModuleItem, ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
@@ -119,7 +119,7 @@ impl<'body> BodyScanSites<'body> {
 
     /// The name may come from the invocation even when the enclosing expression came from
     /// the macro template, as in `($method:ident) => { receiver.$method() }`.
-    pub(super) fn expression_name(&self, expr: &ExprData) -> Option<BodySource> {
+    pub(super) fn expression_name(expr: &ExprData) -> Option<SourceId> {
         let name = match &expr.kind {
             ExprKind::Path { path }
             | ExprKind::Record {
@@ -132,7 +132,7 @@ impl<'body> BodyScanSites<'body> {
             ExprKind::Field { field_location, .. } => *field_location,
             _ => return None,
         };
-        Some(self.body.source_at(name.unwrap_or(expr.source)))
+        Some(name.unwrap_or(expr.source))
     }
 
     pub(super) fn walk_record_expr_keys(
@@ -162,6 +162,7 @@ impl<'body> BodyScanSites<'body> {
             visit(BodySourceCandidate::RecordFieldKey {
                 body,
                 scope: expr.scope,
+                name: field.key_location,
                 owner: owner.clone(),
                 key: field.key.clone(),
                 file_id: key.file_id,
@@ -205,6 +206,7 @@ impl<'body> BodyScanSites<'body> {
                 visit(BodySourceCandidate::RecordFieldKey {
                     body,
                     scope: site.scope,
+                    name: field.key_location,
                     owner: owner.clone(),
                     key: field.key.clone(),
                     file_id: key.file_id,

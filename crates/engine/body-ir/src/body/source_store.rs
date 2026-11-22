@@ -32,6 +32,14 @@ impl BodySourceStore {
         id
     }
 
+    pub(crate) fn record_with_copy(&mut self, source: BodySource, copy: Option<u32>) -> SourceId {
+        let id = self.record(source);
+        if let Some(copy) = copy {
+            self.provenance.record_argument_use(id, copy);
+        }
+        id
+    }
+
     /// The ID and this table come from the same prepared body. A missing entry is a broken IR
     /// relationship, rather than a source occurrence that happens to be uneditable.
     pub fn source(&self, id: SourceId) -> BodySource {
@@ -60,7 +68,7 @@ impl BodySourceStore {
 
     pub(crate) fn recorder<'a>(
         &'a mut self,
-        map: &'a dyn Fn(TextRange, SourceRole) -> BodySource,
+        map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<u32>),
     ) -> BodySourceRecorder<'a> {
         BodySourceRecorder { store: self, map }
     }
@@ -79,12 +87,13 @@ impl SourceLocations for BodySourceStore {
 /// therefore use the same declaration/type lowerers without changing the meaning of stored IDs.
 pub(crate) struct BodySourceRecorder<'a> {
     store: &'a mut BodySourceStore,
-    map: &'a dyn Fn(TextRange, SourceRole) -> BodySource,
+    map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<u32>),
 }
 
 impl RecordSource for BodySourceRecorder<'_> {
     fn record_as(&mut self, range: TextRange, role: SourceRole) -> SourceId {
-        self.store.record((self.map)(range, role))
+        let (source, copy) = (self.map)(range, role);
+        self.store.record_with_copy(source, copy)
     }
 
     fn record_initializer(&mut self, initializer: &ast::Expr) -> SourceId {

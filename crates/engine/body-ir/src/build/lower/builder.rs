@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_def_map::GeneratedBodySyntax;
 use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, SourceId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 
+use super::GeneratedBodyTask;
 use crate::body::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
     BodySourceStore, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
@@ -22,7 +22,7 @@ pub(crate) struct LoweredBodyData {
     pub(crate) sources: BodySourceStore,
     /// Temporary syntax and expansion depth for generated items. The key is the declaration's
     /// occurrence ID, which is available before the nested item gets a semantic owner.
-    pub(crate) generated_bodies: HashMap<SourceId, (GeneratedBodySyntax, usize)>,
+    pub(crate) generated_bodies: HashMap<SourceId, GeneratedBodyTask>,
     pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
 }
 
@@ -72,7 +72,7 @@ pub(super) struct BodyBuilder {
     pub(super) source_items: BodySourceItems,
     pub(super) macro_calls: Vec<BodyMacroCallData>,
     pub(super) sources: BodySourceStore,
-    pub(super) generated_bodies: HashMap<SourceId, (GeneratedBodySyntax, usize)>,
+    pub(super) generated_bodies: HashMap<SourceId, GeneratedBodyTask>,
     pub(super) scopes: Arena<ScopeId, ScopeData>,
     pub(super) bindings: Arena<BindingId, BindingData>,
     pub(super) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
@@ -110,7 +110,6 @@ impl BodyBuilder {
             unmodeled_syntax,
         } = self;
 
-        sources.provenance.finish(!source.is_written());
         let source = sources.record(source);
         LoweredBodyData {
             body: BodyData::new(

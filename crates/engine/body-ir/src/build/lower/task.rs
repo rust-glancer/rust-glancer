@@ -3,6 +3,8 @@
 //! A task opens either a file item or an item from its owning macro expansion. Both sources
 //! supply the same function or initializer syntax to the body lowerer.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::GeneratedBodySyntax;
@@ -15,8 +17,8 @@ use rg_syntax::{AstNode as _, SyntaxKind, SyntaxNode, TextRange, ast};
 use rg_text::RustEdition;
 
 use super::{
-    LoweredBodies, body::BodyLowering, macro_expansion::BodyMacroExpansionContext,
-    syntax::source_for,
+    LoweredBodies, arguments::ExpansionCopies, body::BodyLowering,
+    macro_expansion::BodyMacroExpansionContext, syntax::source_for,
 };
 use crate::BodyOwner;
 
@@ -55,23 +57,40 @@ impl BodyLoweringTask {
     }
 }
 
+/// Expansion context to restore when a generated function or initializer gets its own body.
+///
+/// A nested body has its own source IDs. Keep its expansion's copy IDs so uses in siblings
+/// still count toward the same macro input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GeneratedBodyTask {
+    pub(super) body: GeneratedBodySyntax,
+    pub(super) depth: usize,
+    pub(super) copies: Option<Arc<ExpansionCopies>>,
+}
+
+impl GeneratedBodyTask {
+    pub(crate) fn for_owner(body: GeneratedBodySyntax) -> Self {
+        // TODO: Share copy provenance across item-scope owners. An outer item expansion can
+        // emit syntax outside this worklist.
+        Self {
+            body,
+            depth: 0,
+            copies: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum BodyTaskSource {
-    File {
-        file: FileId,
-        span: Span,
-    },
-    Generated {
-        body: GeneratedBodySyntax,
-        depth: usize,
-    },
+    File { file: FileId, span: Span },
+    Generated(GeneratedBodyTask),
 }
 
 impl BodyTaskSource {
     fn physical_range(&self) -> (FileId, Span) {
         match self {
             Self::File { file, span } => (*file, *span),
-            Self::Generated { body, .. } => (body.source.file_id, body.source.span),
+            Self::Generated(task) => (task.body.source.file_id, task.body.source.span),
         }
     }
 }
@@ -164,18 +183,20 @@ impl<'a> BodyTaskLowering<'a> {
                     let source = source_for(*file, &node);
                     (node, source, has_errors)
                 }
-                BodyTaskSource::Generated { body, .. } => (
-                    body.syntax.clone(),
-                    body.source,
-                    body.expansion.has_parse_errors_in(body.syntax.text_range()),
+                BodyTaskSource::Generated(task) => (
+                    task.body.syntax.clone(),
+                    task.body.source,
+                    task.body
+                        .expansion
+                        .has_parse_errors_in(task.body.syntax.text_range()),
                 ),
             };
             // A macro can emit `fn next() { recurse!(); }` and defer the next call to a new
             // body task. Resume the enclosing expansion's depth so that call uses the same
             // recursion budget.
             let _expansion_scope = match &task.source {
-                BodyTaskSource::Generated { depth, .. } => {
-                    Some(macro_expansion.resume_expansion(*depth))
+                BodyTaskSource::Generated(task) => {
+                    Some(macro_expansion.resume_expansion(task.depth))
                 }
                 BodyTaskSource::File { .. } => None,
             };
@@ -186,9 +207,10 @@ impl<'a> BodyTaskLowering<'a> {
                 source,
                 self.cfg,
                 macro_expansion,
+                &mut self.lowered_bodies.argument_copies,
             );
-            if let BodyTaskSource::Generated { body, .. } = &task.source {
-                lowering.set_expansion(source, body.expansion.clone());
+            if let BodyTaskSource::Generated(task) = &task.source {
+                lowering.set_expansion(source, task.body.expansion.clone(), task.copies.clone());
             }
             if has_errors {
                 lowering.record_unmodeled_syntax(&node);

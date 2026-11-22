@@ -180,6 +180,11 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
 }
 
 impl ExpandedBodyMacro<SyntaxNode> {
+    /// A recovered parse can leave part of the macro output outside the lowered syntax.
+    pub fn has_parse_errors(&self) -> bool {
+        !self.parse_errors.is_empty()
+    }
+
     /// Find each output copy, including tokens outside the typed node used for lowering.
     ///
     /// Each result gives the token's range in this expansion, its written span, and its

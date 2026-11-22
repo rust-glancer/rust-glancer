@@ -1,14 +1,11 @@
 //! Builtin inputs and implicit references written inside format strings.
 
-use rg_ir_model::{BuiltinMacroExprKind, ExprId, ScopeId};
-use rg_syntax::{
-    AstNode as _,
-    ast::{self, AstToken as _, FormatStringPartKind, HasName as _},
-};
+use rg_ir_model::{BuiltinMacroExprKind, ExprId, ScopeId, SourceId};
+use rg_syntax::ast::{self, AstToken as _, FormatStringPartKind, HasName as _};
 use rg_text::Name;
 
 use super::body::BodyLowering;
-use crate::body::{BodyPath, BodySource, ExprKind};
+use crate::body::{BodyPath, ExprKind};
 
 impl BodyLowering<'_> {
     /// Lower written arguments and add variable references for captures such as `{user}`.
@@ -47,7 +44,6 @@ impl BodyLowering<'_> {
         let Some(ast::Expr::Literal(template)) = template else {
             return args;
         };
-        let source = self.source(template.syntax());
         let ast::LiteralKind::String(string) = template.kind() else {
             return args;
         };
@@ -61,26 +57,26 @@ impl BodyLowering<'_> {
                 return;
             }
             let range = part.range + string.syntax().text_range().start();
-            let written = self.written_source(range);
-            let expr = self.lower_format_capture(name, written.unwrap_or(source), scope);
+            let location = self.source_location(range);
+            let source = self.builder.sources.source(location);
+            let expr = self.lower_format_capture(name, location, scope);
             args.push(expr);
-            if let Some(written) = written {
+            if source.location().is_exact() {
                 self.builder
                     .sources
                     .provenance
-                    .record_format_capture(expr, written.span);
+                    .record_format_capture(expr, source.span);
             }
         });
         args
     }
 
-    fn lower_format_capture(&mut self, name: &str, source: BodySource, scope: ScopeId) -> ExprId {
+    fn lower_format_capture(&mut self, name: &str, location: SourceId, scope: ScopeId) -> ExprId {
         let name = Name::new(name);
-        let location = self.builder.sources.record(source);
         let path = BodyPath::unqualified_name(name, location);
         // Treat `{user}` like a `user` expression here. Normal name lookup then finds
         // the right local, and hover and navigation can use the same path.
         // TODO: Require width and precision captures to have type `usize` during inference.
-        self.alloc_expr_with_source(source, scope, ExprKind::Path { path })
+        self.alloc_expr_at(location, scope, ExprKind::Path { path })
     }
 }

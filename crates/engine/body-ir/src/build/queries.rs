@@ -13,7 +13,8 @@ use rg_workspace::CrateConfig;
 
 use super::{
     lower::{
-        BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, LoweredBodies,
+        BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, GeneratedBodyTask,
+        LoweredBodies,
     },
     state::BodyStoreBuilder,
 };
@@ -47,7 +48,7 @@ pub fn prepare_body(db: &QueryContext<'_>, key: BodyKey) -> ajika::Result<Option
     let source = match owner.source.kind {
         ItemSourceKind::ItemTree(item) => {
             if let Some(body) = GeneratedBodySyntax::for_file_item(db, key.krate, item)? {
-                BodyTaskSource::Generated { body, depth: 0 }
+                BodyTaskSource::Generated(GeneratedBodyTask::for_owner(body))
             } else {
                 let span = ItemSourceView::new(db, key.krate, owner.source)?
                     .location(owner.location)
@@ -63,7 +64,7 @@ pub fn prepare_body(db: &QueryContext<'_>, key: BodyKey) -> ajika::Result<Option
             let Some(body) = ItemSourceView::generated_body_syntax(db, key.krate, item)? else {
                 return Ok(None);
             };
-            BodyTaskSource::Generated { body, depth: 0 }
+            BodyTaskSource::Generated(GeneratedBodyTask::for_owner(body))
         }
         ItemSourceKind::Synthetic(_) | ItemSourceKind::Body(_) => return Ok(None),
     };

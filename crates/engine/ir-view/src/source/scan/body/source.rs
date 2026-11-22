@@ -123,17 +123,19 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             {
                 continue;
             }
-            let Some(name) = sites.expression_name(expr) else {
+            let Some(name) = BodyScanSites::expression_name(expr) else {
                 continue;
             };
-            let location = name.location();
-            if !self.file_matches(name.file_id) || !location.is_exact() {
+            let source = body.source_at(name);
+            let location = source.location();
+            if !self.file_matches(source.file_id) || !location.is_exact() {
                 continue;
             }
             candidates.push(BodySourceCandidate::Expr {
                 body: body_ref,
                 expr: expr_id,
-                file_id: name.file_id,
+                name,
+                file_id: source.file_id,
                 location,
             });
         }

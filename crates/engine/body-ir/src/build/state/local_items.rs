@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{DefinitionReader, GeneratedBodySyntax};
+use rg_def_map::DefinitionReader;
 use rg_ir_model::{BodyId, BodyRef, DefMapRef, FileId, ItemOwner, ModuleRef, SourceId, StaticRef};
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{ItemReader, ItemStore};
@@ -17,7 +17,10 @@ use crate::{
     BodyData, BodyLocalItems, BodyOwner, BodySourceStore,
     build::{
         local_items::LocalItemSource,
-        lower::{BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource},
+        lower::{
+            BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
+            GeneratedBodyTask,
+        },
         query_source::BodyBuildQuerySource,
     },
 };
@@ -99,7 +102,7 @@ impl BodyStoreBuilder<'_> {
         body_ref: BodyRef,
         body: &BodyData,
         sources: &BodySourceStore,
-        mut generated: HashMap<SourceId, (GeneratedBodySyntax, usize)>,
+        mut generated: HashMap<SourceId, GeneratedBodyTask>,
         items: &BodyLocalItems,
         cancellation: &CancellationToken,
     ) -> anyhow::Result<Vec<BodyLoweringTask>> {
@@ -112,8 +115,8 @@ impl BodyStoreBuilder<'_> {
         // Item collection has assigned the nested owners. Use each owner's declaration
         // occurrence to pick up the syntax saved during the parent's expansion.
         let mut source_for = |file: FileId, id: SourceId| -> anyhow::Result<BodyTaskSource> {
-            if let Some((body, depth)) = generated.remove(&id) {
-                return Ok(BodyTaskSource::Generated { body, depth });
+            if let Some(task) = generated.remove(&id) {
+                return Ok(BodyTaskSource::Generated(task));
             }
             let location = sources
                 .location(id)

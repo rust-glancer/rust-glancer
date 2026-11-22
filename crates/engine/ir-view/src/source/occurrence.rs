@@ -41,6 +41,17 @@ pub enum IndexedSourceRole {
     Structural,
 }
 
+/// The output token behind an occurrence and the expected coverage for its input.
+///
+/// Copy IDs are shared by the bodies in one owner worklist. The total includes uses with
+/// no indexed occurrence, so a query can tell when it has missed part of the expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexedMacroArgumentUse {
+    pub owner: BodyKey,
+    pub copy: u32,
+    pub total_copies: u32,
+}
+
 /// How an occurrence relates to macro input, independently of the syntax needed to rewrite it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexedSourceProvenance {
@@ -48,9 +59,9 @@ pub enum IndexedSourceProvenance {
     Direct,
     /// A copied input token. Several semantic occurrences can occupy the same written span.
     MacroArgument {
-        /// Body lowering checks for duplicated tokens, including copies it cannot lower.
-        /// `None` means that the expansion data cannot establish how often the input was used.
-        duplicated: Option<bool>,
+        /// An exact written range can still lack copy coverage, for example when an item
+        /// macro emits bodies in separate owner worklists.
+        usage: Option<IndexedMacroArgumentUse>,
     },
 }
 
@@ -61,7 +72,7 @@ impl IndexedSourceProvenance {
             "indexed occurrences have exact locations"
         );
         if location.kind == SourceLocationKind::MacroArgument {
-            Self::MacroArgument { duplicated: None }
+            Self::MacroArgument { usage: None }
         } else {
             Self::Direct
         }
@@ -639,19 +650,13 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         fallback_file_id: Option<FileId>,
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {
         let location = candidate.location();
-        // The location tells us whether the name came from macro input. The source map tells
-        // us whether the input was copied more than once. Look up format captures for direct
-        // expressions too, since their replacement spelling follows the format string.
-        let body_sources = match &candidate {
-            BodySourceCandidate::Expr { body, .. } => self.db.body_ir.body_sources(*body)?,
-            BodySourceCandidate::MacroCall { body, .. }
-            | BodySourceCandidate::Binding { body, .. }
-            | BodySourceCandidate::RecordFieldKey { body, .. }
-            | BodySourceCandidate::ValueReference { body, .. }
-            | BodySourceCandidate::TypePath { body, .. }
-                if location.kind == SourceLocationKind::MacroArgument =>
+        let source_id = candidate.source_id();
+        let body_sources = match source_id {
+            Some((body, _))
+                if location.kind == SourceLocationKind::MacroArgument
+                    || matches!(candidate, BodySourceCandidate::Expr { .. }) =>
             {
-                self.db.body_ir.body_sources(*body)?
+                self.db.body_ir.body_sources(body)?
             }
             _ => None,
         };
@@ -813,8 +818,19 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrence.map(|mut occurrence| {
             if location.kind == SourceLocationKind::MacroArgument {
                 occurrence.provenance = IndexedSourceProvenance::MacroArgument {
-                    duplicated: source_map
-                        .and_then(|map| map.macro_argument_duplication(location.span)),
+                    usage: source_id.and_then(|(body, source)| {
+                        let sources = body_sources?;
+                        if sources.source(source).location() != location {
+                            return None;
+                        }
+                        let (copy, total_copies) =
+                            sources.provenance().macro_argument_use(source)?;
+                        Some(IndexedMacroArgumentUse {
+                            owner: body.key(),
+                            copy,
+                            total_copies,
+                        })
+                    }),
                 };
             }
             if format_capture {

@@ -30,9 +30,9 @@ pub use self::{
         DocumentationSourceView, ModuleDocumentationSource,
     },
     occurrence::{
-        IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence,
-        IndexedSourceProvenance, IndexedSourceRole, IndexedSourceSurface, IndexedTypePath,
-        IndexedTypePathScope, SourceOccurrenceView,
+        IndexedMacroArgumentUse, IndexedSignatureTypeScope, IndexedSourceFact,
+        IndexedSourceOccurrence, IndexedSourceProvenance, IndexedSourceRole, IndexedSourceSurface,
+        IndexedTypePath, IndexedTypePathScope, SourceOccurrenceView,
     },
     references::{ReferenceSearchLabel, ReferenceSourceSelection},
 };

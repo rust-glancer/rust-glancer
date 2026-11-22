@@ -16,9 +16,10 @@
 //! segments.
 
 use rg_body_ir::{BodyOwner, BodyView};
+use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, ExprId, FileId, SemanticItemRef, SourceLocation,
-    SourceLocationKind, identity::DeclarationRef,
+    BodyRef, CrateRef, DefMapRef, ExprId, FileId, SemanticItemRef, SourceLocationKind,
+    identity::DeclarationRef,
 };
 use rg_item_tree::SourceLocations;
 use rg_semantic_ir::SemanticItemSource as _;
@@ -115,7 +116,11 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
         // The cursor can be on a nested fn/const/static name. Its body owns the initializer
         // or block, while its declaration still belongs to the parent body-local item store.
-        self.consider_body_owner_declaration(body, &mut best)?;
+        if let Some(candidate) = self.body_owner_declaration(body)?
+            && candidate.span().touches(self.offset)
+        {
+            best.consider(candidate);
+        }
 
         // Macro expansion can map many generated nodes back to the invocation span. Give the
         // written macro path a precise candidate before scanning the arguments. Helper invocations
@@ -135,18 +140,20 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             if source.file_id != self.file_id {
                 continue;
             }
-            let name = sites.expression_name(expr);
+            let name = BodyScanSites::expression_name(expr);
             if !source.is_written() {
                 sites.walk_record_expr_keys(body_ref, expr, Some(self.offset), |candidate| {
                     best.consider_record_field(candidate);
                 });
-                let location = name.unwrap_or(source).location();
+                let name = name.unwrap_or(expr.source);
+                let location = body.source_at(name).location();
                 if location.kind == SourceLocationKind::MacroArgument
                     && location.span.touches(self.offset)
                 {
                     best.consider(BodySourceCandidate::Expr {
                         body: body_ref,
                         expr: ExprId(expr_idx),
+                        name,
                         file_id: source.file_id,
                         location,
                     });
@@ -163,13 +170,14 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             sites.walk_record_expr_keys(body_ref, expr, Some(self.offset), |candidate| {
                 best.consider_record_field(candidate);
             });
-            let location = name
-                .filter(|name| name.span.touches(self.offset))
-                .unwrap_or(source)
-                .location();
+            let name = name
+                .filter(|&name| body.span(name).touches(self.offset))
+                .unwrap_or(expr.source);
+            let location = body.source_at(name).location();
             best.consider(BodySourceCandidate::Expr {
                 body: body_ref,
                 expr: ExprId(expr_idx),
+                name,
                 file_id: source.file_id,
                 location,
             });
@@ -208,28 +216,6 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
     }
 
-    /// Projects a nested body back to its body-local item declaration when the cursor is on the
-    /// owner name, so editor queries target the function/const/static item instead of the body.
-    fn consider_body_owner_declaration(
-        &self,
-        body: BodyView<'_>,
-        best: &mut BestCursorCandidate,
-    ) -> Result<(), ReadError> {
-        let Some((item, location)) = self.body_owner_declaration(body)? else {
-            return Ok(());
-        };
-        if !location.span.touches(self.offset) {
-            return Ok(());
-        }
-
-        best.consider(BodySourceCandidate::LocalDeclaration {
-            declaration: DeclarationRef::from(item),
-            location,
-        });
-
-        Ok(())
-    }
-
     fn consider_macro_calls(
         &self,
         body_ref: BodyRef,
@@ -246,10 +232,11 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
     }
 
+    /// Project a nested body back to its named function, const, or static.
     fn body_owner_declaration(
         &self,
         body: BodyView<'_>,
-    ) -> Result<Option<(SemanticItemRef, SourceLocation)>, ReadError> {
+    ) -> Result<Option<BodySourceCandidate>, ReadError> {
         let item = match body.owner() {
             BodyOwner::Function(function) => SemanticItemRef::from(function),
             BodyOwner::Const(konst) => SemanticItemRef::from(konst),
@@ -265,9 +252,20 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             .db
             .body_ir
             .declaration_source(item.origin().origin_crate(), view.source())?;
-        Ok(locations
-            .exact_location(view.name_location())
-            .map(|location| (item, location)))
+        let Some(name) = view.name_location() else {
+            return Ok(None);
+        };
+        let source = match view.source().kind {
+            ItemSourceKind::Body(source) => Some((source.body, name)),
+            _ => None,
+        };
+        Ok(locations.exact_location(Some(name)).map(|location| {
+            BodySourceCandidate::LocalDeclaration {
+                declaration: DeclarationRef::from(item),
+                location,
+                source,
+            }
+        }))
     }
 
     /// Recognize macro ranges even when they produce no expression, such as type expansions.

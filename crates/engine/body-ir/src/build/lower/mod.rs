@@ -3,6 +3,7 @@
 //! This pass does not resolve names. It records the source shape, lexical scopes,
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
+mod arguments;
 mod body;
 mod builder;
 mod builtin_macro;
@@ -20,12 +21,13 @@ use rg_ir_model::BodyId;
 pub(super) use self::{
     builder::{LoweredBodyData, PendingBindingResolution},
     macro_expansion::BodyMacroExpansion,
-    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource},
+    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, GeneratedBodyTask},
 };
 /// The growing owner worklist, retaining source-ambiguous bindings until preparation settles them.
 #[derive(Default)]
 pub(super) struct LoweredBodies {
     bodies: Arena<BodyId, LoweredBodyData>,
+    argument_copies: self::arguments::ArgumentCopies,
 }
 
 impl LoweredBodies {
@@ -42,6 +44,16 @@ impl LoweredBodies {
     }
 
     pub(super) fn into_bodies(self) -> Arena<BodyId, LoweredBodyData> {
-        self.bodies
+        let Self {
+            mut bodies,
+            argument_copies,
+        } = self;
+        // One macro can emit two nested functions that use the same argument. Finalize
+        // their source maps together so both functions get the total from the whole worklist.
+        let totals = argument_copies.totals();
+        for body in bodies.iter_mut() {
+            body.sources.provenance.finish(&totals);
+        }
+        bodies
     }
 }

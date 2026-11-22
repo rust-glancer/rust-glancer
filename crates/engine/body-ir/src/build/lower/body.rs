@@ -1,5 +1,7 @@
 //! Shared lowering context for expression bodies.
 
+use std::sync::Arc;
+
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
     BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro, GeneratedBodySyntax,
@@ -9,9 +11,11 @@ use rg_item_tree::{ItemKind, ItemNode, RecordSource, SourceRole};
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
 
 use super::{
+    arguments::{ArgumentCopies, ExpansionCopies},
     builder::{BodyBuilder, LoweredBodyData},
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
+    task::GeneratedBodyTask,
 };
 use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
@@ -24,6 +28,7 @@ pub(super) struct BodyLowering<'a> {
     pub(super) builder: BodyBuilder,
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
     generated_context: Option<GeneratedBodyMacroContext>,
+    argument_copies: &'a mut ArgumentCopies,
 }
 
 impl<'a> BodyLowering<'a> {
@@ -34,6 +39,7 @@ impl<'a> BodyLowering<'a> {
         body_source: BodySource,
         cfg: CfgEvaluator<'a>,
         macro_expansion: &'a mut dyn BodyMacroExpansionContext,
+        argument_copies: &'a mut ArgumentCopies,
     ) -> Self {
         Self {
             owner,
@@ -44,6 +50,7 @@ impl<'a> BodyLowering<'a> {
             builder: BodyBuilder::default(),
             macro_expansion,
             generated_context: None,
+            argument_copies,
         }
     }
 
@@ -101,19 +108,19 @@ impl BodyLowering<'_> {
         scope: ScopeId,
         kind: ExprKind,
     ) -> ExprId {
-        self.alloc_expr_with_source(self.source(syntax), scope, kind)
+        let source = self.source_id(syntax);
+        self.alloc_expr_at(source, scope, kind)
     }
 
-    pub(super) fn alloc_expr_with_source(
+    pub(super) fn alloc_expr_at(
         &mut self,
-        source: BodySource,
+        source: SourceId,
         scope: ScopeId,
         kind: ExprKind,
     ) -> ExprId {
         // Name resolution uses this boundary to avoid seeing bindings introduced after the
         // expression, while still allowing earlier bindings in the same lexical scope.
         let visible_bindings = self.builder.bindings.len();
-        let source = self.builder.sources.record(source);
         self.builder.alloc_expr(ExprData {
             source,
             scope,
@@ -149,42 +156,40 @@ impl BodyLowering<'_> {
         self.builder.sources.record(source)
     }
 
-    /// Keep an occurrence only when its bytes belong to written source. Generated template text
-    /// can have a navigation fallback, but that fallback cannot stand in for a format name.
-    pub(super) fn written_source(&self, range: TextRange) -> Option<BodySource> {
-        match &self.generated_context {
-            Some(context) => {
-                let span = context.expanded.source_for_range(context.source, range)?;
-                Some(BodySource::macro_argument(context.source.file_id, span))
-            }
-            None => Some(BodySource::written(
-                self.body_source.file_id,
-                Span::from_text_range(range),
-            )),
-        }
-    }
-
     /// Record the physical interpretation while syntax and macro provenance are available.
     /// Type and declaration lowering receive the same recorder in ordinary and generated bodies.
     ///
     /// All calls append to this body's occurrence sequence, including type annotations that do
-    /// not declare an item. Locations are resolved here; reading them does not need to replay
-    /// token origins later.
+    /// not declare an item. Resolve locations here while the token origins are available.
     pub(super) fn with_sources<T>(&mut self, lower: impl FnOnce(&mut dyn RecordSource) -> T) -> T {
         let context = self.generated_context.as_ref();
         let map = |range, role| match context {
             Some(context) => {
-                let copied = matches!(role, SourceRole::Syntax)
-                    .then(|| context.expanded.source_for_range(context.source, range))
-                    .flatten();
-                match copied {
-                    Some(span) => BodySource::macro_argument(context.source.file_id, span),
-                    None => {
-                        BodySource::macro_generated(context.source.file_id, context.source.span)
-                    }
+                if matches!(role, SourceRole::Syntax)
+                    && let Some((span, token)) =
+                        context.expanded.argument_source(context.source, range)
+                {
+                    // For `"{user}"`, the written range covers `user` and the copy ID
+                    // tracks the whole literal that carried it into this expansion.
+                    let copy = context
+                        .copies
+                        .as_ref()
+                        .and_then(|copies| copies.get(&token))
+                        .copied();
+                    return (
+                        BodySource::macro_argument(context.source.file_id, span),
+                        copy,
+                    );
                 }
+                (
+                    BodySource::macro_generated(context.source.file_id, context.source.span),
+                    None,
+                )
             }
-            None => BodySource::written(self.body_source.file_id, Span::from_text_range(range)),
+            None => (
+                BodySource::written(self.body_source.file_id, Span::from_text_range(range)),
+                None,
+            ),
         };
         lower(&mut self.builder.sources.recorder(&map))
     }
@@ -237,7 +242,27 @@ impl BodyLowering<'_> {
         let (syntax, expanded_context) = expanded.into_syntax_and_context();
         // A nested expansion uses its own map, then restores the parent before lowering continues.
         let previous = self.generated_context.take();
-        self.set_expansion(call_source, expanded_context);
+        // Exact locations can survive parser recovery or an incomplete parent expansion.
+        // Keep those locations for navigation and leave copy coverage unknown.
+        let copies = (!expanded_context.has_parse_errors()
+            && previous
+                .as_ref()
+                .is_none_or(|context| context.copies.is_some()))
+        .then(|| {
+            self.argument_copies.expand(
+                &expanded_context,
+                call_source,
+                previous
+                    .as_ref()
+                    .and_then(|context| context.copies.as_deref()),
+            )
+        })
+        .map(Arc::new);
+        self.generated_context = Some(GeneratedBodyMacroContext {
+            source: call_source,
+            expanded: expanded_context,
+            copies,
+        });
         let result = f(self, syntax);
         self.generated_context = previous;
         result
@@ -247,16 +272,13 @@ impl BodyLowering<'_> {
         &mut self,
         source: BodySource,
         expanded: ExpandedBodyMacro<SyntaxNode>,
+        copies: Option<Arc<ExpansionCopies>>,
     ) {
-        // Only a handwritten owner can check its entire chain of body expansions. A
-        // generated owner cannot tell whether an enclosing expansion also used its input.
-        if self.body_source.is_written() {
-            self.builder
-                .sources
-                .provenance
-                .record_expansion_arguments(expanded.argument_spans(source));
-        }
-        self.generated_context = Some(GeneratedBodyMacroContext { source, expanded });
+        self.generated_context = Some(GeneratedBodyMacroContext {
+            source,
+            expanded,
+            copies,
+        });
     }
 
     /// Keep a generated item's syntax until its body-local declaration gets a semantic owner.
@@ -275,8 +297,8 @@ impl BodyLowering<'_> {
         if has_body {
             self.builder.generated_bodies.insert(
                 item.location,
-                (
-                    GeneratedBodySyntax {
+                GeneratedBodyTask {
+                    body: GeneratedBodySyntax {
                         syntax: syntax.clone(),
                         expansion: context.expanded.clone(),
                         // The invocation may be handwritten. This generated item's range
@@ -286,8 +308,9 @@ impl BodyLowering<'_> {
                             context.source.span,
                         ),
                     },
-                    self.macro_expansion.expansion_depth(),
-                ),
+                    depth: self.macro_expansion.expansion_depth(),
+                    copies: context.copies.clone(),
+                },
             );
         }
     }
@@ -382,11 +405,8 @@ impl BodyLowering<'_> {
                         })
                     })
                     .unwrap_or_default();
-                Some(self.alloc_expr_with_source(
-                    call_source,
-                    scope,
-                    ExprKind::BuiltinMacro { kind, args },
-                ))
+                let source = self.builder.sources.record(call_source);
+                Some(self.alloc_expr_at(source, scope, ExprKind::BuiltinMacro { kind, args }))
             }
         }
     }
@@ -401,4 +421,5 @@ impl BodyLowering<'_> {
 struct GeneratedBodyMacroContext {
     source: BodySource,
     expanded: ExpandedBodyMacro<SyntaxNode>,
+    copies: Option<Arc<ExpansionCopies>>,
 }

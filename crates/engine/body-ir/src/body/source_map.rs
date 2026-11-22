@@ -1,35 +1,25 @@
-use std::cmp::Reverse;
-
-use rg_ir_model::{ExprId, Span};
+use rg_ir_model::{ExprId, SourceId, Span};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Extra source facts collected while lowering a body.
 ///
-/// The occurrence table records where each name came from. This map records which input tokens
-/// were used more than once, even if a copy produced no lowered occurrence. It also records
-/// format captures, which follow their own spelling rules during rename. Queries can read both
-/// facts after the expansion syntax has been dropped.
+/// When a lowered name came from a tracked copy, record the ID of that output token. Its
+/// total also includes uses that produced no name occurrence, such as input to an opaque
+/// macro. Rename can check coverage after the expansion syntax has been dropped.
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodySourceMap {
-    duplicated_macro_arguments: Vec<Span>,
+    argument_uses: Vec<MacroArgumentUse>,
     format_captures: Vec<FormatCaptureSource>,
-    generated_owner: bool,
 }
 
 impl BodySourceMap {
-    /// Record one expansion at a time. In `outer!(value)` expanding to `inner!(value)`, the
-    /// same token passes through both expansions. Two copies within one expansion mean that
-    /// editing the input would affect several output locations.
-    pub(crate) fn record_expansion_arguments(&mut self, spans: impl Iterator<Item = Span>) {
-        let mut arguments: Vec<_> = spans.collect();
-        arguments.sort_unstable_by_key(|span| (span.start, span.end));
-        self.duplicated_macro_arguments.extend(
-            arguments
-                .windows(2)
-                .filter(|pair| pair[0] == pair[1])
-                .map(|pair| pair[0]),
-        );
+    pub(crate) fn record_argument_use(&mut self, source: SourceId, copy: u32) {
+        self.argument_uses.push(MacroArgumentUse {
+            source: source.local,
+            copy,
+            total_copies: 0,
+        });
     }
 
     pub(crate) fn record_format_capture(&mut self, expr: ExprId, span: Span) {
@@ -37,15 +27,17 @@ impl BodySourceMap {
             .push(FormatCaptureSource { expr, span });
     }
 
-    pub(crate) fn finish(&mut self, generated_owner: bool) {
-        self.generated_owner = generated_owner;
-        // Nested parses can see `>>` as one token or two closing angle brackets. Keep the
-        // enclosing range when copied ranges nest, so retained ends increase with their starts.
-        self.duplicated_macro_arguments
-            .sort_unstable_by_key(|span| (span.start, Reverse(span.end)));
-        self.duplicated_macro_arguments
-            .dedup_by(|later, earlier| earlier.contains_span(*later));
-        self.duplicated_macro_arguments.shrink_to_fit();
+    pub(crate) fn finish(&mut self, total_copies: impl Fn(u32) -> Option<u32>) {
+        // An input token forwarded to another expansion can have been replaced during
+        // lowering. Keep only the uses that still count after the whole worklist is lowered.
+        self.argument_uses.retain_mut(|usage| {
+            let Some(total) = total_copies(usage.copy) else {
+                return false;
+            };
+            usage.total_copies = total;
+            true
+        });
+        self.argument_uses.shrink_to_fit();
         // Expression scans check individual captures. Sort once so each lookup does not walk
         // every placeholder in the body.
         self.format_captures
@@ -61,27 +53,23 @@ impl BodySourceMap {
             .is_some_and(|index| self.format_captures[index].span == span)
     }
 
-    /// Whether the containing input token was copied more than once.
-    ///
-    /// If `outer!(name)` forwards `name` to two item macros, each generated function may
-    /// see just one copy. Return `None` when the generated body cannot establish whether
-    /// there were other copies.
-    pub fn macro_argument_duplication(&self, span: Span) -> Option<bool> {
-        if Self::contains_token_span(&self.duplicated_macro_arguments, span) {
-            Some(true)
-        } else {
-            (!self.generated_owner).then_some(false)
-        }
+    /// Returns the output token ID and the input's total across the enclosing body worklist.
+    pub fn macro_argument_use(&self, source: SourceId) -> Option<(u32, u32)> {
+        // Entries were appended in source ID order, which is independent of written offsets.
+        let index = self
+            .argument_uses
+            .binary_search_by_key(&source.local, |usage| usage.source)
+            .ok()?;
+        let usage = &self.argument_uses[index];
+        Some((usage.copy, usage.total_copies))
     }
+}
 
-    fn contains_token_span(tokens: &[Span], span: Span) -> bool {
-        // A name inside a string literal shares the token's provenance. Because retained ends
-        // increase, the last range starting before this name reaches as far as any earlier range.
-        let end = tokens.partition_point(|token| token.start <= span.start);
-        tokens[..end]
-            .last()
-            .is_some_and(|token| token.contains_span(span))
-    }
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+struct MacroArgumentUse {
+    source: u32,
+    copy: u32,
+    total_copies: u32,
 }
 
 /// An implicit capture expression with its proven range inside a written literal.

@@ -82,7 +82,10 @@ impl<'a> TypePathSourceScanner<'a> {
         }
 
         for (idx, segment) in path.segments.iter().enumerate() {
-            let Some(location) = self.body.sources().exact_location(segment.location) else {
+            let Some(name) = segment.location else {
+                continue;
+            };
+            let Some(location) = self.body.sources().exact_location(Some(name)) else {
                 continue;
             };
             if self.offset_matches(location.span) {
@@ -93,6 +96,7 @@ impl<'a> TypePathSourceScanner<'a> {
                 self.candidates.push(BodySourceCandidate::TypePath {
                     body: self.body_ref,
                     scope,
+                    name,
                     path: def_map_path,
                     type_ref: self.offset.map(|_| {
                         TypeRef::Path(TypePath {
@@ -258,11 +262,10 @@ impl<'a> BodyPathSourceScanner<'a> {
 
         let segment_count = path.segment_count();
         for idx in 0..segment_count {
-            let Some(location) = self
-                .body
-                .sources()
-                .exact_location(path.segment_location(idx))
-            else {
+            let Some(name) = path.segment_location(idx) else {
+                continue;
+            };
+            let Some(location) = self.body.sources().exact_location(Some(name)) else {
                 continue;
             };
             if self.offset_matches(location.span) {
@@ -284,6 +287,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                     self.candidates.push(BodySourceCandidate::TypePath {
                         body: self.body_ref,
                         scope,
+                        name,
                         path: def_map_path,
                         type_ref,
                         file_id,
@@ -295,6 +299,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                     self.candidates.push(BodySourceCandidate::ValueReference {
                         body: self.body_ref,
                         scope,
+                        name,
                         file_id,
                         location,
                         // Body IR already records the chosen declaration for an expression. Point
@@ -334,6 +339,7 @@ impl<'a> BodyPathSourceScanner<'a> {
             self.candidates.push(BodySourceCandidate::ValueReference {
                 body: self.body_ref,
                 scope,
+                name: field.key_location,
                 file_id: source.file_id,
                 location,
                 source: match field.value {

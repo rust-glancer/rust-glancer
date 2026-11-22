@@ -32,7 +32,7 @@ mod walk;
 use rg_body_ir::{BodyMacroCallData, BodySourceStore};
 use rg_ir_model::{
     BindingId, BodyRef, ExprId, FieldKey, FileId, GenericDefRef, LocalDefRef, Path, ScopeId,
-    SourceLocation, Span, identity::DeclarationRef,
+    SourceId, SourceLocation, Span, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
 
@@ -245,6 +245,7 @@ pub(crate) enum BodySourceCandidate {
     Binding {
         body: BodyRef,
         binding: BindingId,
+        name: SourceId,
         file_id: FileId,
         location: SourceLocation,
         surface: BindingSurface,
@@ -254,6 +255,7 @@ pub(crate) enum BodySourceCandidate {
     Expr {
         body: BodyRef,
         expr: ExprId,
+        name: SourceId,
         file_id: FileId,
         location: SourceLocation,
     },
@@ -261,18 +263,21 @@ pub(crate) enum BodySourceCandidate {
     MacroCall {
         body: BodyRef,
         definition: LocalDefRef,
+        name: SourceId,
         file_id: FileId,
         location: SourceLocation,
     },
     /// An item or member declared in a body-local item store.
     LocalDeclaration {
         declaration: DeclarationRef,
+        source: Option<(BodyRef, SourceId)>,
         location: SourceLocation,
     },
     /// Record field key, e.g. `name` in either `User { name: value }` or `User { name }`.
     RecordFieldKey {
         body: BodyRef,
         scope: ScopeId,
+        name: SourceId,
         owner: Path,
         key: FieldKey,
         file_id: FileId,
@@ -283,6 +288,7 @@ pub(crate) enum BodySourceCandidate {
     ValueReference {
         body: BodyRef,
         scope: ScopeId,
+        name: SourceId,
         source: ValueReferenceSource,
         file_id: FileId,
         location: SourceLocation,
@@ -292,6 +298,7 @@ pub(crate) enum BodySourceCandidate {
     TypePath {
         body: BodyRef,
         scope: ScopeId,
+        name: SourceId,
         path: Path,
         type_ref: Option<TypeRef>,
         file_id: FileId,
@@ -312,10 +319,26 @@ impl BodySourceCandidate {
             Self::MacroCall {
                 body,
                 definition: call.definition,
+                name: call.name_location,
                 file_id: name.file_id,
                 location,
             },
         )
+    }
+
+    /// Keep the recorded source ID alongside the physical range. Two expanded names
+    /// can share a range, and the ID leads back to each name's own copy.
+    pub(crate) fn source_id(&self) -> Option<(BodyRef, SourceId)> {
+        match self {
+            Self::Body { .. } => None,
+            Self::LocalDeclaration { source, .. } => *source,
+            Self::Binding { body, name, .. }
+            | Self::Expr { body, name, .. }
+            | Self::MacroCall { body, name, .. }
+            | Self::RecordFieldKey { body, name, .. }
+            | Self::ValueReference { body, name, .. }
+            | Self::TypePath { body, name, .. } => Some((*body, *name)),
+        }
     }
 
     pub(crate) fn span(&self) -> Span {

@@ -47,10 +47,11 @@ impl<'view, 'db, 'body> BodyDeclarationScanner<'view, 'db, 'body> {
         let record_bindings = RecordPatShorthandBinding::collect(body, self.file_id, self.offset);
         for (idx, binding) in body.bindings().iter().enumerate() {
             rg_std::check_cancel!(self.db, "body binding occurrences");
-            let name = body.source_at(binding.name_location.unwrap_or(binding.source));
-            let location = name.location();
+            let name = binding.name_location.unwrap_or(binding.source);
+            let source = body.source_at(name);
+            let location = source.location();
             if !location.is_exact()
-                || self.file_id.is_some_and(|file| file != name.file_id)
+                || self.file_id.is_some_and(|file| file != source.file_id)
                 || self
                     .offset
                     .is_some_and(|offset| !location.span.touches(offset))
@@ -72,7 +73,8 @@ impl<'view, 'db, 'body> BodyDeclarationScanner<'view, 'db, 'body> {
             visit(BodySourceCandidate::Binding {
                 body: self.body_ref,
                 binding,
-                file_id: name.file_id,
+                name,
+                file_id: source.file_id,
                 location,
                 surface,
             });
@@ -86,13 +88,18 @@ impl<'view, 'db, 'body> BodyDeclarationScanner<'view, 'db, 'body> {
             }
             let locations = self.db.declaration_source(item.item().origin(), source)?;
             let mut emit = |declaration, name: Option<SourceId>| {
-                if let Some(location) = locations.exact_location(name)
+                if let Some(name) = name
+                    && let Some(location) = locations.exact_location(Some(name))
                     && self
                         .offset
                         .is_none_or(|offset| location.span.touches(offset))
                 {
                     visit(BodySourceCandidate::LocalDeclaration {
                         declaration,
+                        source: match source.kind {
+                            ItemSourceKind::Body(source) => Some((source.body, name)),
+                            _ => None,
+                        },
                         location,
                     });
                 }
