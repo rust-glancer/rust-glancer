@@ -90,7 +90,7 @@ def usage() -> str:
     return f"""
 Usage:
   just agent-debug [runner-options] analyze <path> [analyze-options...]
-  just agent-debug [runner-options] compare-lsp [fixture] [compare-options...]
+  just agent-debug [runner-options] compare-lsp [fixture] [benchmark-options...]
   just agent-debug [runner-options] lsp-query [query-options...]
   just agent-debug [runner-options] test [nextest-options...]
   just agent-debug fixture <init|list|path|reset> [name]
@@ -267,8 +267,6 @@ def parse_cli(argv: Sequence[str]) -> ParsedCli:
 
 def normalized_mode_arguments(mode: str, mode_args: Sequence[str]) -> List[str]:
     arguments = list(mode_args)
-    if mode == "compare-lsp" and (not arguments or arguments[0].startswith("-")):
-        return ["rust_analyzer"] + arguments
     if mode == "lsp-query":
         for index, argument in enumerate(arguments):
             if argument == "--query-file" and index + 1 < len(arguments) and arguments[index + 1] == "-":

@@ -3,8 +3,12 @@
 //! Server stderr is usually only needed after a protocol failure. This helper keeps the recent tail
 //! available for error messages without letting a noisy server grow memory for the whole run.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
+use anyhow::Context as _;
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     task::JoinHandle,
@@ -57,10 +61,17 @@ impl StderrCapture {
         String::from_utf8_lossy(&bytes).trim().to_string()
     }
 
-    pub(super) async fn join(&mut self) {
-        if let Some(join_handle) = self.join_handle.take() {
-            let _ = join_handle.await;
+    pub(super) async fn join(&mut self, timeout: Duration) -> anyhow::Result<()> {
+        if let Some(mut join_handle) = self.join_handle.take() {
+            match tokio::time::timeout(timeout, &mut join_handle).await {
+                Ok(result) => result.context("join server stderr capture")?,
+                Err(_) => {
+                    join_handle.abort();
+                    anyhow::bail!("LSP server stderr remained open after the process exited");
+                }
+            }
         }
+        Ok(())
     }
 }
 

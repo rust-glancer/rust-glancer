@@ -26,8 +26,9 @@ agent-debug *args:
 analyze *args:
     cargo run --release -- analyze {{args}}
 
-compare-lsp fixture="rust_analyzer" *args:
-    cargo run --release -- compare-lsp {{fixture}} {{args}}
+[positional-arguments]
+compare-lsp *args:
+    cargo run --release -- compare-lsp "$@"
 
 lsp-query query_file *args:
     python3 tools/lsp-query.py --query-file '{{query_file}}' {{args}}

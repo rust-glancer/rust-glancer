@@ -30,6 +30,8 @@ pub(crate) struct ReportDocument {
     pub(crate) key: String,
     /// Title shown for the report.
     pub(crate) title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) subtitle: Option<String>,
     /// Non-empty sections in the order report code added them.
     pub(crate) sections: Vec<ReportSection>,
 }
@@ -43,6 +45,7 @@ impl ReportDocument {
         Self {
             key: key.into(),
             title: title.into(),
+            subtitle: None,
             sections: Vec::new(),
         }
     }
@@ -72,6 +75,11 @@ impl ReportDocumentBuilder {
 
     pub(crate) fn title(mut self, title: impl Into<String>) -> Self {
         self.document.title = title.into();
+        self
+    }
+
+    pub(crate) fn subtitle(mut self, subtitle: impl Into<String>) -> Self {
+        self.document.subtitle = Some(subtitle.into());
         self
     }
 

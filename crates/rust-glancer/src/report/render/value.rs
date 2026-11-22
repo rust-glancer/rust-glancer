@@ -2,7 +2,7 @@ use crate::report::ReportValue;
 
 pub(super) fn format_value(value: &ReportValue) -> String {
     match value {
-        ReportValue::Text(value) => value.clone(),
+        ReportValue::Text(value) | ReportValue::Link { label: value, .. } => value.clone(),
         ReportValue::Count(value) => value.to_string(),
         ReportValue::Integer(value) => value.to_string(),
         ReportValue::Float(value) => value.to_string(),

@@ -24,7 +24,7 @@ use crate::compare_lsp::{
     fixture::Fixture,
     lsp_client::{RequestOutcome, RpcError},
     query::{QueryCase, QueryKind, QueryTarget, SourcePosition},
-    server::{self, StartedServers},
+    server::{self, RunningServer, ServerKind},
 };
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(120);
@@ -140,16 +140,7 @@ pub(crate) enum RawOutcome {
 }
 
 impl RawOutcome {
-    fn status_label(&self) -> &'static str {
-        match self {
-            Self::Success { .. } => "success",
-            Self::Error { .. } => "error",
-            Self::Timeout => "timeout",
-            Self::TransportFailure { .. } => "transport_failure",
-        }
-    }
-
-    fn from_request(_kind: QueryKind, outcome: RequestOutcome) -> Self {
+    fn from_request(outcome: RequestOutcome) -> Self {
         match outcome {
             RequestOutcome::Success(value) => Self::Success { raw: value },
             RequestOutcome::Error(RpcError { code, message, .. }) => Self::Error { code, message },
@@ -161,57 +152,89 @@ impl RawOutcome {
 
 pub(crate) async fn run(
     fixture: &Fixture,
-    servers: &mut StartedServers,
-) -> anyhow::Result<ExecutionSummary> {
-    let mut results = Vec::new();
-    let total_queries = fixture.query_cases().len();
-
-    for (query_index, query_case) in fixture.query_cases().iter().enumerate() {
-        // Convert compact fixture entries into typed LSP request payloads at the last boundary.
-        // The stored vector stays easy to audit while serde/gen_lsp_types still own protocol shape.
-        let request = QueryRequest::from_case(fixture, query_case)?;
-        tracing::info!(
-            query_index = query_index + 1,
-            total_queries,
-            label = query_case.label(),
-            method = request.method,
-            "compare-lsp query started"
-        );
-        let rust_glancer = execute_rust_glancer(servers, query_case.kind(), &request).await;
-        tracing::debug!(
-            query_index = query_index + 1,
-            total_queries,
-            label = query_case.label(),
-            method = request.method,
-            server = "rust-glancer",
-            elapsed_ms = rust_glancer.latency().as_millis(),
-            status = rust_glancer.value().status_label(),
-            "compare-lsp query server completed"
-        );
-        let rust_analyzer = execute_rust_analyzer(servers, query_case.kind(), &request).await;
-        tracing::debug!(
-            query_index = query_index + 1,
-            total_queries,
-            label = query_case.label(),
-            method = request.method,
-            server = "rust-analyzer",
-            elapsed_ms = rust_analyzer.latency().as_millis(),
-            status = rust_analyzer.value().status_label(),
-            "compare-lsp query server completed"
-        );
-
-        results.push(QueryExecution {
-            label: query_case.label(),
-            kind: query_case.kind(),
-            target: query_case.target(),
+) -> anyhow::Result<(ExecutionSummary, usize, Vec<super::report::ServerReport>)> {
+    let paths = fixture
+        .query_cases()
+        .iter()
+        .filter_map(QueryCase::source_path)
+        .collect::<rg_std::UniqueVec<_>>();
+    let requests = fixture
+        .query_cases()
+        .iter()
+        .map(|case| QueryRequest::from_case(fixture, case))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let (glancer, glancer_report) = run_sweep(
+        fixture,
+        paths.as_slice(),
+        &requests,
+        ServerKind::RustGlancer,
+    )
+    .await?;
+    let (analyzer, analyzer_report) = run_sweep(
+        fixture,
+        paths.as_slice(),
+        &requests,
+        ServerKind::RustAnalyzer,
+    )
+    .await?;
+    let results = fixture
+        .query_cases()
+        .iter()
+        .zip(glancer.into_iter().zip(analyzer))
+        .map(|(case, (rust_glancer, rust_analyzer))| QueryExecution {
+            label: case.label(),
+            kind: case.kind(),
+            target: case.target(),
             rust_glancer,
             rust_analyzer,
+        })
+        .collect();
+    Ok((
+        ExecutionSummary { results },
+        paths.len(),
+        vec![glancer_report, analyzer_report],
+    ))
+}
+
+async fn run_sweep(
+    fixture: &Fixture,
+    paths: &[&str],
+    requests: &[QueryRequest],
+    kind: ServerKind,
+) -> anyhow::Result<(Vec<RawServerOutcome>, super::report::ServerReport)> {
+    let mut server = RunningServer::spawn(kind, None, None)?;
+    let ready = server.initialize_fixture(fixture.root(), paths).await?;
+    let report = super::report::ServerReport::capture(
+        ready.name(),
+        server.command_label(),
+        ready.initialize_latency(),
+        ready.ready_latency(),
+    );
+    if fixture.uses_dirty_editor_text() {
+        for path in paths {
+            server
+                .change_source_file(fixture.root(), path, fixture.editor_source_text(path)?)
+                .await?;
+        }
+    }
+    let mut results = Vec::with_capacity(requests.len());
+    for (case, request) in fixture.query_cases().iter().zip(requests) {
+        tracing::debug!(
+            server = kind.display_name(),
+            query = case.label(),
+            "compare-lsp query started"
+        );
+        let started_at = Instant::now();
+        let (received_at, outcome) = server
+            .observe_request(request.method, request.params.clone(), QUERY_TIMEOUT)
+            .await;
+        results.push(RawServerOutcome {
+            latency: received_at.duration_since(started_at),
+            value: RawOutcome::from_request(outcome),
         });
     }
-
-    tracing::info!(total_queries, "compare-lsp query execution completed");
-
-    Ok(ExecutionSummary { results })
+    server.shutdown().await?;
+    Ok((results, report))
 }
 
 /// Fully materialized LSP request shared by both servers for one query case.
@@ -450,35 +473,5 @@ impl QueryRequest {
             start: Position::new(0, 0),
             end: Position::new(end_line, end_character),
         })
-    }
-}
-
-async fn execute_rust_glancer(
-    servers: &mut StartedServers,
-    kind: QueryKind,
-    request: &QueryRequest,
-) -> RawServerOutcome {
-    let started_at = Instant::now();
-    let outcome = servers
-        .request_rust_glancer(request.method, request.params.clone(), QUERY_TIMEOUT)
-        .await;
-    RawServerOutcome {
-        latency: started_at.elapsed(),
-        value: RawOutcome::from_request(kind, outcome),
-    }
-}
-
-async fn execute_rust_analyzer(
-    servers: &mut StartedServers,
-    kind: QueryKind,
-    request: &QueryRequest,
-) -> RawServerOutcome {
-    let started_at = Instant::now();
-    let outcome = servers
-        .request_rust_analyzer(request.method, request.params.clone(), QUERY_TIMEOUT)
-        .await;
-    RawServerOutcome {
-        latency: started_at.elapsed(),
-        value: RawOutcome::from_request(kind, outcome),
     }
 }

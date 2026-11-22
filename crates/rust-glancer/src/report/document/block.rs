@@ -35,6 +35,8 @@ pub(crate) enum ReportBlock {
         /// Table note. HTML has room for it; text output can stay terse.
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        page_size: Option<usize>,
         /// Column definitions in display order.
         columns: Vec<ReportColumn>,
         /// Data rows in display order.
@@ -68,6 +70,7 @@ impl ReportBlock {
         key: impl Into<String>,
         title: Option<String>,
         description: Option<String>,
+        page_size: Option<usize>,
         columns: Vec<ReportColumn>,
         rows: Vec<ReportRow>,
     ) -> Self {
@@ -75,6 +78,7 @@ impl ReportBlock {
             key: key.into(),
             title,
             description,
+            page_size,
             columns,
             rows,
         }

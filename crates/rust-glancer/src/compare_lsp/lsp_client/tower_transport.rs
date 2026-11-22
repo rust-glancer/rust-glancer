@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicI64, Ordering},
     },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures::{
@@ -35,7 +35,8 @@ use tower_lsp_server::{
 use super::{RequestOutcome, RpcError};
 
 /// Request IDs that are waiting for a server response.
-type PendingResponses = Arc<Mutex<HashMap<JsonRpcId, oneshot::Sender<JsonRpcResponse>>>>;
+type ReceivedResponse = (Instant, JsonRpcResponse);
+type PendingResponses = Arc<Mutex<HashMap<JsonRpcId, oneshot::Sender<ReceivedResponse>>>>;
 
 /// Async request/notification handle for one spawned LSP process.
 ///
@@ -94,45 +95,31 @@ impl TowerLspTransport {
     async fn wait_for_response(
         &self,
         id: &JsonRpcId,
-        receiver: oneshot::Receiver<JsonRpcResponse>,
-        timeout: Duration,
-    ) -> RequestOutcome {
+        receiver: oneshot::Receiver<ReceivedResponse>,
+        deadline: Instant,
+    ) -> (Instant, RequestOutcome) {
         let mut transport_finished = self.transport_finished.clone();
-        if *transport_finished.borrow() {
-            self.remove_pending(id);
-            return RequestOutcome::TransportFailure {
+        let outcome = tokio::select! {
+            biased;
+            response = receiver => match response {
+                Ok((received_at, response)) if received_at <= deadline => return (received_at, Self::response_outcome(response)),
+                Ok(_) => RequestOutcome::Timeout,
+                Err(_) => RequestOutcome::TransportFailure {
+                    message: "tower LSP response waiter disconnected".to_string(),
+                },
+            },
+            _ = transport_finished.wait_for(|finished| *finished) => RequestOutcome::TransportFailure {
                 message: "tower LSP transport task stopped before response".to_string(),
-            };
+            },
+            () = tokio::time::sleep_until(deadline.into()) => RequestOutcome::Timeout,
+        };
+        self.remove_pending(id);
+        if matches!(outcome, RequestOutcome::Timeout) {
+            let _ = self
+                .notify("$/cancelRequest", serde_json::json!({ "id": id }))
+                .await;
         }
-
-        tokio::select! {
-            response = receiver => {
-                match response {
-                    Ok(response) => Self::response_outcome(response),
-                    Err(_error) => {
-                        self.remove_pending(id);
-                        RequestOutcome::TransportFailure {
-                            message: "tower LSP response waiter disconnected".to_string(),
-                        }
-                    }
-                }
-            }
-            changed = transport_finished.changed() => {
-                self.remove_pending(id);
-                let message = if changed.is_ok() {
-                    "tower LSP transport task stopped before response"
-                } else {
-                    "tower LSP transport finished signal closed before response"
-                };
-                RequestOutcome::TransportFailure {
-                    message: message.to_string(),
-                }
-            }
-            () = tokio::time::sleep(timeout) => {
-                self.remove_pending(id);
-                RequestOutcome::Timeout
-            }
-        }
+        (Instant::now(), outcome)
     }
 
     fn response_outcome(response: JsonRpcResponse) -> RequestOutcome {
@@ -148,17 +135,21 @@ impl TowerLspTransport {
     }
 
     pub(crate) async fn request(
-        &mut self,
+        &self,
         method: &str,
         params: Value,
         timeout: Duration,
-    ) -> RequestOutcome {
+    ) -> (Instant, RequestOutcome) {
         if self.serve_task.is_finished() {
-            return RequestOutcome::TransportFailure {
-                message: "tower LSP transport task is not running".to_string(),
-            };
+            return (
+                Instant::now(),
+                RequestOutcome::TransportFailure {
+                    message: "tower LSP transport task is not running".to_string(),
+                },
+            );
         }
 
+        let deadline = Instant::now() + timeout;
         let id = self.next_request_id();
         let request = JsonRpcRequest::build(method.to_string())
             .id(id.clone())
@@ -172,16 +163,19 @@ impl TowerLspTransport {
 
         if let Err(error) = self.outbound.unbounded_send(request) {
             self.remove_pending(&id);
-            return RequestOutcome::TransportFailure {
-                message: format!("failed to enqueue LSP request `{method}`: {error}"),
-            };
+            return (
+                Instant::now(),
+                RequestOutcome::TransportFailure {
+                    message: format!("failed to enqueue LSP request `{method}`: {error}"),
+                },
+            );
         }
 
-        self.wait_for_response(&id, response_receiver, timeout)
+        self.wait_for_response(&id, response_receiver, deadline)
             .await
     }
 
-    pub(crate) async fn notify(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
+    pub(crate) async fn notify(&self, method: &str, params: Value) -> anyhow::Result<()> {
         let notification = JsonRpcRequest::build(method.to_string())
             .params(params)
             .finish();
@@ -267,7 +261,7 @@ impl Sink<JsonRpcResponse> for TowerResponseSink {
             .expect("pending response mutex should not be poisoned")
             .remove(&id)
         {
-            let _ = sender.send(response);
+            let _ = sender.send((Instant::now(), response));
         }
         Ok(())
     }
@@ -285,11 +279,20 @@ impl Sink<JsonRpcResponse> for TowerResponseSink {
 pub(crate) struct ServerNotification {
     method: String,
     params: Option<Value>,
+    received_at: Instant,
 }
 
 impl ServerNotification {
     pub(crate) fn new(method: String, params: Option<Value>) -> Self {
-        Self { method, params }
+        Self {
+            method,
+            params,
+            received_at: Instant::now(),
+        }
+    }
+
+    pub(crate) fn received_at(&self) -> Instant {
+        self.received_at
     }
 
     pub(crate) fn method(&self) -> &str {
@@ -439,7 +442,7 @@ mod tests {
             .expect("response should be accepted");
 
         let response = block_on(receiver).expect("matching waiter should receive the response");
-        let (_id, result) = response.into_parts();
+        let (_id, result) = response.1.into_parts();
         assert_eq!(
             result.expect("response should be successful"),
             json!("ok"),

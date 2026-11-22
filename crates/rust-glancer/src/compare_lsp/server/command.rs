@@ -4,7 +4,7 @@
 //! background diagnostics and build work where possible. Keeping these knobs here makes process
 //! lifecycle code agnostic to the particular server being spawned.
 
-use std::{env, ffi::OsString};
+use std::{env, ffi::OsString, path::Path};
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
@@ -13,13 +13,13 @@ const RUST_ANALYZER_ENV: &str = "RUST_GLANCER_COMPARE_LSP_RUST_ANALYZER";
 
 /// Server implementation used for one side of the comparison.
 #[derive(Debug, Clone, Copy)]
-pub(super) enum ServerKind {
+pub(crate) enum ServerKind {
     RustGlancer,
     RustAnalyzer,
 }
 
 impl ServerKind {
-    pub(super) fn display_name(self) -> &'static str {
+    pub(crate) fn display_name(self) -> &'static str {
         match self {
             Self::RustGlancer => "rust-glancer",
             Self::RustAnalyzer => "rust-analyzer",
@@ -27,28 +27,33 @@ impl ServerKind {
     }
 
     /// Resolve the executable and arguments used to start this server.
-    pub(super) fn command_spec(self) -> anyhow::Result<CommandSpec> {
+    pub(crate) fn command_spec(self, executable: Option<&Path>) -> anyhow::Result<CommandSpec> {
         match self {
             Self::RustGlancer => {
-                let executable = env::current_exe()
-                    .context("Resolving current rust-glancer executable failed")?;
+                let executable = match executable {
+                    Some(path) => path.to_path_buf(),
+                    None => env::current_exe()
+                        .context("Resolving current rust-glancer executable failed")?,
+                };
                 Ok(CommandSpec::new(executable, [OsString::from("lsp")]))
             }
             Self::RustAnalyzer => {
-                let executable = env::var_os(RUST_ANALYZER_ENV)
+                let executable = executable
+                    .map(|path| path.as_os_str().to_owned())
+                    .or_else(|| env::var_os(RUST_ANALYZER_ENV))
                     .unwrap_or_else(|| OsString::from("rust-analyzer"));
                 Ok(CommandSpec::new(executable, []))
             }
         }
     }
 
-    /// Start with fresh semantic results and disable competing background work. Reset only the
-    /// analysis cache: Cargo artifacts can supply generated source needed by both servers.
-    pub(super) fn initialization_options(self) -> Value {
+    /// Disable background diagnostics and let the startup workload decide whether to reuse
+    /// Rust Glancer's analysis cache. Cargo artifacts can supply generated source to either server.
+    pub(crate) fn initialization_options(self, reuse_cache: bool, build_scripts: bool) -> Value {
         match self {
             Self::RustGlancer => json!({
                 "cache": {
-                    "reuseOnStartup": false,
+                    "reuseOnStartup": reuse_cache,
                 },
                 "diagnostics": {
                     "onStartup": false,
@@ -59,9 +64,14 @@ impl ServerKind {
                 "checkOnSave": false,
                 "cargo": {
                     "buildScripts": {
-                        "enable": false,
+                        "enable": build_scripts,
+                        "overrideCommand": build_scripts.then_some([
+                            "cargo", "check", "--quiet", "--locked", "--offline", "--message-format=json",
+                        ]),
+                        "useRustcWrapper": !build_scripts,
                     },
                 },
+                "cachePriming": { "enable": true },
                 "diagnostics": {
                     "enable": false,
                 },
@@ -75,9 +85,9 @@ impl ServerKind {
 
 /// Process command line plus a human-readable label for diagnostics.
 #[derive(Debug)]
-pub(super) struct CommandSpec {
-    pub(super) executable: OsString,
-    pub(super) arguments: Vec<OsString>,
+pub(crate) struct CommandSpec {
+    pub(crate) executable: OsString,
+    pub(crate) arguments: Vec<OsString>,
 }
 
 impl CommandSpec {
@@ -88,7 +98,7 @@ impl CommandSpec {
         }
     }
 
-    pub(super) fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         let mut parts = vec![self.executable.to_string_lossy().into_owned()];
         parts.extend(
             self.arguments

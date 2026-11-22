@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, sync::OnceLock};
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
@@ -18,9 +18,18 @@ use self::compare_lsp::CliFixture;
 #[command(name = "rust-glancer")]
 #[command(about = "An incomplete-by-design Rust LSP implementation")]
 #[command(version = rg_lsp_server::VERSION)]
+#[command(long_version = cli_version())]
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+fn cli_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    match option_env!("RUST_GLANCER_BUILD_SOURCE") {
+        Some(source) => VERSION.get_or_init(|| format!("{} ({source})", rg_lsp_server::VERSION)),
+        None => rg_lsp_server::VERSION,
+    }
 }
 
 /// Top-level subcommands supported by the CLI.
@@ -50,15 +59,17 @@ enum Command {
         #[clap(long, value_enum, default_value = "text")]
         format: self::analyze::OutputFormat,
     },
-    /// Compare rust-glancer LSP query behavior against another LSP server from fresh analysis state.
+    /// Benchmark editor workloads or run a compatibility sweep.
     CompareLsp {
-        fixture: CliFixture,
+        fixture: Option<CliFixture>,
         /// Override the fixture root. Defaults to the selected fixture's configured root.
-        #[clap(long)]
+        #[clap(long, requires = "fixture")]
         path: Option<PathBuf>,
         /// Render the comparison report for humans or CI tooling.
-        #[clap(long, value_enum, default_value = "text")]
-        format: self::compare_lsp::OutputFormat,
+        #[clap(long, value_enum)]
+        format: Option<self::compare_lsp::OutputFormat>,
+        #[command(flatten)]
+        benchmark: self::compare_lsp::BenchmarkArgs,
     },
     /// Regenerate checked-in parser and syntax files.
     Codegen {
@@ -100,13 +111,14 @@ fn main() -> anyhow::Result<()> {
             fixture,
             path,
             format,
+            benchmark,
         } => {
             logging::init_plain_tracing();
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .context("while attempting to build LSP comparison Tokio runtime")?;
-            runtime.block_on(compare_lsp::run(fixture, path, format))
+            runtime.block_on(compare_lsp::run(fixture, path, format, benchmark))
         }
         Command::Codegen { command, check } => {
             command.run(check);
