@@ -380,12 +380,21 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
                     .expect("references"),
                 locations
             );
-            assert!(
-                analysis
-                    .rename(context.crate_ref, context.file, offset, "Renamed", query)
-                    .expect("rename")
-                    .is_none(),
-                "the copied constructor needs an edit for the rename to be complete",
+            let rename = analysis
+                .rename(context.crate_ref, context.file, offset, "Renamed", query)
+                .expect("rename")
+                .expect("the copied constructor can be renamed");
+            assert_eq!(
+                rename
+                    .edits
+                    .iter()
+                    .map(|edit| (edit.span, edit.new_text.as_str()))
+                    .collect::<Vec<_>>(),
+                locations
+                    .iter()
+                    .filter(|location| location.span.len() == 6)
+                    .map(|location| (location.span, "Renamed"))
+                    .collect::<Vec<_>>(),
             );
         });
     };

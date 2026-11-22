@@ -9,6 +9,7 @@ mod format_captures;
 mod generated_modules;
 mod initializers;
 mod lazy_members;
+mod macro_rename;
 mod member_identity;
 mod utils;
 

@@ -128,13 +128,13 @@ fn escaped() { let _ = format!("{$escaped$\u{56}ALUE}"); }
 }
 
 #[test]
-fn rename_requires_format_literals_to_be_forwarded_without_duplication() {
+fn rename_requires_every_copy_of_a_format_literal_to_capture_the_same_name() {
     for (case, expansion, renameable) in [
         ("single use", "format_args!($template);", true),
         (
             "same target",
             "format_args!($template); format_args!($template);",
-            false,
+            true,
         ),
         (
             "shadowed target",

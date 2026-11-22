@@ -367,6 +367,37 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Self { db }
     }
 
+    /// A physical range can occur in several bodies when a module file is included twice.
+    /// Use declaration metadata to find these owners before opening their occurrences.
+    pub fn body_owners_at(
+        &self,
+        krate: CrateRef,
+        file: FileId,
+        span: Span,
+    ) -> anyhow::Result<Vec<BodyKey>> {
+        let mut keys = rg_std::UniqueVec::new();
+        for owner in self
+            .db
+            .body_ir
+            .owners(krate, SourceSelection::in_range(file, span))?
+        {
+            rg_std::check_cancel!(self.db, "macro argument owners");
+            if self
+                .db
+                .body_ir
+                .declaration_location(krate, owner.source, owner.location)?
+                .span
+                .contains_span(span)
+            {
+                keys.push(BodyKey {
+                    krate,
+                    owner: owner.owner,
+                });
+            }
+        }
+        Ok(keys.into_vec())
+    }
+
     /// Find caller-written format templates through macro expansion, without loading bodies.
     pub fn format_string_spans(
         &self,

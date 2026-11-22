@@ -43,7 +43,7 @@ async fn rename_returns_workspace_edit_for_clean_document() {
 }
 
 #[tokio::test]
-async fn copied_macro_names_are_references_and_block_partial_rename() {
+async fn copied_macro_names_are_references_and_rename_together() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -61,7 +61,7 @@ async fn copied_macro_names_are_references_and_block_partial_rename() {
         pub fn demo() {
             let mut ac$acc$c = 0_u8; // references("accumulator references", true)
             increment!(acc);
-            bind!(i$0t => drop(it)); // references("copied binding references", true)
+            bind!(i$0t => drop(i$binding_use$t)); // references("copied binding declaration", true), references("copied binding use", true)
             bind!(value => drop(val$0ue)); // highlight("copied binding highlights")
         }
         "#,
@@ -75,7 +75,11 @@ async fn copied_macro_names_are_references_and_block_partial_rename() {
             /src/lib.rs:6:12-6:15
             /src/lib.rs:7:15-7:18
 
-            // copied binding references
+            // copied binding declaration
+            /src/lib.rs:8:10-8:12
+            /src/lib.rs:8:21-8:23
+
+            // copied binding use
             /src/lib.rs:8:10-8:12
             /src/lib.rs:8:21-8:23
 
@@ -86,11 +90,27 @@ async fn copied_macro_names_are_references_and_block_partial_rename() {
         .await;
     fixture
         .check_rename(
-            "decline partial macro rename",
+            "rename accumulator through macro",
             "acc",
             "total",
             expect![[r#"
-                none // decline partial macro rename
+                // rename accumulator through macro
+                /src/lib.rs
+                  6:12-6:15 -> total
+                  7:15-7:18 -> total
+            "#]],
+        )
+        .await;
+    fixture
+        .check_rename(
+            "rename binding through its copied use",
+            "binding_use",
+            "item",
+            expect![[r#"
+                // rename binding through its copied use
+                /src/lib.rs
+                  8:10-8:12 -> item
+                  8:21-8:23 -> item
             "#]],
         )
         .await;

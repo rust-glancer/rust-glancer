@@ -3,20 +3,31 @@
 //! Rename builds on the same symbol identity used by goto-definition and references, but keeps a
 //! stricter policy: only declaration-like names with unambiguous source occurrences become edits.
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, SourceLocationKind, Span, identity::DeclarationRef};
+use rg_ir_model::{
+    BodyKey, CrateRef, DefMapRef, FileId, SourceLocationKind, Span, identity::DeclarationRef,
+};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
     source::{IndexedSourceProvenance, IndexedSourceSurface, SourceOccurrenceView},
 };
+use rg_std::ExpectedUnique;
 
 use super::references::{ReferenceResolver, ReferenceSearchKind};
 use crate::{
     Analysis, ReferenceQuery, SymbolKind,
     model::{RenameEdit, RenameResult, RenameTarget, SymbolAt},
-    source_symbol::{SourceSymbol, SourceSymbolResolver, SourceSymbolRole},
+    source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver, SourceSymbolRole},
 };
+
+struct RenameSubject {
+    target: RenameTarget,
+    identity: DeclarationRef,
+    declaration: Declaration,
+}
 
 /// Plans semantic rename edits from the same source-symbol identity used by references.
 ///
@@ -40,14 +51,9 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<RenameTarget>> {
-        let Some(symbol) = self
-            .analysis
-            .source_symbol_at_for_query(crate_ref, file_id, offset)?
-        else {
-            return Ok(None);
-        };
-
-        self.rename_target_for_symbol(symbol)
+        Ok(self
+            .rename_subject(crate_ref, file_id, offset)?
+            .map(|(subject, _)| subject.target))
     }
 
     /// Produces all text edits needed to rename the symbol selected at `offset`.
@@ -67,42 +73,22 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             "rename target `{new_name}` is not a supported Rust identifier"
         );
 
-        // First resolve the cursor the same way hover/goto/references do. If there is no semantic
-        // symbol under the cursor, rename is simply unavailable at this position.
-        let Some(symbol) = self
-            .analysis
-            .source_symbol_at_for_query(crate_ref, file_id, offset)?
+        let Some((subject, mut arguments)) = self.rename_subject(crate_ref, file_id, offset)?
         else {
             return Ok(None);
         };
-
-        // Prepare-rename policy is reused here so direct rename requests cannot edit symbols that
-        // the editor would have rejected during its prepare phase.
-        let Some(rename_target) = self.rename_target_for_symbol(symbol.clone())? else {
-            return Ok(None);
-        };
-
-        // The selected symbol must resolve to one canonical declaration. References use that
-        // declaration set as the semantic identity for every occurrence we might edit.
-        let declarations = self.unique_declarations_for_symbol(symbol.symbol().clone())?;
-        let [declaration_ref] = declarations.as_slice() else {
-            return Ok(None);
-        };
-        let Some(declaration) =
-            DeclarationView::new(self.analysis.view_db()).declaration(*declaration_ref)?
-        else {
-            return Ok(None);
-        };
-        // The prepare-rename placeholder preserves written text, which can contain escapes in a
-        // format string. Match occurrences by the declaration's semantic name instead.
-        let Some(old_name) = declaration.semantic_name() else {
-            return Ok(None);
-        };
+        let old_name = subject
+            .declaration
+            .semantic_name()
+            .expect("rename subject has a name");
 
         // Reference resolution gives us source occurrences. Rename then handles the final surface
         // rewrite, because shorthand records may need a larger replacement than the selected span.
         let symbols = ReferenceResolver::new(self.analysis, query)
-            .source_symbols_matching_declarations(&declarations, ReferenceSearchKind::Rename)?;
+            .source_symbols_matching_declarations(
+                &[subject.identity],
+                ReferenceSearchKind::Rename,
+            )?;
         let mut edits = Vec::new();
         for symbol in symbols {
             if self.source_symbol_uses_different_spelling(&symbol, old_name)? {
@@ -110,7 +96,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             }
             // A rename of `acc` must also update `increment!(acc)`. If we cannot rewrite
             // that use safely, decline the whole rename so the declaration and use stay in sync.
-            if !Self::is_renameable_source(&symbol) {
+            if !arguments.accepts(&symbol)? {
                 return Ok(None);
             }
             edits.push(
@@ -124,7 +110,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         let edits = Self::normalize_rename_edits(edits)?;
 
         Ok(Some(RenameResult {
-            target: rename_target,
+            target: subject.target,
             edits,
         }))
     }
@@ -316,25 +302,33 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         Ok(normalized)
     }
 
-    /// Applies rename eligibility rules to a resolved source symbol.
-    fn rename_target_for_symbol(
+    /// Check that both the cursor and the declaration can be edited. Prepare-rename can
+    /// return the checked target. Full rename can reuse the checked macro inputs during its scan.
+    fn rename_subject(
         &self,
-        symbol: SourceSymbol,
-    ) -> anyhow::Result<Option<RenameTarget>> {
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<(RenameSubject, MacroArgumentEdits<'_, 'a, 'db>)>> {
+        let Some(symbol) = self
+            .analysis
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
+        else {
+            return Ok(None);
+        };
         // Structural candidates exist so references can highlight syntax tied to a symbol, but
         // they are not independently renameable cursor targets.
-        if symbol.role() == SourceSymbolRole::Structural || !Self::is_renameable_source(&symbol) {
+        if symbol.role() == SourceSymbolRole::Structural {
             return Ok(None);
         }
 
         // Rename needs one declaration identity. Ambiguous symbols are safe for navigation-style
         // features, but producing edits from them would risk changing unrelated code.
-        let declarations = self.unique_declarations_for_symbol(symbol.symbol().clone())?;
-        let [declaration_ref] = &declarations[..] else {
+        let Some(declaration_ref) = self.unique_declaration(symbol.symbol().clone())? else {
             return Ok(None);
         };
         let Some(declaration) =
-            DeclarationView::new(self.analysis.view_db()).declaration(*declaration_ref)?
+            DeclarationView::new(self.analysis.view_db()).declaration(declaration_ref)?
         else {
             return Ok(None);
         };
@@ -344,13 +338,23 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         if !Self::declaration_occurrence_matches_canonical(&symbol, &declaration) {
             return Ok(None);
         }
-        if !Self::is_renameable_declaration(&declaration) {
+        if declaration.exact_name_location().is_none()
+            || matches!(declaration.kind(), SymbolKind::Impl | SymbolKind::Module)
+        {
             return Ok(None);
         }
-        let Some(name) = declaration.semantic_name() else {
+        let Some(name) = declaration.semantic_name().map(|name| name.as_str()) else {
             return Ok(None);
         };
-        if self.source_symbol_uses_different_spelling(&symbol, name)? {
+        if name.is_empty()
+            || matches!(name, "self" | "Self" | "crate" | "super")
+            || self.source_symbol_uses_different_spelling(&symbol, name)?
+        {
+            return Ok(None);
+        }
+
+        let mut arguments = MacroArgumentEdits::new(self, declaration_ref);
+        if !arguments.accepts(&symbol)? || !arguments.accepts_declaration(&declaration)? {
             return Ok(None);
         }
 
@@ -359,43 +363,27 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         // re-rendering the semantic name with declaration-site syntax rules.
         let placeholder = self.source_text_for_span(&symbol, symbol.span())?;
 
-        Ok(Some(RenameTarget {
-            file_id: symbol.file_id(),
-            span: symbol.span(),
-            placeholder,
-        }))
+        let subject = RenameSubject {
+            target: RenameTarget {
+                file_id: symbol.file_id(),
+                span: symbol.span(),
+                placeholder,
+            },
+            identity: declaration_ref,
+            declaration,
+        };
+        Ok(Some((subject, arguments)))
     }
 
-    /// Copied input is eligible only for format captures with a known single copy of the literal.
-    /// A second copy of `"{name}"` may be ordinary string data that would change along with
-    /// the capture.
-    fn is_renameable_source(symbol: &SourceSymbol) -> bool {
-        match symbol.provenance() {
-            IndexedSourceProvenance::Direct => true,
-            IndexedSourceProvenance::MacroArgument { duplicated } => {
-                // TODO: Permit duplicated inputs once every active output use can be checked,
-                // including ordinary string data and generated bodies that are not lowered.
-                duplicated == Some(false)
-                    && matches!(symbol.surface(), IndexedSourceSurface::FormatCapture)
-            }
-        }
-    }
-
-    /// Resolves a source symbol to declarations while preserving first-seen order.
-    fn unique_declarations_for_symbol(
-        &self,
-        symbol: SymbolAt,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
+    fn unique_declaration(&self, symbol: SymbolAt) -> anyhow::Result<Option<DeclarationRef>> {
         let declarations =
             SourceSymbolResolver::new(self.analysis.view_db()).declarations_for_symbol(symbol)?;
-        let mut unique = Vec::new();
+        let mut unique = ExpectedUnique::new();
         for declaration in declarations {
             rg_std::check_cancel!(self.analysis, "rename edits");
-            if !unique.contains(&declaration) {
-                unique.push(declaration);
-            }
+            unique.push(declaration);
         }
-        Ok(unique)
+        Ok(unique.into_option())
     }
 
     /// Checks that declaration-like cursor symbols point at the canonical declaration span.
@@ -418,24 +406,6 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
                     .map(|location| location.span)
     }
 
-    /// Returns whether the declaration kind and canonical name can safely be renamed.
-    fn is_renameable_declaration(declaration: &Declaration) -> bool {
-        let Some(location) = declaration.exact_name_location() else {
-            return false;
-        };
-        // TODO: Allow editing copied declaration names once every affected use of the input
-        // can be checked. Rename can start on an ordinary reference to one of these names.
-        if location.kind == SourceLocationKind::MacroArgument
-            || matches!(declaration.kind(), SymbolKind::Impl | SymbolKind::Module)
-        {
-            return false;
-        }
-
-        declaration.semantic_name().is_some_and(|name| {
-            !name.is_empty() && !matches!(name.as_str(), "self" | "Self" | "crate" | "super")
-        })
-    }
-
     /// Returns whether a requested replacement can be emitted as a Rust identifier token.
     fn is_supported_new_name(name: &str) -> bool {
         // TODO: Support non-ASCII identifiers once rename edits verify lexer token boundaries.
@@ -453,6 +423,166 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Converts source spelling into the identifier identity used by semantic lookup.
     fn identifier_semantic_spelling(name: &str) -> &str {
         name.strip_prefix("r#").unwrap_or(name)
+    }
+}
+
+type BodyMacroOccurrences = HashMap<(FileId, Span), Vec<SourceSymbol>>;
+
+/// Request-local proof that a text edit can update all uses of an input token.
+///
+/// If `both!(run)` emits `left.run()` and `right.run()`, a reference search for the left
+/// method can return just one of them. Editing `run` in the invocation changes both calls.
+///
+/// Read all occurrences at the written span before accepting the edit. Compare the number
+/// of distinct copy IDs with lowering's total to catch uses such as `stringify!(run)` that
+/// have no semantic occurrence to look up.
+struct MacroArgumentEdits<'a, 'analysis, 'db> {
+    resolver: &'a RenameResolver<'analysis, 'db>,
+    declaration: DeclarationRef,
+    owners: HashMap<BodyKey, BodyMacroOccurrences>,
+    accepted: HashSet<(CrateRef, FileId, Span)>,
+}
+
+impl<'a, 'analysis, 'db> MacroArgumentEdits<'a, 'analysis, 'db> {
+    fn new(resolver: &'a RenameResolver<'analysis, 'db>, declaration: DeclarationRef) -> Self {
+        Self {
+            resolver,
+            declaration,
+            owners: HashMap::new(),
+            accepted: HashSet::new(),
+        }
+    }
+
+    fn accepts_declaration(&mut self, declaration: &Declaration) -> anyhow::Result<bool> {
+        let location = declaration
+            .exact_name_location()
+            .expect("rename subject has an exact name location");
+        if location.kind != SourceLocationKind::MacroArgument {
+            return Ok(true);
+        }
+        // A cursor on a direct use still needs to prove the macro input that names its declaration.
+        let DefMapRef::Body(body) = self.declaration.origin() else {
+            return Ok(false);
+        };
+        let symbol = self
+            .occurrences(body.key())?
+            .get(&(declaration.file_id(), location.span))
+            .and_then(|symbols| {
+                symbols
+                    .iter()
+                    .find(|symbol| symbol.role() == SourceSymbolRole::Declaration)
+            })
+            .cloned();
+        match symbol {
+            Some(symbol) => self.accepts(&symbol),
+            None => Ok(false),
+        }
+    }
+
+    #[rg_std::cancelable("macro argument rename", token = self.resolver.analysis)]
+    fn accepts(&mut self, symbol: &SourceSymbol) -> anyhow::Result<bool> {
+        let usage = match symbol.provenance() {
+            IndexedSourceProvenance::Direct => return Ok(true),
+            IndexedSourceProvenance::MacroArgument { usage: Some(usage) } => usage,
+            IndexedSourceProvenance::MacroArgument { usage: None } => return Ok(false),
+        };
+        let Some(format_capture) = Self::format_capture(symbol) else {
+            return Ok(false);
+        };
+
+        let location = (symbol.crate_ref(), symbol.file_id(), symbol.span());
+        if self.accepted.contains(&location) {
+            return Ok(true);
+        }
+        let resolver = self.resolver;
+        let declaration = self.declaration;
+        let view = SourceOccurrenceView::new(resolver.analysis.view_db());
+        // A file included by two modules can give the same bytes two meanings. Check each
+        // containing owner in the package's targets, starting from the physical range.
+        let mut selected_seen = false;
+        for (krate, _) in resolver
+            .analysis
+            .workspace
+            .targets_for_package(usage.owner.krate.package)
+        {
+            for owner in view.body_owners_at(krate, symbol.file_id(), symbol.span())? {
+                let Some(occurrences) = self
+                    .occurrences(owner)?
+                    .get(&(symbol.file_id(), symbol.span()))
+                else {
+                    return Ok(false);
+                };
+                // Several source occurrences can describe one output token. Check every
+                // meaning and credit each copy only once toward the total.
+                let mut copies = HashSet::new();
+                let mut total = ExpectedUnique::new();
+                for occurrence in occurrences {
+                    rg_std::check_cancel!(resolver.analysis, "macro argument rename");
+                    let IndexedSourceProvenance::MacroArgument { usage: Some(other) } =
+                        occurrence.provenance()
+                    else {
+                        return Ok(false);
+                    };
+                    if other.owner != owner
+                        || Self::format_capture(occurrence) != Some(format_capture)
+                        || resolver.unique_declaration(occurrence.symbol().clone())?
+                            != Some(declaration)
+                    {
+                        return Ok(false);
+                    }
+                    copies.insert(other.copy);
+                    total.push(other.total_copies);
+                }
+                if total.into_option().map(|total| total as usize) != Some(copies.len()) {
+                    return Ok(false);
+                }
+                // Coverage in other owners is insufficient if the occurrence that prompted
+                // this edit is missing from its own owner's scan.
+                selected_seen |= owner == usage.owner && copies.contains(&usage.copy);
+            }
+        }
+        if selected_seen {
+            self.accepted.insert(location);
+        }
+        Ok(selected_seen)
+    }
+
+    fn occurrences(&mut self, owner: BodyKey) -> anyhow::Result<&BodyMacroOccurrences> {
+        // A rename can check several arguments in the same body. Group the unfiltered
+        // occurrences by written range so all those checks share one scan.
+        let occurrences = match self.owners.entry(owner) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let index = SourceSymbolIndex::new(self.resolver.analysis.view_db());
+                let mut by_span = BodyMacroOccurrences::new();
+                for occurrence in index.symbols_in_body(owner)? {
+                    rg_std::check_cancel!(self.resolver.analysis, "macro argument rename");
+                    if matches!(
+                        occurrence.provenance(),
+                        IndexedSourceProvenance::MacroArgument { .. }
+                    ) {
+                        by_span
+                            .entry((occurrence.file_id(), occurrence.span()))
+                            .or_default()
+                            .push(occurrence);
+                    }
+                }
+                entry.insert(by_span)
+            }
+        };
+
+        Ok(occurrences)
+    }
+
+    /// Shorthand rewrites can change several tokens, so they need a separate proof.
+    fn format_capture(symbol: &SourceSymbol) -> Option<bool> {
+        match symbol.surface() {
+            IndexedSourceSurface::Plain | IndexedSourceSurface::RecordFieldKeyExplicit => {
+                Some(false)
+            }
+            IndexedSourceSurface::FormatCapture => Some(true),
+            _ => None,
+        }
     }
 }
 
