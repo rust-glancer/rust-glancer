@@ -61,41 +61,42 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     /// Returns body-local candidates that can answer an editor query at this exact offset.
     pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, ReadError> {
-        let Some(body_ref) = self.body_at()? else {
-            return Ok(Vec::new());
-        };
-        let Some(body) = self.db.body_ir.body(body_ref)? else {
-            return Ok(Vec::new());
-        };
-
         let mut candidates = Vec::new();
-        candidates.extend(self.candidate_at_body(body_ref, body)?);
-        TypePathSourceScanner::at(body_ref, body, self.file_id, self.offset, &mut candidates)
-            .scan();
-        BodyPathSourceScanner::at(body_ref, body, self.file_id, self.offset, &mut candidates)
-            .scan();
-
-        Ok(candidates)
-    }
-
-    /// Finds the innermost enclosing body at the cursor offset.
-    fn body_at(&self) -> Result<Option<BodyRef>, ReadError> {
-        let mut best = NarrowestSourceSite::new();
-
+        let mut written = NarrowestSourceSite::new();
         for (body_ref, body) in
             self.db
                 .body_ir
                 .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
         {
-            if !body.source().span.contains(self.offset) {
+            let source = body.source();
+            if source.file_id != self.file_id || !source.span.contains(self.offset) {
                 continue;
             }
-
-            let body_len = body.source().span.len();
-            best.consider(body_ref, body_len);
+            if source.is_written() {
+                written.consider((body_ref, body), source.span.len());
+            } else {
+                // Two functions emitted by `make!(run)` can both use the invocation as
+                // their source range. Scan both bodies because each can give the same
+                // written `run` a different meaning.
+                self.scan_body(body_ref, body, &mut candidates)?;
+            }
         }
+        if let Some((body_ref, body)) = written.finish() {
+            self.scan_body(body_ref, body, &mut candidates)?;
+        }
+        Ok(candidates)
+    }
 
-        Ok(best.finish())
+    fn scan_body(
+        &self,
+        body_ref: BodyRef,
+        body: BodyView<'_>,
+        candidates: &mut Vec<BodySourceCandidate>,
+    ) -> Result<(), ReadError> {
+        candidates.extend(self.candidate_at_body(body_ref, body)?);
+        TypePathSourceScanner::at(body_ref, body, self.file_id, self.offset, candidates).scan();
+        BodyPathSourceScanner::at(body_ref, body, self.file_id, self.offset, candidates).scan();
+        Ok(())
     }
 
     /// Pick the narrowest source span, retaining expanded uses that share that span.
@@ -112,9 +113,8 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         let sites = BodyScanSites::new(body);
         let record_shorthand_values = sites.record_expr_shorthand_value_ids();
 
-        // `body_at` chooses the innermost enclosing body. When the cursor is on a nested
-        // fn/const/static declaration name, that body owns the initializer/block, while the
-        // declaration item still lives in the parent body-local item store.
+        // The cursor can be on a nested fn/const/static name. Its body owns the initializer
+        // or block, while its declaration still belongs to the parent body-local item store.
         self.consider_body_owner_declaration(body, &mut best)?;
 
         // Macro expansion can map many generated nodes back to the invocation span. Give the

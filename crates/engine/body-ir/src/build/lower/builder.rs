@@ -110,7 +110,7 @@ impl BodyBuilder {
             unmodeled_syntax,
         } = self;
 
-        sources.provenance.finish();
+        sources.provenance.finish(!source.is_written());
         let source = sources.record(source);
         LoweredBodyData {
             body: BodyData::new(

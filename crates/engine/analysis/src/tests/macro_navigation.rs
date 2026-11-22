@@ -368,6 +368,105 @@ fn references_keep_both_meanings_of_a_copied_macro_name() {
 }
 
 #[test]
+fn generated_sibling_bodies_keep_each_meaning_of_a_copied_name() {
+    check_analysis_queries(
+        r#"
+//- /macros/src/lib.rs crate:generated_definitions root:macros
+pub struct Left;
+pub struct Right;
+impl Left { pub fn $left$run(&self) -> u8 { 1 } }
+impl Right { pub fn $right$run(&self) -> bool { true } }
+
+#[macro_export]
+macro_rules! forward { ($value:expr) => { $value }; }
+#[macro_export]
+macro_rules! emit {
+    ($member:ident) => {
+        fn first() { $crate::forward!($crate::Left.$member()); }
+        fn second() { $crate::Right.$member(); }
+    };
+}
+
+//- /app/src/lib.rs crate:generated_consumer root:app deps:generated_definitions
+generated_definitions::emit!(r$module$un);
+pub fn nested() { generated_definitions::emit!(r$local$un); }
+struct Host;
+impl Host { generated_definitions::emit!(r$member$un); }
+"#,
+        &[
+            AnalysisQuery::hover("module expansion", "module").in_lib("generated_consumer"),
+            AnalysisQuery::goto("module expansion", "module").in_lib("generated_consumer"),
+            AnalysisQuery::hover("body-local expansion", "local").in_lib("generated_consumer"),
+            AnalysisQuery::goto("body-local expansion", "local").in_lib("generated_consumer"),
+            AnalysisQuery::goto("member expansion", "member").in_lib("generated_consumer"),
+            AnalysisQuery::references(
+                "references in generated bodies",
+                "left",
+                ReferenceQuery::all(),
+            )
+            .in_lib("generated_definitions"),
+            AnalysisQuery::references(
+                "right references in generated bodies",
+                "right",
+                ReferenceQuery::all(),
+            )
+            .in_lib("generated_definitions"),
+        ],
+        expect![[r#"
+            // module expansion
+            range: 1:30-1:33
+            block:
+              kind: method
+              path: generated_definitions::Left::run
+              signature:
+                pub fn run(&self) -> u8
+            block:
+              kind: method
+              path: generated_definitions::Right::run
+              signature:
+                pub fn run(&self) -> bool
+
+            // module expansion
+            fn run @ 3:20-3:23
+            fn run @ 4:21-4:24
+
+            // body-local expansion
+            range: 2:48-2:51
+            block:
+              kind: method
+              path: generated_definitions::Left::run
+              signature:
+                pub fn run(&self) -> u8
+            block:
+              kind: method
+              path: generated_definitions::Right::run
+              signature:
+                pub fn run(&self) -> bool
+
+            // body-local expansion
+            fn run @ 3:20-3:23
+            fn run @ 4:21-4:24
+
+            // member expansion
+            fn run @ 3:20-3:23
+            fn run @ 4:21-4:24
+
+            // references in generated bodies
+            `run` @ generated_consumer/src/lib.rs:1:30-1:33
+            `run` @ generated_consumer/src/lib.rs:2:48-2:51
+            `run` @ generated_consumer/src/lib.rs:4:42-4:45
+            `run` @ generated_definitions/src/lib.rs:3:20-3:23
+
+            // right references in generated bodies
+            `run` @ generated_consumer/src/lib.rs:1:30-1:33
+            `run` @ generated_consumer/src/lib.rs:2:48-2:51
+            `run` @ generated_consumer/src/lib.rs:4:42-4:45
+            `run` @ generated_definitions/src/lib.rs:4:21-4:24
+        "#]],
+    );
+}
+
+#[test]
 fn selected_cfg_arm_bodies_use_the_written_token_ranges() {
     check_analysis_queries_with_fake_sysroot(
         r#"

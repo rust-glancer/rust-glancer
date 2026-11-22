@@ -333,12 +333,13 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
         0
     );
 
-    // Find References includes `Self` in signatures and constructor expressions. Generated
-    // constructor expressions are excluded, and aliases keep their separate spelling.
+    // Find References includes `Self` in signatures and constructor expressions as well as
+    // the constructor copied from macro input. Aliases keep their separate spelling.
     let expected = [
         "declaration",
         "import",
         "ordinary",
+        "macro",
         "implementation",
         "signature",
         "self_type",
@@ -379,26 +380,12 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
                     .expect("references"),
                 locations
             );
-            let rename = analysis
-                .rename(context.crate_ref, context.file, offset, "Renamed", query)
-                .expect("rename")
-                .expect("type can be renamed");
-            assert_eq!(
-                rename
-                    .edits
-                    .iter()
-                    .map(|edit| edit.span)
-                    .collect::<Vec<_>>(),
-                ["declaration", "import", "ordinary", "implementation"]
-                    .iter()
-                    .map(|name| {
-                        let start = fixture.markers().position(name).offset;
-                        Span {
-                            start,
-                            end: start + 6,
-                        }
-                    })
-                    .collect::<Vec<_>>()
+            assert!(
+                analysis
+                    .rename(context.crate_ref, context.file, offset, "Renamed", query)
+                    .expect("rename")
+                    .is_none(),
+                "the copied constructor needs an edit for the rename to be complete",
             );
         });
     };

@@ -49,7 +49,7 @@ pub enum IndexedSourceProvenance {
     /// A copied input token. Several semantic occurrences can occupy the same written span.
     MacroArgument {
         /// Body lowering checks for duplicated tokens, including copies it cannot lower.
-        /// `None` means duplication is unknown, as it is for item expansions.
+        /// `None` means that the expansion data cannot establish how often the input was used.
         duplicated: Option<bool>,
     },
 }
@@ -814,7 +814,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             if location.kind == SourceLocationKind::MacroArgument {
                 occurrence.provenance = IndexedSourceProvenance::MacroArgument {
                     duplicated: source_map
-                        .map(|map| map.is_duplicated_macro_argument(location.span)),
+                        .and_then(|map| map.macro_argument_duplication(location.span)),
                 };
             }
             if format_capture {

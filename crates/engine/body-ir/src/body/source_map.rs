@@ -14,6 +14,7 @@ use wincode::{SchemaRead, SchemaWrite};
 pub struct BodySourceMap {
     duplicated_macro_arguments: Vec<Span>,
     format_captures: Vec<FormatCaptureSource>,
+    generated_owner: bool,
 }
 
 impl BodySourceMap {
@@ -36,7 +37,8 @@ impl BodySourceMap {
             .push(FormatCaptureSource { expr, span });
     }
 
-    pub(crate) fn finish(&mut self) {
+    pub(crate) fn finish(&mut self, generated_owner: bool) {
+        self.generated_owner = generated_owner;
         // Nested parses can see `>>` as one token or two closing angle brackets. Keep the
         // enclosing range when copied ranges nest, so retained ends increase with their starts.
         self.duplicated_macro_arguments
@@ -59,10 +61,17 @@ impl BodySourceMap {
             .is_some_and(|index| self.format_captures[index].span == span)
     }
 
-    /// Whether an expansion copied the containing input token more than once. This is conservative:
-    /// a later expansion or cfg filter may discard one copy, but we do not prove that here.
-    pub fn is_duplicated_macro_argument(&self, span: Span) -> bool {
-        Self::contains_token_span(&self.duplicated_macro_arguments, span)
+    /// Whether the containing input token was copied more than once.
+    ///
+    /// If `outer!(name)` forwards `name` to two item macros, each generated function may
+    /// see just one copy. Return `None` when the generated body cannot establish whether
+    /// there were other copies.
+    pub fn macro_argument_duplication(&self, span: Span) -> Option<bool> {
+        if Self::contains_token_span(&self.duplicated_macro_arguments, span) {
+            Some(true)
+        } else {
+            (!self.generated_owner).then_some(false)
+        }
     }
 
     fn contains_token_span(tokens: &[Span], span: Span) -> bool {

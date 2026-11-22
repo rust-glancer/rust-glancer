@@ -242,10 +242,14 @@ impl BodyLowering<'_> {
         source: BodySource,
         expanded: ExpandedBodyMacro<SyntaxNode>,
     ) {
-        self.builder
-            .sources
-            .provenance
-            .record_expansion_arguments(expanded.argument_spans(source));
+        // Only a handwritten owner can check its entire chain of body expansions. A
+        // generated owner cannot tell whether an enclosing expansion also used its input.
+        if self.body_source.is_written() {
+            self.builder
+                .sources
+                .provenance
+                .record_expansion_arguments(expanded.argument_spans(source));
+        }
         self.generated_context = Some(GeneratedBodyMacroContext { source, expanded });
     }
 
