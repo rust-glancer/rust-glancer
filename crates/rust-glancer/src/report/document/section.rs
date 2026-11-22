@@ -87,6 +87,12 @@ impl ReportSectionBuilder {
         self
     }
 
+    pub(crate) fn paragraph(&mut self, text: impl Into<String>) -> &mut Self {
+        self.section
+            .push_block(ReportBlock::Paragraph { text: text.into() });
+        self
+    }
+
     pub(crate) fn fields<R>(
         &mut self,
         key: impl Into<String>,

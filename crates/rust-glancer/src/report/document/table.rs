@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
@@ -20,6 +20,10 @@ pub(crate) struct ReportColumn {
     /// Unit used for formatting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unit: Option<ReportUnit>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) filterable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) help: Option<String>,
 }
 
 /// One table row.
@@ -29,6 +33,14 @@ pub(crate) struct ReportColumn {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ReportRow {
     pub(crate) cells: BTreeMap<String, ReportValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) group: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) hints: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) details: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) highlights: BTreeSet<String>,
 }
 
 /// Builder for table blocks.
@@ -39,6 +51,7 @@ pub(crate) struct ReportTableBuilder {
     key: String,
     title: Option<String>,
     description: Option<String>,
+    page_size: Option<usize>,
     columns: Vec<ReportColumn>,
     rows: Vec<ReportRow>,
 }
@@ -49,6 +62,7 @@ impl ReportTableBuilder {
         Self {
             title: Some(default_title(&key)),
             description: None,
+            page_size: None,
             key,
             columns: Vec::new(),
             rows: Vec::new(),
@@ -82,6 +96,8 @@ impl ReportTableBuilder {
             key,
             align,
             unit,
+            filterable: false,
+            help: None,
         });
         self
     }
@@ -98,6 +114,8 @@ impl ReportTableBuilder {
             title: title.into(),
             align,
             unit,
+            filterable: false,
+            help: None,
         });
         self
     }
@@ -126,6 +144,31 @@ impl ReportTableBuilder {
         self.column_as(key, title, ReportAlign::Right, Some(ReportUnit::Duration))
     }
 
+    /// Select an exact value or show all values of the named column.
+    pub(crate) fn filter_by(&mut self, key: &str) -> &mut Self {
+        self.columns
+            .iter_mut()
+            .find(|column| column.key == key)
+            .expect("filter column was declared")
+            .filterable = true;
+        self
+    }
+
+    pub(crate) fn column_help(&mut self, key: &str, text: impl Into<String>) -> &mut Self {
+        self.columns
+            .iter_mut()
+            .find(|column| column.key == key)
+            .expect("help column was declared")
+            .help = Some(text.into());
+        self
+    }
+
+    /// Count comparison groups as single entries so pages cannot split a pair.
+    pub(crate) fn page_size(&mut self, entries: usize) -> &mut Self {
+        self.page_size = Some(entries);
+        self
+    }
+
     pub(crate) fn row<R>(
         &mut self,
         configure: impl FnOnce(&mut ReportRowBuilder) -> R,
@@ -141,6 +184,7 @@ impl ReportTableBuilder {
             self.key,
             self.title,
             self.description,
+            self.page_size,
             self.columns,
             self.rows,
         )
@@ -151,6 +195,10 @@ impl ReportTableBuilder {
 #[derive(Default)]
 pub(crate) struct ReportRowBuilder {
     cells: BTreeMap<String, ReportValue>,
+    group: Option<String>,
+    hints: BTreeMap<String, String>,
+    details: BTreeMap<String, String>,
+    highlights: BTreeSet<String>,
 }
 
 impl ReportRowBuilder {
@@ -171,7 +219,34 @@ impl ReportRowBuilder {
         self.value(key, ReportValue::DurationMs(value))
     }
 
+    /// Keep rows with this group key together when filtering, sorting, or paginating.
+    pub(crate) fn group(&mut self, key: impl Into<String>) -> &mut Self {
+        self.group = Some(key.into());
+        self
+    }
+
+    pub(crate) fn hint(&mut self, key: impl Into<String>, text: impl Into<String>) -> &mut Self {
+        self.hints.insert(key.into(), text.into());
+        self
+    }
+
+    pub(crate) fn details(&mut self, key: impl Into<String>, text: impl Into<String>) -> &mut Self {
+        self.details.insert(key.into(), text.into());
+        self
+    }
+
+    pub(crate) fn highlight(&mut self, key: impl Into<String>) -> &mut Self {
+        self.highlights.insert(key.into());
+        self
+    }
+
     fn build(self) -> ReportRow {
-        ReportRow { cells: self.cells }
+        ReportRow {
+            cells: self.cells,
+            group: self.group,
+            hints: self.hints,
+            details: self.details,
+            highlights: self.highlights,
+        }
     }
 }

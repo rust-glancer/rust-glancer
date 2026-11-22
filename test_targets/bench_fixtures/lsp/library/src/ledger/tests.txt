@@ -1,0 +1,12 @@
+use super::{batch, limits::MAX_ITEMS, sample_batch, Measure};
+
+#[test]
+fn caps_the_batch() {
+    let project_items = PROJECT_INPUT;
+    let limit = ItemLimit;
+    let batch = batch(limit.get());
+    let measured = batch.;
+    assert_eq!(measured, MAX_ITEMS);
+    let size = batch.size();
+    assert_eq!(size, sample_batch!(project_items).size());
+}

@@ -1,8 +1,7 @@
 //! Lifecycle for one spawned LSP server process.
 //!
 //! `RunningServer` owns the OS process, its transport, and the captured stderr snippet used in
-//! error messages. The paired-server module decides which two servers run; this file keeps the
-//! single-process protocol sequence readable.
+//! error messages.
 
 use std::{
     fs,
@@ -13,13 +12,15 @@ use std::{
 
 use anyhow::Context as _;
 use gen_lsp_types::{
-    ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentSymbolClientCapabilities, InitializeParams, InitializedParams,
-    InlayHintClientCapabilities, LanguageKind, Notification as _, RenameClientCapabilities,
-    Request as _, TextDocumentClientCapabilities, TextDocumentContentChangeWholeDocument,
-    TextDocumentIdentifier, TextDocumentItem, VersionedTextDocumentIdentifier,
-    WindowClientCapabilities, WorkDoneProgressParams, WorkspaceClientCapabilities,
-    WorkspaceEditClientCapabilities, WorkspaceFolder, WorkspaceFoldersInitializeParams,
+    ClientCapabilities, ClientCompletionItemOptions, ClientCompletionItemResolveOptions,
+    ClientSemanticTokensRequestOptions, CompletionClientCapabilities, DidChangeTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentSymbolClientCapabilities, HoverClientCapabilities,
+    InitializeParams, InitializedParams, InlayHintClientCapabilities, LanguageKind, MarkupKind,
+    Notification as _, RenameClientCapabilities, Request as _, SemanticTokensClientCapabilities,
+    TextDocumentClientCapabilities, TextDocumentContentChangeWholeDocument, TextDocumentIdentifier,
+    TextDocumentItem, TokenFormat, VersionedTextDocumentIdentifier, WindowClientCapabilities,
+    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+    WorkspaceFolder, WorkspaceFoldersInitializeParams,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -37,9 +38,10 @@ const SERVER_STATUS_METHOD: &str = "experimental/serverStatus";
 
 /// One live LSP server with the client-side transport needed to drive it.
 #[derive(Debug)]
-pub(super) struct RunningServer {
+pub(crate) struct RunningServer {
     kind: ServerKind,
     command_label: String,
+    spawned_at: Instant,
     child: Child,
     client: TowerLspTransport,
     stderr: StderrCapture,
@@ -48,8 +50,12 @@ pub(super) struct RunningServer {
 
 impl RunningServer {
     /// Spawn the executable for one side of the comparison and attach stdio transport.
-    pub(super) async fn spawn(kind: ServerKind) -> anyhow::Result<Self> {
-        let command_spec = kind.command_spec()?;
+    pub(crate) fn spawn(
+        kind: ServerKind,
+        executable: Option<&Path>,
+        workspace: Option<(&Path, &Path, &str)>,
+    ) -> anyhow::Result<Self> {
+        let command_spec = kind.command_spec(executable)?;
         let command_label = command_spec.label();
         let mut command = Command::new(&command_spec.executable);
         command
@@ -58,6 +64,23 @@ impl RunningServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        if let Some((root, cargo_output, toolchain)) = workspace {
+            command
+                .current_dir(root)
+                .env("CARGO_TARGET_DIR", cargo_output)
+                .env("CARGO_BUILD_BUILD_DIR", cargo_output)
+                .env("CARGO_NET_OFFLINE", "true")
+                .env("RUSTUP_TOOLCHAIN", toolchain);
+            if matches!(kind, ServerKind::RustAnalyzer) {
+                // The benchmark's rust-analyzer supports this override on all platforms.
+                // Keep the user's rust-analyzer.toml out of the benchmark configuration.
+                let user_config = cargo_output.with_file_name("rust-analyzer-config");
+                fs::create_dir_all(&user_config)
+                    .context("create isolated rust-analyzer configuration directory")?;
+                command.env("__TEST_RA_USER_CONFIG_DIR", user_config);
+            }
+        }
+        let spawned_at = Instant::now();
         let mut child = command.spawn().with_context(|| {
             format!(
                 "Spawning {} LSP server with `{command_label}` failed",
@@ -88,6 +111,7 @@ impl RunningServer {
         Ok(Self {
             kind,
             command_label,
+            spawned_at,
             child,
             client,
             stderr,
@@ -95,80 +119,69 @@ impl RunningServer {
         })
     }
 
-    pub(super) async fn initialize_fixture(
+    pub(crate) async fn initialize_fixture(
         &mut self,
         fixture_root: &Path,
-        source_paths: &[&'static str],
+        source_paths: &[&str],
     ) -> anyhow::Result<ServerReadiness> {
-        tracing::info!(
-            server = self.kind.display_name(),
-            root = %fixture_root.display(),
-            opened_files = source_paths.len(),
-            "initializing compare-lsp server"
-        );
-        let initialize_params = self.initialize_params(fixture_root)?;
-        let started_at = Instant::now();
-        let initialize = self
-            .client
-            .request(
-                gen_lsp_types::InitializeRequest::METHOD.as_str(),
-                initialize_params,
-                INITIALIZE_TIMEOUT,
-            )
-            .await;
-        self.expect_success(
-            gen_lsp_types::InitializeRequest::METHOD.as_str(),
-            initialize,
-        )?;
-        let initialize_latency = started_at.elapsed();
-        tracing::info!(
-            server = self.kind.display_name(),
-            elapsed_ms = initialize_latency.as_millis(),
-            "compare-lsp initialize completed"
-        );
-
-        // After `initialized`, both servers should see the same in-memory document set. This keeps
-        // the later query requests about server behavior rather than file-watcher timing.
-        self.client
-            .notify(
-                gen_lsp_types::InitializedNotification::METHOD.as_str(),
-                Self::lsp_params(InitializedParams {}, "initialized notification")?,
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "Sending initialized notification to {} failed",
-                    self.kind.display_name()
-                )
-            })?;
-
+        let initialize_latency = self
+            .initialize(fixture_root, self.kind.initialization_options(false, false))
+            .await?;
         for source_path in source_paths {
             self.open_source_file(fixture_root, source_path).await?;
         }
-        tracing::info!(
-            server = self.kind.display_name(),
-            "waiting for compare-lsp server readiness"
-        );
         let ready_started_at = Instant::now();
         self.wait_until_ready().await?;
-        let ready_latency = ready_started_at.elapsed();
-        tracing::info!(
-            server = self.kind.display_name(),
-            elapsed_ms = ready_latency.as_millis(),
-            "compare-lsp server readiness observed"
-        );
-
         Ok(ServerReadiness::new(
             self.kind.display_name(),
             initialize_latency,
-            ready_latency,
+            ready_started_at.elapsed(),
         ))
     }
 
+    pub(crate) async fn initialize(
+        &mut self,
+        root: &Path,
+        options: Value,
+    ) -> anyhow::Result<Duration> {
+        let params = self.initialize_params(root, options)?;
+        let started_at = Instant::now();
+        let outcome = self
+            .request(
+                gen_lsp_types::InitializeRequest::METHOD.as_str(),
+                params,
+                INITIALIZE_TIMEOUT,
+            )
+            .await;
+        self.expect_success(gen_lsp_types::InitializeRequest::METHOD.as_str(), outcome)?;
+        let elapsed = started_at.elapsed();
+        self.notify(
+            gen_lsp_types::InitializedNotification::METHOD.as_str(),
+            Self::lsp_params(InitializedParams {}, "initialized notification")?,
+        )
+        .await?;
+        Ok(elapsed)
+    }
+
+    pub(crate) fn spawned_at(&self) -> Instant {
+        self.spawned_at
+    }
+
     /// Run the LSP shutdown handshake, then wait until the OS process exits.
-    pub(super) async fn shutdown(mut self) -> anyhow::Result<()> {
+    pub(crate) async fn shutdown(mut self) -> anyhow::Result<()> {
+        let result = self.graceful_shutdown().await;
+        if result.is_err() && !self.exited {
+            // Reap the direct child even when the protocol handshake fails. The benchmark
+            // stops after a cleanup failure because descendants may still own resources.
+            self.exited = tokio::time::timeout(SHUTDOWN_TIMEOUT, self.child.kill())
+                .await
+                .is_ok_and(|result| result.is_ok());
+        }
+        result
+    }
+
+    async fn graceful_shutdown(&mut self) -> anyhow::Result<()> {
         let shutdown = self
-            .client
             .request(
                 gen_lsp_types::ShutdownRequest::METHOD.as_str(),
                 Value::Null,
@@ -200,28 +213,34 @@ impl RunningServer {
         Ok(())
     }
 
-    pub(super) async fn request(
-        &mut self,
+    pub(crate) async fn request(
+        &self,
         method: &'static str,
         params: Value,
         timeout: Duration,
     ) -> RequestOutcome {
+        self.observe_request(method, params, timeout).await.1
+    }
+
+    pub(crate) async fn observe_request(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> (Instant, RequestOutcome) {
         self.client.request(method, params, timeout).await
     }
 
-    pub(super) fn command_label(&self) -> &str {
+    pub(crate) async fn notify(&self, method: &str, params: Value) -> anyhow::Result<()> {
+        self.client.notify(method, params).await
+    }
+
+    pub(crate) fn command_label(&self) -> &str {
         &self.command_label
     }
 
-    /// Build the client capabilities and workspace identity shared by both compared servers.
-    fn initialize_params(&self, fixture_root: &Path) -> anyhow::Result<Value> {
-        let root_uri = file_uri(fixture_root)?;
-        let root_name = fixture_root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("fixture");
-
-        let capabilities = ClientCapabilities {
+    pub(crate) fn client_capabilities() -> ClientCapabilities {
+        ClientCapabilities {
             window: Some(WindowClientCapabilities {
                 work_done_progress: Some(true),
                 ..WindowClientCapabilities::default()
@@ -241,6 +260,38 @@ impl RunningServer {
                     ..DocumentSymbolClientCapabilities::default()
                 }),
                 inlay_hint: Some(InlayHintClientCapabilities::default()),
+                hover: Some(HoverClientCapabilities {
+                    content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
+                    ..HoverClientCapabilities::default()
+                }),
+                completion: Some(CompletionClientCapabilities {
+                    completion_item: Some(ClientCompletionItemOptions {
+                        resolve_support: Some(ClientCompletionItemResolveOptions::new(vec![
+                            "additionalTextEdits".to_owned(),
+                        ])),
+                        ..ClientCompletionItemOptions::default()
+                    }),
+                    ..CompletionClientCapabilities::default()
+                }),
+                semantic_tokens: Some(SemanticTokensClientCapabilities {
+                    requests: ClientSemanticTokensRequestOptions {
+                        range: Some(true.into()),
+                        ..ClientSemanticTokensRequestOptions::default()
+                    },
+                    token_types: rg_lsp_proto::SEMANTIC_TOKEN_TYPES
+                        .iter()
+                        .map(|kind| kind.as_str().to_owned())
+                        .collect(),
+                    token_modifiers: rg_lsp_proto::SEMANTIC_TOKEN_MODIFIERS
+                        .iter()
+                        .map(|modifier| modifier.as_str().to_owned())
+                        .collect(),
+                    formats: vec![TokenFormat::Relative],
+                    // The editor supplies syntax highlighting. Without this capability,
+                    // rust-analyzer also sends tokens for plain syntax such as punctuation.
+                    augments_syntax_tokens: Some(true),
+                    ..SemanticTokensClientCapabilities::default()
+                }),
                 rename: Some(RenameClientCapabilities {
                     prepare_support: Some(true),
                     ..RenameClientCapabilities::default()
@@ -251,7 +302,15 @@ impl RunningServer {
                 "serverStatusNotification": true,
             })),
             ..ClientCapabilities::default()
-        };
+        }
+    }
+
+    fn initialize_params(&self, fixture_root: &Path, options: Value) -> anyhow::Result<Value> {
+        let root_uri = file_uri(fixture_root)?;
+        let root_name = fixture_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("fixture");
 
         #[allow(deprecated)]
         let params = InitializeParams {
@@ -261,8 +320,8 @@ impl RunningServer {
             ),
             root_path: None,
             root_uri: Some(root_uri.clone()),
-            initialization_options: Some(self.kind.initialization_options()),
-            capabilities,
+            initialization_options: Some(options),
+            capabilities: Self::client_capabilities(),
             trace: None,
             workspace_folders_initialize_params: WorkspaceFoldersInitializeParams {
                 workspace_folders: Some(
@@ -318,7 +377,7 @@ impl RunningServer {
     }
 
     /// Replace one open document with the stable unsaved text used by the dirty fixture.
-    pub(super) async fn change_source_file(
+    pub(crate) async fn change_source_file(
         &mut self,
         fixture_root: &Path,
         source_path: &str,
@@ -352,7 +411,7 @@ impl RunningServer {
             })
     }
 
-    async fn wait_until_ready(&mut self) -> anyhow::Result<()> {
+    pub(crate) async fn wait_until_ready(&mut self) -> anyhow::Result<Instant> {
         tokio::time::timeout(READY_TIMEOUT, async {
             loop {
                 let notification = self.client.next_notification().await.with_context(|| {
@@ -363,7 +422,7 @@ impl RunningServer {
                     )
                 })?;
                 match self.readiness_notification(&notification) {
-                    ReadinessNotification::Ready => return Ok(()),
+                    ReadinessNotification::Ready => return Ok(notification.received_at()),
                     ReadinessNotification::Failed(message) => anyhow::bail!(
                         "{} reported readiness failure: {message}",
                         self.kind.display_name(),
@@ -439,26 +498,14 @@ impl RunningServer {
                     )
                 })?;
                 self.exited = true;
-                self.stderr.join().await;
+                self.stderr.join(SHUTDOWN_TIMEOUT).await?;
                 Ok(status)
             }
-            Err(_elapsed) => {
-                let _ = self.child.start_kill();
-                let status = self.child.wait().await.with_context(|| {
-                    format!(
-                        "Reaping timed out {} LSP process failed",
-                        self.kind.display_name()
-                    )
-                })?;
-                self.exited = true;
-                self.stderr.join().await;
-                anyhow::bail!(
-                    "{} LSP server did not exit within {:?} after shutdown; killed with status {status}{}",
-                    self.kind.display_name(),
-                    timeout,
-                    self.stderr_note(),
-                );
-            }
+            Err(_elapsed) => anyhow::bail!(
+                "{} LSP server did not exit within {timeout:?} after shutdown{}",
+                self.kind.display_name(),
+                self.stderr_note(),
+            ),
         }
     }
 

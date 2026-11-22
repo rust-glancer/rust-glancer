@@ -1,0 +1,45 @@
+
+pub mod limits {
+    pub const MAX_ITEMS: u32 = 64;
+
+    pub struct ItemLimit(u32);
+
+    impl ItemLimit {
+        pub fn new(items: u32) -> Self {
+            Self(items)
+        }
+
+        pub fn get(self) -> u32 {
+            self.0
+        }
+    }
+}
+
+pub struct Batch {
+    pub items: u32,
+}
+
+pub trait Measure {
+    fn size(&self) -> u32;
+}
+
+impl Measure for Batch {
+    fn size(&self) -> u32 {
+        self.items
+    }
+}
+
+pub fn batch(items: u32) -> Batch {
+    Batch { items: items.min(limits::MAX_ITEMS) }
+}
+
+#[cfg(test)]
+macro_rules! sample_batch {
+    ($items:expr) => { super::batch($items) };
+}
+
+#[cfg(test)]
+pub(crate) use sample_batch;
+
+#[cfg(test)]
+mod tests;
