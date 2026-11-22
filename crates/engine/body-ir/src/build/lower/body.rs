@@ -395,13 +395,17 @@ impl BodyLowering<'_> {
                     }),
                 )
             }
-            BodyMacroExprExpansion::Builtin { kind, arguments } => {
+            BodyMacroExprExpansion::Builtin {
+                kind,
+                arguments,
+                format_template,
+            } => {
                 // Builtin input is parsed separately, so lower it with its own token map just as
                 // we lower declarative output. The surrounding builtin keeps its intrinsic type.
                 let args = arguments
                     .map(|arguments| {
                         self.with_expanded_macro(call_source, arguments, |this, syntax| {
-                            this.lower_builtin_macro_args(kind, syntax, scope)
+                            this.lower_builtin_macro_args(syntax, format_template, scope)
                         })
                     })
                     .unwrap_or_default();

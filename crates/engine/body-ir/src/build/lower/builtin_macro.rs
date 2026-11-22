@@ -1,6 +1,6 @@
 //! Builtin inputs and implicit references written inside format strings.
 
-use rg_ir_model::{BuiltinMacroExprKind, ExprId, ScopeId, SourceId};
+use rg_ir_model::{ExprId, ScopeId, SourceId};
 use rg_syntax::ast::{self, AstToken as _, FormatStringPartKind, HasName as _};
 use rg_text::Name;
 
@@ -11,17 +11,10 @@ impl BodyLowering<'_> {
     /// Lower written arguments and add variable references for captures such as `{user}`.
     pub(super) fn lower_builtin_macro_args(
         &mut self,
-        kind: BuiltinMacroExprKind,
         syntax: ast::FormatArgsExpr,
+        template: Option<ast::Expr>,
         scope: ScopeId,
     ) -> Vec<ExprId> {
-        // Assertion input starts with the condition; its optional message is the format template.
-        // Other formatting builtins start with the template itself.
-        let template = if kind == BuiltinMacroExprKind::Assert {
-            syntax.args().next().and_then(|arg| arg.expr())
-        } else {
-            syntax.template()
-        };
         let named = syntax
             .args()
             .filter_map(|arg| arg.name())

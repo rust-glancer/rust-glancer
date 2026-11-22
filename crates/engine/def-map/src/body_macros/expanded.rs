@@ -375,7 +375,42 @@ pub enum BodyMacroExprExpansion {
         kind: BuiltinMacroExprKind,
         /// Parsed input expressions, with the same token provenance as declarative output.
         arguments: Option<ExpandedBodyMacro<ast::FormatArgsExpr>>,
+        /// Which expression carries the format syntax. The parser also uses
+        /// `FormatArgsExpr` for `assert!(condition, message)`, which starts with a condition
+        /// and can have a plain message.
+        format_template: Option<ast::Expr>,
     },
+}
+
+impl BodyMacroExprExpansion {
+    pub(super) fn builtin(
+        kind: BuiltinMacroExprKind,
+        arguments: Option<ExpandedBodyMacro<ast::FormatArgsExpr>>,
+        assert_formats_single_message: bool,
+    ) -> Self {
+        let format_template = arguments.as_ref().and_then(|args| {
+            let syntax = &args.syntax;
+            match kind {
+                BuiltinMacroExprKind::Assert => {
+                    // First is the condition. A single legacy panic message is plain data.
+                    let mut args = syntax.args();
+                    let message = args.next()?.expr();
+                    (assert_formats_single_message || args.next().is_some())
+                        .then_some(message)
+                        .flatten()
+                }
+                BuiltinMacroExprKind::FormatArgs | BuiltinMacroExprKind::FormatArgsNl => {
+                    syntax.template()
+                }
+                _ => None,
+            }
+        });
+        Self::Builtin {
+            kind,
+            arguments,
+            format_template,
+        }
+    }
 }
 
 /// Result of body macro lookup plus the position-specific expansion, if one was produced.

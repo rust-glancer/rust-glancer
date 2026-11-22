@@ -141,10 +141,12 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                         }),
                     _ => None,
                 };
-                Some(BodyMacroExprExpansion::Builtin {
-                    kind: *kind,
+                Some(BodyMacroExprExpansion::builtin(
+                    *kind,
                     arguments,
-                })
+                    *kind == BuiltinMacroExprKind::Assert
+                        && site.assert_formats_single_message(ast_call),
+                ))
             }
             BodyMacroCallee::Builtin {
                 kind: BuiltinMacroKind::CfgSelect,

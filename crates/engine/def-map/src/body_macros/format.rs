@@ -8,7 +8,7 @@
 //! bodies would also resolve names and infer types, which this query does not need.
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, FileId, Span};
+use rg_ir_model::{BodySource, CrateRef, FileId, Span};
 use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{AstNode, AstToken as _, SourceFile, SyntaxNode, WalkEvent, ast};
 use rg_workspace::CrateConfig;
@@ -116,22 +116,14 @@ impl BodyMacroExpander<'_, '_> {
                 self.collect_expanded_format_strings(&site, expanded, spans)?;
             }
             BodyMacroExprExpansion::Builtin {
-                kind,
                 arguments: Some(arguments),
+                format_template,
+                ..
             } => {
                 let (syntax, context) = arguments.into_syntax_and_context();
-                // `format_args!(template, ...)` starts with the template, whereas
-                // `assert!(condition, template, ...)` starts with the condition.
-                let template = match kind {
-                    BuiltinMacroExprKind::FormatArgs | BuiltinMacroExprKind::FormatArgsNl => {
-                        syntax.template()
-                    }
-                    BuiltinMacroExprKind::Assert => syntax.args().next().and_then(|arg| arg.expr()),
-                    _ => None,
-                };
                 // The expanded literal's offsets belong to generated text. Only keep it if
                 // the token map proves it was copied unchanged from the original call.
-                if let Some(ast::Expr::Literal(literal)) = template
+                if let Some(ast::Expr::Literal(literal)) = format_template
                     && matches!(literal.kind(), ast::LiteralKind::String(_))
                     && let Some(span) =
                         context.source_for_exact_syntax(site.source(), literal.syntax())

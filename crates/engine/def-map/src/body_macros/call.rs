@@ -132,6 +132,23 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         call.path().map(|path| normalized_syntax_text(&path))
     }
 
+    /// A call such as `assert!(ok, "{user}")` can capture names under Rust 2021 panic rules.
+    /// Require a modern caller and a modern macro path in generated code. Some standard
+    /// wrappers use the caller's edition for panic behavior.
+    pub(super) fn assert_formats_single_message(&self, call: &ast::MacroCall) -> bool {
+        if !syntax_edition(self.edition).at_least_2021() {
+            return false;
+        }
+        match &self.origin {
+            BodyMacroCallOrigin::Source => true,
+            BodyMacroCallOrigin::Generated { source_map, .. } => call
+                .path()
+                .and_then(|path| path.syntax().first_token())
+                .and_then(|token| source_map.span_for_range(token.text_range()))
+                .is_some_and(|span| span.ctx.edition().at_least_2021()),
+        }
+    }
+
     pub(super) fn invocation(
         &self,
         path_text: String,
