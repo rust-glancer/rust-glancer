@@ -336,9 +336,9 @@ impl<'a> DeclarationCollector<'a> {
                     .source(generated.source())
                     .expect("generated call source should exist")
                     .origin_source,
-                self.dollar_crate,
+                input.path_crate.or(self.dollar_crate),
             ),
-            ItemSourceKind::ItemTree(written) => (written, None),
+            ItemSourceKind::ItemTree(written) => (written, input.path_crate),
             _ => unreachable!("crate macro calls need written or generated source"),
         };
         self.state.push_macro_call(

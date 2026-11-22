@@ -123,6 +123,12 @@ impl DeclarativeMacro {
         Ok(Self { inner, edition })
     }
 
+    /// Bind template `$crate` once, before forwarding can move those tokens through
+    /// another macro's input.
+    pub fn bind_dollar_crate(&mut self, package: u32, target: u32) {
+        self.inner.bind_dollar_crate(package, target);
+    }
+
     /// Expands a parsed function-like macro call into the requested syntax kind.
     pub fn expand_call(
         &self,

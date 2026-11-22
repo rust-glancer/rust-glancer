@@ -5,7 +5,7 @@ use rg_ir_model::{BodySource, CrateRef, FileId, LocalDefRef, ModuleRef, PackageS
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest};
 use rg_parse::syntax_edition;
-use rg_syntax::{TextRange, ast, utils::normalized_syntax_text};
+use rg_syntax::{AstNode as _, SyntaxNode, TextRange, ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
 use rg_tt::{
     Span as TtSpan, TokenOwner, TopSubtree,
@@ -36,10 +36,26 @@ pub enum BodyMacroCallOrigin {
 }
 
 impl BodyMacroCallOrigin {
-    fn dollar_crate_for_path(&self) -> Option<CrateRef> {
+    fn dollar_crate_for_path(&self, call: &ast::MacroCall) -> Option<CrateRef> {
         match self {
             Self::Source => None,
-            Self::Generated { dollar_crate, .. } => Some(*dollar_crate),
+            Self::Generated {
+                dollar_crate,
+                source_map,
+                ..
+            } => call
+                .path()
+                .and_then(|path| path.first_segment())
+                .and_then(|segment| segment.name_ref())
+                .filter(|name| name.text() == "$crate")
+                .and_then(|name| name.syntax().first_token())
+                .and_then(|token| {
+                    ExpandedBodyMacro::<SyntaxNode>::mapped_dollar_crate(
+                        source_map,
+                        token.text_range(),
+                    )
+                })
+                .or(Some(*dollar_crate)),
         }
     }
 
@@ -134,8 +150,8 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         )
     }
 
-    pub(super) fn dollar_crate_for_path(&self) -> Option<CrateRef> {
-        self.origin.dollar_crate_for_path()
+    pub(super) fn dollar_crate_for_path(&self, call: &ast::MacroCall) -> Option<CrateRef> {
+        self.origin.dollar_crate_for_path(call)
     }
 
     pub(super) fn dollar_crate_for_expansion(&self) -> Option<CrateRef> {

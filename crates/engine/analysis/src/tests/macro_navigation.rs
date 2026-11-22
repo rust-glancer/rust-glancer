@@ -467,6 +467,52 @@ impl Host { generated_definitions::emit!(r$member$un); }
 }
 
 #[test]
+fn forwarded_dollar_crate_in_generated_bodies_keeps_its_defining_crate() {
+    check_analysis_queries(
+        r#"
+//- /macros/src/lib.rs crate:forwarding_defs root:macros
+pub fn value() -> u8 { 1 }
+#[macro_export]
+macro_rules! emit {
+    ($name:ident) => { fn first() { forward_expr!($crate::$name()); } };
+}
+#[macro_export]
+macro_rules! forward {
+    ($name:ident) => { forward_item!($crate::$name()); };
+}
+
+//- /app/src/lib.rs crate:forwarding_app root:app deps:forwarding_defs
+macro_rules! forward_expr { ($value:expr) => { $value }; }
+macro_rules! forward_item { ($value:expr) => { fn second() { $value; } }; }
+fn value() -> bool { true }
+forwarding_defs::emit!(va$expression$lue);
+forwarding_defs::forward!(va$item$lue);
+"#,
+        &[
+            AnalysisQuery::hover("forwarded expression", "expression").in_lib("forwarding_app"),
+            AnalysisQuery::hover("forwarded item", "item").in_lib("forwarding_app"),
+        ],
+        expect![[r#"
+            // forwarded expression
+            range: 4:24-4:29
+            block:
+              kind: fn
+              path: forwarding_defs::value
+              signature:
+                pub fn value() -> u8
+
+            // forwarded item
+            range: 5:27-5:32
+            block:
+              kind: fn
+              path: forwarding_defs::value
+              signature:
+                pub fn value() -> u8
+        "#]],
+    );
+}
+
+#[test]
 fn selected_cfg_arm_bodies_use_the_written_token_ranges() {
     check_analysis_queries_with_fake_sysroot(
         r#"

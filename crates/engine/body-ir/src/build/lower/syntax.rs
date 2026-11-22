@@ -132,10 +132,12 @@ impl BodyLowering<'_> {
             PathSegmentKind::Name(name_ref) => {
                 let location = self.source_location(name_ref.syntax().text_range());
                 let name = Name::new(name_ref.text());
-                // `$crate` is meaningful only for macro-generated syntax, where the temporary
-                // lowering context knows which crate defined the macro.
+                // A forwarded `$crate` can refer to the macro that supplied the token. Look at
+                // the token's own origin before using the crate of the surrounding expansion.
                 let kind = if name.as_str() == "$crate" {
-                    BodyPathSegmentKind::DollarCrate(self.dollar_crate()?)
+                    BodyPathSegmentKind::DollarCrate(
+                        self.dollar_crate_at(name_ref.syntax().first_token()?.text_range())?,
+                    )
                 } else {
                     BodyPathSegmentKind::Name(name)
                 };

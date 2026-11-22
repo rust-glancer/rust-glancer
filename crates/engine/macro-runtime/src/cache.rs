@@ -52,7 +52,14 @@ impl MacroExpansionCache {
         let elapsed = started_at.elapsed();
 
         match compiled {
-            Ok(compiled) => {
+            Ok(mut compiled) => {
+                let origin = definition.dollar_crate();
+                compiled.bind_dollar_crate(
+                    u32::try_from(origin.package.0)
+                        .expect("macro definition package fits its span"),
+                    u32::try_from(origin.crate_id.0)
+                        .expect("macro definition target fits its span"),
+                );
                 let compiled = Arc::new(compiled);
                 self.compiled.insert(def_ref, Some(Arc::clone(&compiled)));
                 CachedMacroCompileResult {

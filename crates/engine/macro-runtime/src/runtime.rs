@@ -7,7 +7,7 @@
 use std::{sync::Mutex, time::Duration};
 
 use anyhow::Context as _;
-use rg_ir_model::LocalDefRef;
+use rg_ir_model::{CrateRef, LocalDefRef};
 use rg_parse::syntax_edition;
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
@@ -220,16 +220,26 @@ impl PartialEq for SharedMacroExpansionRuntime {
 pub enum DeclarativeMacroDefinition<'a> {
     MacroRules {
         edition: RustEdition,
+        dollar_crate: CrateRef,
         body: Option<&'a TopSubtree>,
     },
     MacroDef {
         edition: RustEdition,
+        dollar_crate: CrateRef,
         args: Option<&'a TopSubtree>,
         body: Option<&'a TopSubtree>,
     },
 }
 
 impl DeclarativeMacroDefinition<'_> {
+    pub(crate) fn dollar_crate(self) -> CrateRef {
+        match self {
+            Self::MacroRules { dollar_crate, .. } | Self::MacroDef { dollar_crate, .. } => {
+                dollar_crate
+            }
+        }
+    }
+
     fn edition(self) -> RustEdition {
         match self {
             Self::MacroRules { edition, .. } | Self::MacroDef { edition, .. } => edition,

@@ -30,6 +30,24 @@ pub struct Span {
     pub ctx: SyntaxContext,
 }
 
+impl Span {
+    /// Assign the defining crate of a template's synthesized `$crate` token. Keep an existing
+    /// assignment when that token was forwarded into another macro's template.
+    pub fn bind_dollar_crate(&mut self, package: u32, target: u32) {
+        if self.dollar_crate().is_none() {
+            self.anchor.package = package;
+            self.anchor.owner = TokenOwner::DollarCrate(target);
+        }
+    }
+
+    pub fn dollar_crate(self) -> Option<(u32, u32)> {
+        match self.anchor.owner {
+            TokenOwner::DollarCrate(target) => Some((self.anchor.package, target)),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Span")
@@ -40,8 +58,9 @@ impl fmt::Debug for Span {
     }
 }
 
-/// Identifies the source table containing a macro token. Body inputs are scoped to one
-/// expansion request; declaration inputs are replayable through the file's owner table.
+/// Describes what a macro token's anchor identifies. Body inputs use the table for one expansion
+/// request. Declaration inputs can be reopened through the file's owner table. A synthesized
+/// `$crate` carries a crate identity directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub enum TokenOwner {
     /// The number is a declaration source owner. Token origin IDs select entries within it.
@@ -49,6 +68,9 @@ pub enum TokenOwner {
     /// Token origin IDs select entries in the macro invocation's transient input map.
     /// The caller must keep that map alongside any expansion that still refers to it.
     Body,
+    /// A synthesized `$crate` token. The anchor's package and this target ID select its
+    /// defining crate. It does not address a physical source table.
+    DollarCrate(u32),
 }
 
 /// Endpoints in a source-occurrence table, never text offsets. A merged parser token can

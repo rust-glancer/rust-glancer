@@ -283,13 +283,9 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             Some(path_text) => path_text,
             None => return Ok(None),
         };
-        // `$crate` in a generated macro call belongs to the macro definition that produced this
-        // syntax. Source calls do not have such a definition context, so `$crate` remains invalid
-        // for them here.
-        // TODO: soft hack, we are not inside of macro resolution context here, so we use this
-        // Macro calls retain textual paths. Lower them here, where the origin needed for
-        // a leading `$crate` is available.
-        let Some(path) = Path::from_text(&path_text, site.dollar_crate_for_path()) else {
+        // A leading `$crate` can have come through several expansions. Resolve its defining
+        // crate from the token map before converting the textual path.
+        let Some(path) = Path::from_text(&path_text, site.dollar_crate_for_path(call)) else {
             return Ok(None);
         };
         let resolved = Self::resolve_macro_definition(query, site.module(), &path)

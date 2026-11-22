@@ -212,11 +212,13 @@ impl<'a> MacroDefinitionView<'a> {
         Some(match &self.data.payload {
             MacroDefinitionPayload::MacroRules { body } => DeclarativeMacroDefinition::MacroRules {
                 edition: self.data.edition,
+                dollar_crate: self.data.dollar_crate,
                 body: body.as_ref(),
             },
             MacroDefinitionPayload::MacroDef { args, body } => {
                 DeclarativeMacroDefinition::MacroDef {
                     edition: self.data.edition,
+                    dollar_crate: self.data.dollar_crate,
                     args: args.as_ref(),
                     body: body.as_ref(),
                 }

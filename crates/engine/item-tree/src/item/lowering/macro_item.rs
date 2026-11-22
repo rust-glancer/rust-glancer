@@ -1,4 +1,5 @@
 use rg_cfg_eval::CfgPredicate;
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_text::Name;
 use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
@@ -80,6 +81,17 @@ impl FromAst for MacroCallItem {
     type Context<'a> = MacroCallContext<'a>;
 
     fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
+        let path_crate = item
+            .path()
+            .and_then(|path| path.first_segment())
+            .and_then(|segment| segment.name_ref())
+            .filter(|name| name.text() == "$crate")
+            .and_then(|name| name.syntax().first_token())
+            .and_then(|token| (ctx.span_for_range)(token.text_range()).dollar_crate())
+            .map(|(package, target)| CrateRef {
+                package: PackageSlot(package as usize),
+                crate_id: CrateId(target as usize),
+            });
         Self {
             path: item.path().map(|path| normalized_syntax(&path)),
             callee: item
@@ -89,6 +101,7 @@ impl FromAst for MacroCallItem {
                 .map(|name_ref| Name::new(name_ref.text())),
             input: Some(MacroCallInput {
                 call_site: ctx.call_site,
+                path_crate,
                 args: item.token_tree().map(|token_tree| {
                     syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
                 }),

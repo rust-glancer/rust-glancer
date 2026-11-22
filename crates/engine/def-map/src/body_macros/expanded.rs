@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef, PackageSlot, Span};
+use rg_ir_model::{
+    BodySource, BuiltinMacroExprKind, CrateId, CrateRef, LocalDefRef, PackageSlot, Span,
+};
 use rg_item_tree::DeclarationSourceStore;
 use rg_syntax::{AstNode, Parse, SyntaxError, SyntaxNode, TextRange, ast};
 use rg_tt::{
@@ -109,9 +111,26 @@ impl<T> ExpandedBodyMacro<T> {
             .then_some(span)
     }
 
-    /// Returns the crate that generated `$crate` paths inside this syntax should resolve to.
+    /// A forwarded `$crate` can come from a different crate than the expansion around it.
+    /// Read the defining crate from the token before using the expansion's default.
+    pub fn dollar_crate_at(&self, range: TextRange) -> CrateRef {
+        Self::mapped_dollar_crate(&self.source_map, range).unwrap_or(self.dollar_crate)
+    }
+
+    /// Default defining crate for a `$crate` without its own token origin.
     pub fn dollar_crate(&self) -> CrateRef {
         self.dollar_crate
+    }
+
+    pub(super) fn mapped_dollar_crate(
+        map: &ExpansionSpanMap,
+        range: TextRange,
+    ) -> Option<CrateRef> {
+        let (package, target) = map.span_for_range(range)?.dollar_crate()?;
+        Some(CrateRef {
+            package: PackageSlot(package as usize),
+            crate_id: CrateId(target as usize),
+        })
     }
 }
 

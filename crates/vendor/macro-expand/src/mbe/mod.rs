@@ -184,6 +184,12 @@ impl DeclarativeMacro {
         }
     }
 
+    pub(super) fn bind_dollar_crate(&mut self, package: u32, target: u32) {
+        for rule in &mut self.rules {
+            rule.rhs.bind_dollar_crate(package, target);
+        }
+    }
+
     pub fn expand(
         &self,
         tt: &tt::TopSubtree,
