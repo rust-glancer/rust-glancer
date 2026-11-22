@@ -56,6 +56,7 @@ impl GeneratedSourceLowering {
             parse,
             span_map,
             item_tokens,
+            ..
         } = expansion;
         let file = ast::MacroItems::cast(parse.syntax_node())
             .context("while attempting to cast macro expansion syntax root")?;

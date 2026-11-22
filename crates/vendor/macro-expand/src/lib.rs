@@ -144,22 +144,7 @@ impl DeclarativeMacro {
         let span_factory = SpanFactory::new(package, file_id, TokenOwner::Body, self.edition);
         let call_site = sources.record(span_factory, call.syntax().text_range());
         let args = syntax_node_to_token_tree(&args, span_factory, sources);
-        let expanded = self.inner.expand(
-            &args,
-            |_| {},
-            mbe::MacroCallStyle::FnLike,
-            call_site,
-            move |ctx| ctx.edition(),
-        );
-
-        if let Some(err) = expanded.err {
-            anyhow::bail!("macro expansion failed: {err}");
-        }
-
-        Ok(ExpansionSyntax::from_token_tree(
-            expanded.value.0,
-            parse_kind,
-        ))
+        self.expand_call_tokens(&args, call_site, parse_kind)
     }
 
     /// Expands stored function-like call arguments into the requested syntax kind.
@@ -181,10 +166,10 @@ impl DeclarativeMacro {
             anyhow::bail!("macro expansion failed: {err}");
         }
 
-        Ok(ExpansionSyntax::from_token_tree(
-            expanded.value.0,
-            parse_kind,
-        ))
+        let transcription = expanded.value.0;
+        let mut expansion = ExpansionSyntax::from_token_tree(transcription.tokens, parse_kind);
+        expansion.transformed_inputs = transcription.transformed_inputs;
+        Ok(expansion)
     }
 }
 
@@ -197,6 +182,8 @@ pub struct ExpansionSyntax {
     pub span_map: ExpansionSpanMap,
     /// Item bodies can be opened later from these tokens, with jointness and origins intact.
     pub item_tokens: Option<Arc<TopSubtree>>,
+    /// Inputs that influenced output text without being copied, as in `${concat(..)}`.
+    pub transformed_inputs: Vec<rg_tt::Span>,
 }
 
 impl ExpansionSyntax {
@@ -232,6 +219,7 @@ impl ExpansionSyntax {
             parse,
             span_map,
             item_tokens: (parse_kind == ExpansionParseKind::Items).then(|| Arc::new(token_tree)),
+            transformed_inputs: Vec::new(),
         }
     }
 

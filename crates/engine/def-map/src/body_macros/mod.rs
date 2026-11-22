@@ -128,12 +128,10 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                     | BuiltinMacroExprKind::FormatArgsNl => resolved_call
                         .invocation(&site, ast_call)
                         .and_then(|invocation| {
-                            let ExpansionSyntax {
-                                parse, span_map, ..
-                            } = ExpansionSyntax::from_builtin_arguments(invocation.args());
-                            ExpandedBodyMacro::new(
-                                parse,
-                                span_map,
+                            let expansion =
+                                ExpansionSyntax::from_builtin_arguments(invocation.args());
+                            ExpandedBodyMacro::from_expansion(
+                                expansion,
                                 invocation.input_sources(),
                                 invocation.call_site(),
                                 invocation.call_package(),
@@ -316,13 +314,10 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             .arms()
             .iter()
             .find(|arm| cfg.is_predicate_enabled(&arm.predicate))?;
-        let ExpansionSyntax {
-            parse, span_map, ..
-        } = ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
+        let expansion = ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
 
-        Some(ExpandedBodyMacro::new(
-            parse,
-            span_map,
+        Some(ExpandedBodyMacro::from_expansion(
+            expansion,
             invocation.input_sources(),
             invocation.call_site(),
             invocation.call_package(),
@@ -341,13 +336,10 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             resolved.declarative_definition()?,
             parse_kind,
         );
-        let ExpansionSyntax {
-            parse, span_map, ..
-        } = self.runtime.expand_now(request)?;
+        let expansion = self.runtime.expand_now(request)?;
 
-        Some(ExpandedBodyMacro::new(
-            parse,
-            span_map,
+        Some(ExpandedBodyMacro::from_expansion(
+            expansion,
             invocation.input_sources(),
             invocation.call_site(),
             invocation.call_package(),

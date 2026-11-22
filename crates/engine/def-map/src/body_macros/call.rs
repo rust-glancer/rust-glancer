@@ -8,13 +8,11 @@ use rg_parse::syntax_edition;
 use rg_syntax::{AstNode as _, SyntaxNode, TextRange, ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
 use rg_tt::{
-    Span as TtSpan, TokenOwner, TopSubtree,
-    syntax_bridge::{
-        ExpansionSpanMap, SpanFactory, TokenSourceMap, syntax_node_to_token_tree_with_span,
-    },
+    Span as TtSpan, TokenOrigins, TokenOwner, TopSubtree,
+    syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree_with_span},
 };
 
-use super::{BodyMacroInputSources, ExpandedBodyMacro};
+use super::{BodyMacroInputSources, ExpandedBodyMacro, expanded::BodyMacroInputMap};
 use crate::MacroDefinitionView;
 
 /// Source context carried from one body macro invocation to the next.
@@ -232,34 +230,49 @@ impl BodyMacroInvocation {
             TokenOwner::Body,
             syntax_edition(edition),
         );
-        let (args, input_sources, call_site) = match origin {
+        let mut sources = BodyMacroInputMap::default();
+        let call_site = sources.record(
+            span_factory,
+            TextRange::new(span.start.into(), span.end.into()),
+            None,
+        );
+        let args = match origin {
             BodyMacroCallOrigin::Source => {
-                let mut sources = TokenSourceMap::default();
-                let call_site = sources.record(
-                    span_factory,
-                    TextRange::new(span.start.into(), span.end.into()),
-                );
-                let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
-                    sources.record(span_factory, range)
-                });
-                (
-                    args,
-                    BodyMacroInputSources::Body(Arc::new(sources)),
-                    call_site,
-                )
+                syntax_node_to_token_tree_with_span(&args, &mut |range| {
+                    sources.record(span_factory, range, None)
+                })
             }
             BodyMacroCallOrigin::Generated {
                 source_map,
                 input_sources,
-                call_site,
+                call_site: parent_call_site,
                 ..
-            } => {
-                let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
-                    source_map.span_for_range(range).unwrap_or(*call_site)
-                });
-                (args, input_sources.clone(), *call_site)
-            }
+            } => syntax_node_to_token_tree_with_span(&args, &mut |range| {
+                let mut token = source_map
+                    .span_for_range(range)
+                    .unwrap_or(*parent_call_site);
+                if token.anchor == parent_call_site.anchor
+                    && let Some(source) = input_sources.span(token)
+                    && source != span
+                    && span.contains_span(source)
+                {
+                    // If `outer!(x)` emits `inner!(x, x)`, give each copy its own input ID
+                    // even though both point to the same written x. Preserve its hygiene.
+                    let source = TextRange::new(source.start.into(), source.end.into());
+                    let forwarded = sources.record(span_factory, source, Some(range));
+                    return TtSpan {
+                        ctx: token.ctx,
+                        ..forwarded
+                    };
+                }
+                if token.anchor == call_site.anchor {
+                    // An unmapped token must never address the new table using an old ID.
+                    token.origins = TokenOrigins::synthetic(call_site.origins.first());
+                }
+                token
+            }),
         };
+        let input_sources = BodyMacroInputSources::Body(Arc::new(sources));
 
         Some(Self {
             path_text,

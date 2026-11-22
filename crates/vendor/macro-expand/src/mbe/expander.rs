@@ -16,7 +16,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     ExpandError, ExpandErrorKind, ExpandResult, MacroCallStyle, MatchedArmIndex, Rule,
-    parser::MetaVarKind,
+    Transcription, parser::MetaVarKind,
 };
 
 pub(crate) fn expand_rules(
@@ -26,7 +26,7 @@ pub(crate) fn expand_rules(
     call_style: MacroCallStyle,
     call_site: Span,
     ctx_edition: impl Copy + Fn(SyntaxContext) -> Edition,
-) -> ExpandResult<(tt::TopSubtree, MatchedArmIndex)> {
+) -> ExpandResult<(Transcription, MatchedArmIndex)> {
     let mut match_: Option<(matcher::Match<'_>, &Rule, usize)> = None;
     for (idx, rule) in rules.iter().enumerate() {
         // Skip any rules that aren't relevant to the call style (fn-like/attr/derive).
@@ -71,10 +71,7 @@ pub(crate) fn expand_rules(
         } = match_;
         if let Some(error) = match_err {
             return ExpandResult::new(
-                (
-                    tt::TopSubtree::empty(tt::DelimSpan::from_single(call_site)),
-                    idx.try_into().ok(),
-                ),
+                (Transcription::empty(call_site), idx.try_into().ok()),
                 error,
             );
         }
@@ -90,10 +87,7 @@ pub(crate) fn expand_rules(
         }
     } else {
         ExpandResult::new(
-            (
-                tt::TopSubtree::empty(tt::DelimSpan::from_single(call_site)),
-                None,
-            ),
+            (Transcription::empty(call_site), None),
             ExpandError::new(call_site, ExpandErrorKind::NoMatchingRule),
         )
     }
