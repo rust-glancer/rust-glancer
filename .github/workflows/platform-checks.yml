@@ -31,7 +31,7 @@ jobs:
           name: rust-glancer-${{ inputs.os }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24.18.0
+          node-version: 24.22.3
           cache: npm
           cache-dependency-path: editors/code/package-lock.json
       - name: Install client dependencies
@@ -69,7 +69,7 @@ jobs:
           path: target/${{ needs.build-server.outputs.target }}/release
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24.18.0
+          node-version: 24.22.3
           cache: npm
           cache-dependency-path: editors/code/package-lock.json
       - name: Install client dependencies
