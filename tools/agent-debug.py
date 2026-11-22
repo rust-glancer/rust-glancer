@@ -308,13 +308,15 @@ def rust_glancer_binary(profile: str) -> Path:
     return BUILD_ROOT / host_target() / profile / "rust-glancer"
 
 
-def build_spec(options: RunnerOptions) -> CommandSpec:
+def build_spec(mode: str, options: RunnerOptions) -> CommandSpec:
     # Pin every Cargo setting that controls the executable location. Inherited Cargo
     # configuration cannot leave the runner executing an older binary from another target.
     args = ["build", "--target-dir", str(BUILD_ROOT), "--target", host_target()]
     if options.build_profile == "release":
         args.append("--release")
     args.extend(["-p", RUST_GLANCER_PACKAGE])
+    if mode == "compare-lsp":
+        return CommandSpec("sh", [str(TOOL_FILE.with_name("with-build-source.sh")), "cargo"] + args)
     return CommandSpec("cargo", args)
 
 
@@ -895,7 +897,7 @@ def print_run_result(
 
 def planned_workflow(mode: str, mode_args: Sequence[str], options: RunnerOptions) -> Dict[str, Any]:
     runtime = runtime_spec(mode, mode_args, options)
-    build = build_spec(options) if should_build(mode, mode_args, options) else None
+    build = build_spec(mode, options) if should_build(mode, mode_args, options) else None
     return {
         "build": None if build is None else {"command": build.command, "args": build.args},
         "runtime": {"command": runtime.command, "args": runtime.args},
@@ -942,7 +944,7 @@ async def run_managed_workflow(
     build_result = None
     if should_build(mode, mode_args, options):
         build_result = await run_supervised(
-            build_spec(options),
+            build_spec(mode, options),
             WORKSPACE_ROOT,
             build_environment(run_directory),
             run_directory / "build",

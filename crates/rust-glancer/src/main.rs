@@ -26,6 +26,7 @@ struct Cli {
 
 fn cli_version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
+    // Benchmark builds supply this snapshot. Cargo tracks changes to it through option_env!.
     match option_env!("RUST_GLANCER_BUILD_SOURCE") {
         Some(source) => VERSION.get_or_init(|| format!("{} ({source})", rg_lsp_server::VERSION)),
         None => rg_lsp_server::VERSION,

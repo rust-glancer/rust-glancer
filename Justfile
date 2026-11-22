@@ -28,7 +28,7 @@ analyze *args:
 
 [positional-arguments]
 compare-lsp *args:
-    cargo run --release -- compare-lsp "$@"
+    sh tools/with-build-source.sh cargo run --release -p rust-glancer -- compare-lsp "$@"
 
 lsp-query query_file *args:
     python3 tools/lsp-query.py --query-file '{{query_file}}' {{args}}

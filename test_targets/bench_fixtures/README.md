@@ -117,7 +117,12 @@ just compare-lsp --from-run /path/to/observations.json
 Each run writes `report.html` and `observations.json` under `target/compare-lsp` by default.
 `--output-dir` changes that parent directory. The JSON includes the versions, project
 revisions, configuration, and individual request attempts. The same JSON can regenerate
-the HTML with `--from-run`. The first use fetches the pinned checkouts and Cargo dependencies.
+the HTML with `--from-run`. Benchmark builds capture the checkout's Git revision, dirty state,
+and branch when it differs from `main`. For a prebuilt binary, the report reads its `--version`.
+To stamp a standalone build, run `sh tools/with-build-source.sh cargo build --release -p rust-glancer`
+from its checkout root.
+
+The first use fetches the pinned checkouts and Cargo dependencies.
 The managed template cache keeps checkouts by project and revision. To use a custom
 template directory, put each checkout under its project name at the pinned revision
 and pass `--templates`. The [target definitions](lsp/targets.json) contain the pins.
