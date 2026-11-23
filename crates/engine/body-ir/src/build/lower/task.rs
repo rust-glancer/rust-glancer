@@ -154,19 +154,34 @@ impl<'a> BodyTaskLowering<'a> {
             .physical_range()
             .0;
         let source_reader = SourceReader::new(self.db);
-        let written_text = source_reader.text(file)?;
-        let mut parse = None;
+        let has_written_body = tasks
+            .iter()
+            .any(|task| matches!(task.source, BodyTaskSource::File { .. }));
+        let parsed = has_written_body
+            .then(|| {
+                source_reader
+                    .syntax(file, self.edition)
+                    .map(|parse| (parse.syntax_node(), parse))
+            })
+            .transpose()?;
+        // The parsed file already owns the bytes used by source projection. Generated-only
+        // worklists need the caller's text but can skip parsing its file.
+        let syntax_text;
+        let captured_text;
+        let written_text = if let Some((root, _)) = &parsed {
+            syntax_text = root.text();
+            syntax_text.as_str()
+        } else {
+            captured_text = source_reader.text(file)?;
+            &captured_text
+        };
         for task in tasks {
             rg_std::check_cancel!(self.cancellation, "body lowering task");
             let (node, source, has_errors) = match &task.source {
                 BodyTaskSource::File { file, span } => {
-                    if parse.is_none() {
-                        parse = Some(source_reader.syntax(*file, self.edition)?);
-                    }
-                    let parse = parse.as_ref().expect("written body has a file parse");
-                    let tree = parse.tree();
+                    let (root, parse) = parsed.as_ref().expect("written body has a file parse");
                     let range = TextRange::new(span.start.into(), span.end.into());
-                    if !tree.syntax().text_range().contains_range(range) {
+                    if !root.text_range().contains_range(range) {
                         continue;
                     }
                     let kind = match task.owner {
@@ -174,8 +189,7 @@ impl<'a> BodyTaskLowering<'a> {
                         BodyOwner::Const(_) => SyntaxKind::CONST,
                         BodyOwner::Static(_) => SyntaxKind::STATIC,
                     };
-                    let Some(node) = tree
-                        .syntax()
+                    let Some(node) = root
                         .covering_element(range)
                         .ancestors()
                         .find(|node| node.kind() == kind && node.text_range() == range)
@@ -213,7 +227,7 @@ impl<'a> BodyTaskLowering<'a> {
                 task.owner_module,
                 task.fallback_module,
                 source,
-                &written_text,
+                written_text,
                 self.cfg,
                 macro_expansion,
                 &mut self.lowered_bodies.argument_copies,
