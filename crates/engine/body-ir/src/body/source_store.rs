@@ -32,14 +32,6 @@ impl BodySourceStore {
         id
     }
 
-    pub(crate) fn record_with_copy(&mut self, source: BodySource, copy: Option<u32>) -> SourceId {
-        let id = self.record(source);
-        if let Some(copy) = copy {
-            self.provenance.record_argument_use(id, copy);
-        }
-        id
-    }
-
     /// The ID and this table come from the same prepared body. A missing entry is a broken IR
     /// relationship, rather than a source occurrence that happens to be uneditable.
     pub fn source(&self, id: SourceId) -> BodySource {
@@ -93,7 +85,11 @@ pub(crate) struct BodySourceRecorder<'a> {
 impl RecordSource for BodySourceRecorder<'_> {
     fn record_as(&mut self, range: TextRange, role: SourceRole) -> SourceId {
         let (source, copy) = (self.map)(range, role);
-        self.store.record_with_copy(source, copy)
+        let id = self.store.record(source);
+        if let Some(copy) = copy {
+            self.store.provenance.record_argument_use(id, copy);
+        }
+        id
     }
 
     fn record_initializer(&mut self, initializer: &ast::Expr) -> SourceId {

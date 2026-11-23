@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use rg_def_map::{DefMapSource as _, ModuleOrigin};
+use rg_def_map::{DefMapSource as _, ItemSourceKind, ModuleOrigin};
 use rg_ir_model::{
     BodyKey, CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, LocalDefRef, ModuleRef,
     OuterBodyOwner, Span, TypeDefRef,
@@ -90,6 +90,14 @@ impl ReferenceSearchLabel {
     }
 }
 
+pub enum ReferenceMacroTargets {
+    None,
+    /// One copied token can name both a macro and another declaration, so scan both.
+    Mixed,
+    /// Resolved calls suffice when every target is a macro. They can be read without inference.
+    Only(Vec<LocalDefRef>),
+}
+
 /// Hints from the declarations selected by a reference or rename search.
 ///
 /// For references to `struct Widget`, labels can include both `Widget` and `Self`. A method on
@@ -107,10 +115,7 @@ pub struct ReferenceSourceSelection {
     pub modules: Vec<ModuleRef>,
     /// Searched nominal types, used to narrow `Self` in methods with a known impl receiver.
     pub types: Vec<TypeDefRef>,
-    /// Macro targets can match a resolved call whose written spelling is an import alias.
-    pub macro_definitions: Vec<LocalDefRef>,
-    /// When every target is a macro, its calls can be read without demanding inference.
-    pub scan_macro_calls_only: bool,
+    pub macros: ReferenceMacroTargets,
 }
 
 impl ReferenceSourceSelection {
@@ -203,11 +208,11 @@ impl ReferenceSourceSelection {
         let mut selected = Vec::new();
         for owner in owners {
             rg_std::check_cancel!(db, "reference owner selection");
-            let generated = owner.source.as_item_tree().is_none();
+            let generated = matches!(owner.source.kind, ItemSourceKind::Generated(_));
             let span = if generated {
                 // `generate!(alias)` can copy a call to a macro imported under another name.
                 // Keep the owner when matching uses of that macro by identity.
-                if !self.macro_definitions.is_empty() {
+                if !matches!(self.macros, ReferenceMacroTargets::None) {
                     selected.push(key(owner.owner));
                     continue;
                 }

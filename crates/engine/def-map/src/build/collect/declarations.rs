@@ -683,7 +683,6 @@ impl<'a> DeclarationCollector<'a> {
             MacroDefinitionData::from_item(
                 macro_definition,
                 item.docs.clone(),
-                self.state.edition,
                 if matches!(source.kind, ItemSourceKind::Generated(_)) {
                     self.dollar_crate.unwrap_or(self.state.crate_ref)
                 } else {
@@ -969,7 +968,6 @@ impl<'a> DeclarationCollector<'a> {
                 proc_macro.kind,
                 implementation,
                 item.docs.clone(),
-                self.state.edition,
                 self.state.crate_ref,
             ),
         );

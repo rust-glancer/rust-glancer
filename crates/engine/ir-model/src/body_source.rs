@@ -58,9 +58,4 @@ impl BodySource {
     pub fn is_exact_in_file(self, file_id: FileId) -> bool {
         self.file_id == file_id && self.location().is_exact()
     }
-
-    /// Returns true when this span is user-written and passes an optional file filter.
-    pub fn is_written_in_selected_file(self, file_id: Option<FileId>) -> bool {
-        file_id.is_none_or(|file_id| self.file_id == file_id) && self.is_written()
-    }
 }

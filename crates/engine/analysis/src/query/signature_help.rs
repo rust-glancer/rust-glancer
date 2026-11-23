@@ -169,7 +169,7 @@ fn render<T>(
     // Body IR skips cfg-disabled arguments. In `send(#[cfg(any())] (), $0value)`, the next
     // lowered span belongs to `value`. Leave it in the iterator and skip the comma after
     // `()` so `value` still gets the first parameter.
-    let mut lowered = call.args().iter().peekable();
+    let mut lowered = call.argument_spans().iter().copied().peekable();
     let mut disabled_argument = false;
     let mut argument_index = 0;
     for child in arguments
@@ -190,9 +190,7 @@ fn render<T>(
             let range = argument.syntax().text_range() + TextSize::from(source_start);
             let span = Span::from_text_range(range);
             // A macro-expanded argument can point to a token within its written expression.
-            disabled_argument = lowered
-                .next_if(|arg| span.contains_span(arg.span()))
-                .is_none();
+            disabled_argument = lowered.next_if(|arg| span.contains_span(*arg)).is_none();
         }
     }
     // All extra arguments to a C variadic function share its trailing `...` slot.

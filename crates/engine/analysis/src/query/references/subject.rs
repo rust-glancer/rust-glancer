@@ -21,7 +21,9 @@ use rg_ir_model::{
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::declaration::{Declaration, DeclarationView},
-    source::{IndexedSourceSurface, ReferenceSourceSelection, SourceOccurrenceView},
+    source::{
+        IndexedSourceSurface, ReferenceMacroTargets, ReferenceSourceSelection, SourceOccurrenceView,
+    },
 };
 use rg_std::UniqueVec;
 
@@ -125,8 +127,11 @@ impl ReferenceSubject {
         if !exact_labels_supported {
             exact_labels = UniqueVec::new();
         }
-        // A copied macro argument may also name a value. Its uses still need the full body scan.
-        let scan_macro_calls_only = macro_definitions.len() == declarations.len();
+        let macros = match macro_definitions.len() {
+            0 => ReferenceMacroTargets::None,
+            count if count == declarations.len() => ReferenceMacroTargets::Only(macro_definitions),
+            _ => ReferenceMacroTargets::Mixed,
+        };
 
         let subject = Self {
             declarations: declarations.iter().copied().collect(),
@@ -137,8 +142,7 @@ impl ReferenceSubject {
                 labels: exact_labels.into_vec(),
                 modules,
                 types,
-                macro_definitions,
-                scan_macro_calls_only,
+                macros,
             },
             local_owners: local_owners.map(UniqueVec::into_vec),
         };

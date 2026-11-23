@@ -25,7 +25,11 @@ use super::scan::{
     DefinitionSourceCandidate, DefinitionSourceScanner, RecordFieldKeySurface,
     SignatureSourceCandidate, SignatureSourceScanner, ValueReferenceSource, ValueReferenceSurface,
 };
-use crate::{IndexedViewDb, item::declaration::DeclarationView, source::ReferenceSourceSelection};
+use crate::{
+    IndexedViewDb,
+    item::declaration::DeclarationView,
+    source::{ReferenceMacroTargets, ReferenceSourceSelection},
+};
 
 /// Why an indexed source occurrence exists in the scanned source surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -521,9 +525,10 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             Some(file) => vec![file],
             None => self.db.body_ir.body_files(crate_ref)?,
         };
-        let macro_definitions = selection
-            .filter(|selection| selection.scan_macro_calls_only)
-            .map(|selection| selection.macro_definitions.as_slice());
+        let macro_definitions = match selection.map(|selection| &selection.macros) {
+            Some(ReferenceMacroTargets::Only(definitions)) => Some(definitions.as_slice()),
+            _ => None,
+        };
         for file in files {
             rg_std::check_cancel!(self.db, "body scan file");
             let owners = match selection {

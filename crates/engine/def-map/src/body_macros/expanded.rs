@@ -99,11 +99,7 @@ impl<T> ExpandedBodyMacro<T> {
     /// Compare the complete source file identity: caller and definition packages can reuse file IDs.
     /// Require the span to be inside this call and keep the original token's length, so a template
     /// token or whole-call fallback cannot pass as a written argument.
-    pub fn source_for_token_range(
-        &self,
-        call_source: BodySource,
-        range: TextRange,
-    ) -> Option<Span> {
+    fn source_for_token_range(&self, call_source: BodySource, range: TextRange) -> Option<Span> {
         self.argument_token(call_source, range)
             .map(|(span, _)| span)
     }

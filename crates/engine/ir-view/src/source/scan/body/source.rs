@@ -110,7 +110,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body: BodyView<'_>,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
-        let sites = BodyScanSites::new(body);
+        let sites = BodyScanSites::including_expansions(body);
         let record_shorthand_values = sites.record_expr_shorthand_value_ids();
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
             rg_std::check_cancel!(self.db, "body occurrence candidates");
@@ -149,7 +149,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body: BodyView<'_>,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
-        let sites = BodyScanSites::new(body);
+        let sites = BodyScanSites::including_expansions(body);
         for expr in body.exprs() {
             rg_std::check_cancel!(self.db, "body occurrence candidates");
             if self.file_matches(body.source_at(expr.source).file_id) {

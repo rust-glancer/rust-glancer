@@ -90,25 +90,13 @@ impl InferredBindingTy {
     }
 }
 
-/// One resolved call argument span.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResolvedCallArg {
-    span: Span,
-}
-
-impl ResolvedCallArg {
-    pub fn span(&self) -> Span {
-        self.span
-    }
-}
-
 /// A written call site paired with the target used to interpret its arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedCall<T> {
     source: BodySource,
     target: T,
     param_offset: usize,
-    args: Vec<ResolvedCallArg>,
+    argument_spans: Vec<Span>,
 }
 
 impl<T> ResolvedCall<T> {
@@ -124,8 +112,9 @@ impl<T> ResolvedCall<T> {
         self.param_offset
     }
 
-    pub fn args(&self) -> &[ResolvedCallArg] {
-        &self.args
+    /// Source spans of the arguments that survived cfg, in parameter order.
+    pub fn argument_spans(&self) -> &[Span] {
+        &self.argument_spans
     }
 }
 
@@ -654,7 +643,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     source,
                     target,
                     param_offset,
-                    args: Self::resolved_call_args(body, args),
+                    argument_spans: args
+                        .iter()
+                        .filter_map(|arg| {
+                            body.expr(*arg).map(|expr| body.source_at(expr.source).span)
+                        })
+                        .collect(),
                 });
             }
         }
@@ -768,16 +762,5 @@ impl<'a, 'db> BodyView<'a, 'db> {
             return Ok(None);
         };
         Ok(functions.next().is_none().then_some(function))
-    }
-
-    /// Convert expression ids into call argument spans.
-    fn resolved_call_args(body: rg_body_ir::BodyView<'_>, args: &[ExprId]) -> Vec<ResolvedCallArg> {
-        args.iter()
-            .filter_map(|arg| {
-                body.expr(*arg).map(|expr| ResolvedCallArg {
-                    span: body.source_at(expr.source).span,
-                })
-            })
-            .collect()
     }
 }

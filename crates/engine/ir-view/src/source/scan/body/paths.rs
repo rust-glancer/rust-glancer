@@ -69,8 +69,8 @@ impl<'a> TypePathSourceScanner<'a> {
 
     /// Scans body-local type annotations that can contain navigable type paths.
     pub(super) fn scan(&mut self) {
-        let sites = BodyScanSites::new(self.body);
-        sites.walk_type_paths(self.file_id, true, |site| {
+        let sites = BodyScanSites::including_expansions(self.body);
+        sites.walk_type_paths(self.file_id, |site| {
             self.scan_type_path(site.scope, site.path, site.source);
         });
     }
@@ -217,8 +217,8 @@ impl<'a> BodyPathSourceScanner<'a> {
         // Pattern paths are not represented as expressions, but they are still editor-visible
         // value paths: `let Some(value) = option` and `Action::Start { .. }` should navigate from
         // both the enum name and the variant name.
-        let sites = BodyScanSites::new(self.body);
-        sites.walk_pats(self.file_id, self.offset, true, |site| {
+        let sites = BodyScanSites::including_expansions(self.body);
+        sites.walk_pats(self.file_id, self.offset, |site| {
             self.scan_pat_data(site.scope, site.data);
         });
     }

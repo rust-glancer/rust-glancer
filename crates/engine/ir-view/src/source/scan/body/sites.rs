@@ -105,16 +105,31 @@ pub(super) struct TypePathSite<'body> {
 ///
 /// Shares syntax traversal and exact name selection. Each query decides which occurrences to
 /// keep, such as preferring the binding at a handwritten record pattern's shorthand field.
-///
-/// With `include_macro_arguments`, the walks also visit generated syntax so callers can check
-/// each name's location. One generated node can mix copied names with names from the template.
 pub(super) struct BodyScanSites<'body> {
     body: BodyView<'body>,
+    include_expansions: bool,
 }
 
 impl<'body> BodyScanSites<'body> {
-    pub(super) fn new(body: BodyView<'body>) -> Self {
-        Self { body }
+    pub(super) fn written(body: BodyView<'body>) -> Self {
+        Self {
+            body,
+            include_expansions: false,
+        }
+    }
+
+    /// Also walk generated syntax roots. A generated root can mix copied names with
+    /// template tokens, so the caller still checks each name's location.
+    pub(super) fn including_expansions(body: BodyView<'body>) -> Self {
+        Self {
+            body,
+            include_expansions: true,
+        }
+    }
+
+    fn includes(&self, source: BodySource, file_id: Option<FileId>) -> bool {
+        file_id.is_none_or(|file| source.file_id == file)
+            && (source.is_written() || self.include_expansions)
     }
 
     /// The name may come from the invocation even when the enclosing expression came from
@@ -185,7 +200,7 @@ impl<'body> BodyScanSites<'body> {
         offset: Option<u32>,
         mut visit: impl FnMut(BodySourceCandidate),
     ) {
-        self.walk_pats(file_id, offset, true, |site| {
+        self.walk_pats(file_id, offset, |site| {
             let PatKind::Record {
                 path: Some(owner),
                 fields,
@@ -237,14 +252,10 @@ impl<'body> BodyScanSites<'body> {
         &self,
         file_id: Option<FileId>,
         offset: Option<u32>,
-        include_macro_arguments: bool,
         mut visit: impl FnMut(PatWalkSite<'body>),
     ) {
         self.for_each_pattern_site(|site| {
-            if !site.source.is_written_in_selected_file(file_id)
-                && !(include_macro_arguments
-                    && file_id.is_none_or(|file| site.source.file_id == file))
-            {
+            if !self.includes(site.source, file_id) {
                 return;
             }
             if offset.is_some_and(|offset| !site.source.span.touches(offset)) {
@@ -252,15 +263,7 @@ impl<'body> BodyScanSites<'body> {
             }
 
             walk_pat(self.body, site.scope, site.pat, &mut |walk_site| {
-                if self
-                    .body
-                    .source_at(walk_site.data.source)
-                    .is_written_in_selected_file(file_id)
-                    || include_macro_arguments
-                        && file_id.is_none_or(|file| {
-                            self.body.source_at(walk_site.data.source).file_id == file
-                        })
-                {
+                if self.includes(self.body.source_at(walk_site.data.source), file_id) {
                     visit(walk_site);
                 }
             });
@@ -276,14 +279,10 @@ impl<'body> BodyScanSites<'body> {
     pub(super) fn walk_type_paths(
         &self,
         file_id: Option<FileId>,
-        include_macro_arguments: bool,
         mut visit: impl FnMut(TypePathSite<'body>),
     ) {
         self.for_each_type_ref_site(|site| {
-            if !site.source.is_written_in_selected_file(file_id)
-                && !(include_macro_arguments
-                    && file_id.is_none_or(|file| site.source.file_id == file))
-            {
+            if !self.includes(site.source, file_id) {
                 return;
             }
 

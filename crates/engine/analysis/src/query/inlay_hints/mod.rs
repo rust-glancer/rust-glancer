@@ -168,8 +168,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 None => None,
             };
             let copied = !call_source.is_written();
-            let mut lowered = call.args().iter().peekable();
-            let written_arguments = if copied {
+            let copied_spans;
+            let argument_spans = if copied {
                 let Some(fragment) = source.text_for_span(file_id, call_source.span)? else {
                     continue;
                 };
@@ -179,22 +179,23 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 // In `forward!(parse(make!()))`, the lowered argument may be a token inside
                 // `make!()`. Use it to identify enabled arguments and keep the full written
                 // argument as the label's anchor.
-                Some(list)
+                let mut lowered = call.argument_spans().iter().copied().peekable();
+                copied_spans = list
+                    .args()
+                    .filter_map(|arg| {
+                        let range =
+                            arg.syntax().text_range() + TextSize::from(call_source.span.start);
+                        let span = Span::from_text_range(range);
+                        lowered
+                            .next_if(|arg| span.contains_span(*arg))
+                            .map(|_| span)
+                    })
+                    .collect::<Vec<_>>();
+                &copied_spans
             } else {
-                None
+                call.argument_spans()
             };
-            let copied_args = written_arguments
-                .iter()
-                .flat_map(ast::ArgList::args)
-                .filter_map(|arg| {
-                    let range = arg.syntax().text_range() + TextSize::from(call_source.span.start);
-                    let span = Span::from_text_range(range);
-                    lowered
-                        .next_if(|arg| span.contains_span(arg.span()))
-                        .map(|_| span)
-                });
-            let written_args = call.args().iter().filter(|_| !copied).map(|arg| arg.span());
-            for (arg_idx, span) in written_args.chain(copied_args).enumerate() {
+            for (arg_idx, &span) in argument_spans.iter().enumerate() {
                 rg_std::check_cancel!(self.analysis, "inlay hints");
                 if !range.touches(span.start) {
                     continue;

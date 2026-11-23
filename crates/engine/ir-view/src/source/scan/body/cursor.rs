@@ -111,7 +111,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             body: body_ref,
             location: body.source().location(),
         });
-        let sites = BodyScanSites::new(body);
+        let sites = BodyScanSites::including_expansions(body);
         let record_shorthand_values = sites.record_expr_shorthand_value_ids();
 
         // The cursor can be on a nested fn/const/static name. Its body owns the initializer

@@ -139,16 +139,6 @@ impl ItemSource {
         }
     }
 
-    /// Returns the ordinary item-tree source when this definition did not come from expansion or
-    /// a body-local item arena.
-    pub fn as_item_tree(self) -> Option<ItemTreeRef> {
-        match self.kind {
-            ItemSourceKind::ItemTree(source) => Some(source),
-            ItemSourceKind::Generated(_) | ItemSourceKind::Synthetic(_) => None,
-            ItemSourceKind::Body(_) => None,
-        }
-    }
-
     /// Returns a source identity for an associated item in the same underlying item arena.
     pub fn with_item(self, item: ItemTreeId) -> Self {
         let kind = match self.kind {
