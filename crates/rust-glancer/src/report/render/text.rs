@@ -10,6 +10,9 @@ pub(crate) struct TextRenderer;
 impl TextRenderer {
     pub(crate) fn render(&self, document: &ReportDocument, out: &mut String) -> std::fmt::Result {
         writeln!(out, "{}", document.title)?;
+        if let Some(subtitle) = &document.subtitle {
+            writeln!(out, "{subtitle}")?;
+        }
 
         for (section_index, section) in document.sections.iter().enumerate() {
             if section_index > 0 {

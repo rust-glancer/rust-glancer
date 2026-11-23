@@ -358,6 +358,7 @@ impl FieldList {
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct FieldItem {
+    pub user_facing_attrs: UserFacingAttrs,
     pub key: Option<FieldKey>,
     pub visibility: VisibilityLevel,
     pub ty: TypeRef,

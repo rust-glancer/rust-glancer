@@ -3,14 +3,16 @@
 use std::{collections::HashSet, time::Instant};
 
 use anyhow::Context as _;
-use rg_ir_model::{FunctionRef, ModuleRef, Path, TraitDefRef, identity::LexicalScopeRef};
+use rg_ir_model::{ModuleRef, Path, TraitDefRef, identity::LexicalScopeRef};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_text::Name;
 use rg_ty::{Ty, lookup::MemberMethodCandidateRef};
 
 use super::{MemberFunction, MemberMethodCandidate, MemberView};
 use crate::{
-    body::BodyResolutionView, lookup::importable::DefinitionImportSearch, ty::IndexedType,
+    body::BodyResolutionView,
+    lookup::importable::DefinitionImportSearch,
+    ty::{ExpectedCallResult, IndexedType},
 };
 
 impl<'a, 'db> MemberView<'a, 'db> {
@@ -19,9 +21,10 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &'view self,
         scope: LexicalScopeRef,
         ty: &IndexedType,
+        expected: Option<ExpectedCallResult<'_>>,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let candidates = self
-            .body_method_candidate_refs_for_ty(scope, ty.raw(), None)
+            .body_method_candidate_refs_for_ty(scope, ty.raw(), None, expected)
             .context("resolve method candidate references")?;
         self.method_candidates_from_refs(candidates)
             .context("project method candidates")
@@ -31,15 +34,17 @@ impl<'a, 'db> MemberView<'a, 'db> {
     ///
     /// Each crate's name table supplies a batch. Body resolution checks the receiver first.
     /// The import walk then looks up the traits behind the methods that passed.
-    pub fn extension_method_candidates(
-        &self,
+    #[allow(clippy::too_many_arguments)]
+    pub fn extension_method_candidates<'view>(
+        &'view self,
         scope: LexicalScopeRef,
         module: ModuleRef,
         ty: &IndexedType,
+        expected: Option<ExpectedCallResult<'_>>,
         prefix: &str,
         deadline: Instant,
         occupied: impl Fn(&str) -> bool,
-    ) -> anyhow::Result<Vec<(FunctionRef, Path)>> {
+    ) -> anyhow::Result<Vec<(MemberMethodCandidate<'view>, Path)>> {
         const MAX_CRATES: usize = 96;
         const MAX_FUNCTIONS: usize = 16;
 
@@ -79,17 +84,18 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 ty.raw(),
                 matching,
                 Some((&mut remaining, deadline)),
+                expected.map(ExpectedCallResult::raw),
             )?;
             if methods.is_empty() {
                 continue;
             }
             // The user types the method's name, but the new `use` needs a path to its trait.
             let mut methods_with_owners = Vec::with_capacity(methods.len());
-            for function in methods {
-                if let Some(trait_ref) = function.declaring_trait()
+            for method in methods {
+                if let Some(trait_ref) = method.function().declaring_trait()
                     && let Some(data) = items.trait_data(trait_ref)?
                 {
-                    methods_with_owners.push((function, data.local_def));
+                    methods_with_owners.push((method, data.local_def));
                 }
             }
             let definitions = methods_with_owners
@@ -104,14 +110,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 None => imports.insert(DefinitionImportSearch::new(self.db, module, deadline)?),
             };
             let paths = imports.search(&definitions)?;
-            result.extend(
-                methods_with_owners
-                    .into_iter()
-                    .filter_map(|(method, owner)| {
-                        let path = paths.get(&owner)?;
-                        Some((method, path.clone()))
-                    }),
-            );
+            for (method, owner) in methods_with_owners {
+                if let Some(path) = paths.get(&owner)
+                    && let Some(function) = self.function(method.function())?
+                {
+                    result.push((Self::method_candidate(function, method), path.clone()));
+                }
+            }
         }
         Ok(result)
     }
@@ -126,7 +131,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         name: &str,
     ) -> anyhow::Result<bool> {
         if !self
-            .body_method_candidate_refs_for_ty(scope, ty.raw(), Some(name))?
+            .body_method_candidate_refs_for_ty(scope, ty.raw(), Some(name), None)?
             .is_empty()
         {
             return Ok(false);
@@ -136,6 +141,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
             scope,
             ty.raw(),
             std::iter::once(&selected),
+            None,
             None,
         )?;
         Ok(methods.len() == 1)
@@ -147,10 +153,17 @@ impl<'a, 'db> MemberView<'a, 'db> {
         scope: LexicalScopeRef,
         ty: &Ty,
         name: Option<&str>,
+        expected: Option<ExpectedCallResult<'_>>,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         let body = scope.body_ir();
         let Some(candidates) = BodyResolutionView::new(self.db)
-            .method_candidate_refs_for_ty(body, scope.scope_id(), ty, name)
+            .method_candidate_refs_for_ty(
+                body,
+                scope.scope_id(),
+                ty,
+                name,
+                expected.map(ExpectedCallResult::raw),
+            )
             .context("resolve body method candidates")?
         else {
             // Lexical trait scope belongs to the body's DefMap. If those facts disappeared between
@@ -181,14 +194,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(methods)
     }
 
-    /// Combine borrowed function data with lookup origin.
+    /// Attach the declaration without copying the facts from lookup into another candidate.
     fn method_candidate<'view>(
         function: MemberFunction<'view>,
         candidate: MemberMethodCandidateRef,
     ) -> MemberMethodCandidate<'view> {
         MemberMethodCandidate {
-            function,
-            origin: candidate.origin().into(),
+            candidate,
+            data: function.data,
         }
     }
 }

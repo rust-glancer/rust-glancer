@@ -35,7 +35,22 @@ impl HtmlRenderer {
             });
             html.element("body").children(|html| {
                 html.element("main").children(|html| {
-                    html.element("h1").text(&document.title);
+                    html.element("header")
+                        .class("report-header")
+                        .children(|html| {
+                            html.element("div").children(|html| {
+                                html.element("h1").text(&document.title);
+                                if let Some(subtitle) = &document.subtitle {
+                                    html.element("p").class("report-subtitle").text(subtitle);
+                                }
+                            });
+                            html.element("button")
+                                .class("theme-toggle")
+                                .attr("type", "button")
+                                .attr("hidden", "hidden")
+                                .attr("aria-label", "Switch theme")
+                                .text("☾");
+                        });
                     self.render_groups(html, &groups);
                 });
                 html.raw("<script>\n");

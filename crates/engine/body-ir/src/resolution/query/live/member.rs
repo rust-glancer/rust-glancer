@@ -7,15 +7,16 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ScopeId, TraitApplicability, TraitDefRef};
-use rg_item_tree::{ParamKind, SelfParamKind};
+use rg_item_tree::{GenericArg, ParamKind, SelfParamKind};
 use rg_semantic_ir::{FunctionData, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{
-    lookup::MemberMethodCandidateRef,
+    Ty as StoredTy,
+    lookup::{MemberMethodCandidateRef, MemberMethodOrigin},
     solver::{
-        DefId, ImplSelection, InferenceSubstitution, InferenceTable, Outcome, SolverInterner,
-        TraitApplication, Ty, TyShape,
+        DefId, ImplSelection, InferenceSubstitution, InferenceTable, Outcome, TraitApplication, Ty,
+        TyShape,
     },
 };
 
@@ -35,9 +36,16 @@ pub(crate) enum FunctionLookup<'a, 's> {
     Completion,
 }
 
+/// Receiver adjustment order comes first. Inherent methods win at the same adjustment.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MethodPriority {
+    adjustment: usize,
+    from_trait: bool,
+}
+
 /// Evidence for one declaration at one receiver adjustment. Each candidate owns its trial so
-/// another declaration cannot inherit its assignments. Calls may adopt it; completion exports
-/// only the declaration and applicability, then drops the trial.
+/// another declaration cannot inherit its assignments. Calls may adopt it. Completion can use
+/// it to compare the instantiated return type before exporting the declaration.
 pub(crate) struct MemberCandidate<'s> {
     pub function: FunctionRef,
     pub trait_ref: Option<TraitDefRef>,
@@ -57,18 +65,35 @@ impl<'s> MemberCandidate<'s> {
         }
     }
 
-    pub(crate) fn method_ref(&self) -> MemberMethodCandidateRef {
-        match self.trait_ref {
-            Some(_) => MemberMethodCandidateRef::trait_method(
-                self.function,
-                match self.outcome {
-                    Outcome::Proven => TraitApplicability::Yes,
-                    Outcome::NoSolution => TraitApplicability::No,
-                    Outcome::Ambiguous | Outcome::Unavailable => TraitApplicability::Maybe,
-                },
-            ),
-            None => MemberMethodCandidateRef::inherent(self.function),
-        }
+    /// Match the first adjustment accepted by this method's `self` parameter. A successful
+    /// match keeps any bindings in this candidate's trial for the call signature to use.
+    pub(crate) fn match_receiver(
+        &self,
+        data: &FunctionData,
+        self_ty: Ty<'s>,
+        receivers: &[Ty<'s>],
+    ) -> Option<(MethodPriority, Ty<'s>)> {
+        let cx = self.table.interner();
+        let parameter = match data.signature.params().first()?.kind {
+            ParamKind::SelfParam(SelfParamKind::Value) => self_ty,
+            ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
+                cx.reference(mutability, self_ty)
+            }
+            ParamKind::SelfParam(SelfParamKind::Explicit) => {
+                let signature = cx.callable_signature(self.function)?;
+                self.subst.apply(cx, *signature.params.first()?)
+            }
+            ParamKind::Normal | ParamKind::Variadic => return None,
+        };
+        let (adjustment, &receiver) = receivers
+            .iter()
+            .enumerate()
+            .find(|(_, receiver)| self.table.try_unify(**receiver, parameter).is_ok())?;
+        let priority = MethodPriority {
+            adjustment,
+            from_trait: !matches!(data.owner, ItemOwner::Impl(_)),
+        };
+        Some((priority, receiver))
     }
 }
 
@@ -77,6 +102,42 @@ where
     D: DefMapSource + Copy,
     I: SemanticItemSource<'query> + Copy,
 {
+    /// A tentative receiver match can still supply a method candidate. Only a proven match
+    /// supplies the bindings we use to compare its return type.
+    pub(crate) fn method_candidate_ref(
+        &self,
+        scope: ScopeId,
+        candidate: &MemberCandidate<'_>,
+        expected: Option<(&StoredTy, &[GenericArg])>,
+    ) -> Result<MemberMethodCandidateRef, ReadError> {
+        let return_type_matches = match expected {
+            Some(expected) if candidate.outcome == Outcome::Proven => self
+                .function_return_matches(
+                    scope,
+                    candidate.function,
+                    &candidate.table,
+                    &candidate.subst,
+                    expected,
+                )?,
+            _ => false,
+        };
+        let origin = if candidate.trait_ref.is_some() {
+            let applicability = match candidate.outcome {
+                Outcome::Proven => TraitApplicability::Yes,
+                Outcome::NoSolution => TraitApplicability::No,
+                Outcome::Ambiguous | Outcome::Unavailable => TraitApplicability::Maybe,
+            };
+            MemberMethodOrigin::Trait { applicability }
+        } else {
+            MemberMethodOrigin::Inherent
+        };
+        Ok(MemberMethodCandidateRef::new(
+            candidate.function,
+            origin,
+            return_type_matches,
+        ))
+    }
+
     /// Find candidate functions for one possible `Self` type at the call site. For example,
     /// resolving `v.pop()` on a `Vec<T>` can ask first about `Vec<T>` and then about `[T]`
     /// after dereferencing. Each result carries what inference learned while checking that
@@ -212,27 +273,6 @@ where
             }
         }
         Ok(candidates)
-    }
-
-    /// Work out the receiver parameter after substituting the selected Self type.
-    pub(crate) fn method_receiver_type<'s>(
-        cx: SolverInterner<'s>,
-        function: FunctionRef,
-        data: &FunctionData,
-        subst: &InferenceSubstitution<'s>,
-        self_ty: Ty<'s>,
-    ) -> Option<Ty<'s>> {
-        match data.signature.params().first()?.kind {
-            ParamKind::SelfParam(SelfParamKind::Value) => Some(self_ty),
-            ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
-                Some(cx.reference(mutability, self_ty))
-            }
-            ParamKind::SelfParam(SelfParamKind::Explicit) => {
-                let signature = cx.callable_signature(function)?;
-                Some(subst.apply(cx, *signature.params.first()?))
-            }
-            ParamKind::Normal | ParamKind::Variadic => None,
-        }
     }
 
     /// Try one trait declaration in its own inference table. Extension lookup uses this same

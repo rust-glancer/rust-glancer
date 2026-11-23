@@ -13,18 +13,19 @@ use std::{
 };
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{FunctionRef, ScopeId, TraitDefRef};
+use rg_ir_model::{ScopeId, TraitDefRef};
+use rg_item_tree::GenericArg;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_text::Name;
 use rg_ty::{
     Ty,
-    lookup::{MemberMethodCandidateRef, MemberMethodOrigin},
+    lookup::MemberMethodCandidateRef,
     solver::{Outcome, SemanticDeclarations, TyShape},
 };
 
-use super::live::{FunctionLookup, LiveBodyQuery};
+use super::live::{FunctionLookup, LiveBodyQuery, MemberCandidate, MethodPriority};
 use crate::resolution::BodyResolutionContext;
 
 /// Collects methods visible from the body scope for an editor's receiver-type query.
@@ -47,47 +48,74 @@ where
         scope: ScopeId,
         ty: &Ty,
         name: Option<&str>,
+        expected: Option<(&Ty, &[GenericArg])>,
     ) -> Result<Vec<MemberMethodCandidateRef>, ReadError> {
         let context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&context, &self.context);
+        let items = self.context.item_query();
         declarations.with_table(|table, params| {
             let receiver = table.interner().lower_ty(ty, params);
             let lookup = self.context.live();
+            let self_types = table.method_receivers(receiver).collect::<Vec<_>>();
+            let adjustments = expected.map(|_| {
+                table
+                    .method_receiver_adjustments(&self_types)
+                    .collect::<Vec<_>>()
+            });
             let mut candidates = Vec::new();
-            // Completion keeps both origins at every dereference step. A named call uses the
-            // same declarations, then compares their self parameters to choose one adjustment.
-            for receiver in table.method_receivers(receiver) {
+            // Keep the broad list of declarations. Compare return types only at a receiver
+            // adjustment that could actually call the method.
+            for self_ty in self_types {
                 for candidate in lookup.function_candidates(
                     scope,
-                    receiver,
+                    self_ty,
                     name.map_or(FunctionLookup::Completion, FunctionLookup::Method),
                     &table,
                 )? {
-                    Self::push_candidate(&mut candidates, candidate.method_ref());
+                    let priority = if let Some(receivers) = &adjustments
+                        && let Some(data) = items.function_data(candidate.function)?
+                    {
+                        candidate
+                            .match_receiver(data, self_ty, receivers)
+                            .map(|(priority, _)| priority)
+                    } else {
+                        None
+                    };
+                    Self::push_candidate(
+                        &mut candidates,
+                        &lookup,
+                        scope,
+                        &candidate,
+                        priority,
+                        expected,
+                    )?;
                 }
             }
-            Ok(candidates)
+            Ok(candidates.into_iter().map(|entry| entry.method).collect())
         })?
     }
 
     /// Check out-of-scope methods from one batch of matching names.
     ///
     /// Screening by receiver shape keeps unrelated traits out of the shortlist. Each matching
-    /// function with a receiver spends one slot from the budget shared by all batches.
+    /// suggestible function with a receiver spends one slot from the budget shared by all batches.
     pub fn extension_methods_for_ty<'name>(
         &self,
         scope: ScopeId,
         ty: &Ty,
         names: impl Iterator<Item = &'name (Name, TraitDefRef)>,
         mut budget: Option<(&mut usize, Instant)>,
-    ) -> Result<Vec<FunctionRef>, ReadError> {
+        expected: Option<(&Ty, &[GenericArg])>,
+    ) -> Result<Vec<MemberMethodCandidateRef>, ReadError> {
         if matches!(&budget, Some((remaining, _)) if **remaining == 0) {
             return Ok(Vec::new());
         }
         let deadline = budget.as_ref().map(|(_, deadline)| *deadline);
         let expired = || deadline.is_some_and(|end| Instant::now() >= end);
         let traits_in_scope = self.context.traits().traits_in_scope(scope)?;
+        let use_crate = self.context.body_ref().crate_ref;
         let items = self.context.item_query();
+        let lookup = self.context.live();
         let context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&context, &self.context);
         declarations.with_table(|table, params| {
@@ -98,7 +126,6 @@ where
             ) {
                 return Ok(Vec::new());
             }
-            let cx = table.interner();
             // For `impl Ext for &u32 { fn borrowed(self) { ... } }`, a `u32` value
             // can call `borrowed()` with `Self = &u32`. Include those borrows in both
             // the impl-index lookup and the trait proof.
@@ -131,7 +158,12 @@ where
                     continue;
                 }
                 for (function, data) in items.associated_functions(trait_ref.member_store())? {
-                    if data.name == *name && data.has_self_receiver() {
+                    if data.name == *name
+                        && data.has_self_receiver()
+                        && data
+                            .user_facing_attrs
+                            .is_suggestible_from(function.store.origin.origin_crate(), use_crate)
+                    {
                         functions.push((function, *trait_ref));
                         if let Some((remaining, _)) = &mut budget {
                             **remaining -= 1;
@@ -142,23 +174,28 @@ where
                     }
                 }
             }
-            let mut candidates = Vec::new();
+            let mut candidates: Vec<RankedMethodCandidate> = Vec::new();
             if functions.is_empty() {
-                return Ok(candidates);
+                return Ok(Vec::new());
             }
             // A proof for `impl Render for Widget` establishes `Self = Widget`.
             // For `render(&self)`, also check that an adjustment produces an `&Widget`.
-            for &self_ty in &receivers {
+            'receivers: for &self_ty in &receivers {
                 let bound_traits = table.bound_traits(self_ty);
                 for &(function, trait_ref) in &functions {
                     rg_std::check_cancel!(self.context, "extension method completion");
                     if expired() {
-                        return Ok(candidates);
+                        break 'receivers;
                     }
-                    if candidates.contains(&function) || bound_traits.contains(&trait_ref) {
+                    if bound_traits.contains(&trait_ref)
+                        || (expected.is_none()
+                            && candidates
+                                .iter()
+                                .any(|entry| entry.method.function() == function))
+                    {
                         continue;
                     }
-                    let Some(candidate) = LiveBodyQuery::<D, I>::trait_function_candidate(
+                    let Some(mut candidate) = LiveBodyQuery::<D, I>::trait_function_candidate(
                         trait_ref, function, self_ty, None, &table,
                     ) else {
                         continue;
@@ -169,65 +206,83 @@ where
                     let Some(data) = items.function_data(function)? else {
                         continue;
                     };
-                    let Some(parameter) = LiveBodyQuery::<D, I>::method_receiver_type(
-                        cx,
-                        function,
-                        data,
-                        &candidate.subst,
-                        self_ty,
-                    ) else {
+                    let Some((priority, _)) =
+                        candidate.match_receiver(data, self_ty, receivers.as_slice())
+                    else {
                         continue;
                     };
-                    if receivers
-                        .iter()
-                        .any(|&ty| candidate.table.try_unify(ty, parameter).is_ok())
-                        && candidate
-                            .table
-                            .method_receiver_bounds_hold(function, candidate.subst)
+                    if candidate
+                        .table
+                        .method_receiver_bounds_hold(function, &mut candidate.subst)
                     {
-                        candidates.push(function);
+                        Self::push_candidate(
+                            &mut candidates,
+                            &lookup,
+                            scope,
+                            &candidate,
+                            Some(priority),
+                            expected,
+                        )?;
                     }
                 }
             }
-            Ok(candidates)
+            // A partial search can keep its suggestions. Later adjustments may still
+            // change the winning return type, so omit the boost if the deadline cut it short.
+            let finished = !expired();
+            Ok(candidates
+                .into_iter()
+                .map(|entry| {
+                    let method = entry.method;
+                    if finished {
+                        method
+                    } else {
+                        MemberMethodCandidateRef::new(method.function(), method.origin(), false)
+                    }
+                })
+                .collect())
         })?
     }
 
-    /// Deduplicate a method candidate and keep the stronger origin.
     fn push_candidate(
-        candidates: &mut Vec<MemberMethodCandidateRef>,
-        candidate: MemberMethodCandidateRef,
-    ) {
+        candidates: &mut Vec<RankedMethodCandidate>,
+        lookup: &LiveBodyQuery<'query, D, I>,
+        scope: ScopeId,
+        candidate: &MemberCandidate<'_>,
+        priority: Option<MethodPriority>,
+        expected: Option<(&Ty, &[GenericArg])>,
+    ) -> Result<(), ReadError> {
         let Some(existing) = candidates
             .iter_mut()
-            .find(|existing| existing.function() == candidate.function())
+            .find(|entry| entry.method.function() == candidate.function)
         else {
-            candidates.push(candidate);
-            return;
+            let method = lookup.method_candidate_ref(scope, candidate, priority.and(expected))?;
+            candidates.push(RankedMethodCandidate { method, priority });
+            return Ok(());
         };
-
-        *existing = Self::merge_candidates(*existing, candidate);
+        let best_priority = existing.priority.into_iter().chain(priority).min();
+        // Tied receiver adjustments can expose different instantiations of the same method.
+        // Only check the new return type while its adjustment can still earn the boost.
+        let previous_matches =
+            existing.priority != best_priority || existing.method.return_type_matches();
+        let compare = expected
+            .filter(|_| priority.is_some() && priority == best_priority && previous_matches);
+        let method = lookup.method_candidate_ref(scope, candidate, compare)?;
+        let matches = best_priority.is_some()
+            && previous_matches
+            && (priority != best_priority || method.return_type_matches());
+        existing.method = MemberMethodCandidateRef::new(
+            method.function(),
+            existing.method.origin().min(method.origin()),
+            matches,
+        );
+        existing.priority = best_priority;
+        Ok(())
     }
+}
 
-    /// Merge duplicate candidates from inherent and trait lookup.
-    fn merge_candidates(
-        left: MemberMethodCandidateRef,
-        right: MemberMethodCandidateRef,
-    ) -> MemberMethodCandidateRef {
-        match (left.origin(), right.origin()) {
-            (MemberMethodOrigin::Inherent, _) => left,
-            (_, MemberMethodOrigin::Inherent) => right,
-            (
-                MemberMethodOrigin::Trait {
-                    applicability: left_applicability,
-                },
-                MemberMethodOrigin::Trait {
-                    applicability: right_applicability,
-                },
-            ) => MemberMethodCandidateRef::trait_method(
-                left.function(),
-                left_applicability.or(right_applicability),
-            ),
-        }
-    }
+/// Keep receiver priority only while collecting methods. Applicability describes the
+/// suggestion, while the best receiver adjustment supplies its return type.
+struct RankedMethodCandidate {
+    method: MemberMethodCandidateRef,
+    priority: Option<MethodPriority>,
 }

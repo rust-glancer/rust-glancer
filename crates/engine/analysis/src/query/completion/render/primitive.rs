@@ -5,13 +5,13 @@
 
 use rg_ir_model::PrimitiveTy;
 
-use super::{
-    definition_detail,
-    sort::{CompletionSortPolicy, CompletionSortPriority},
-};
-use crate::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget,
+use super::definition_detail;
+use crate::{
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
+    },
+    query::completion::relevance::{CompletionSortPolicy, CompletionSortPriority},
 };
 
 /// Renders primitive types after scope lookup proves their spelling is not shadowed.
@@ -42,13 +42,8 @@ impl PrimitiveTypeCompletionRenderer {
             applicability: CompletionApplicability::Known,
             detail: Some(definition_detail(kind, &label)),
             documentation: None,
-            sort_text: CompletionSortPolicy::TypePosition.sort_text(
-                Some(CompletionSortPriority::Primitive),
-                &label,
-                kind,
-                CompletionApplicability::Known,
-                target,
-            ),
+            relevance: CompletionSortPolicy::TypePosition
+                .relevance(Some(CompletionSortPriority::Primitive)),
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
             import: None,

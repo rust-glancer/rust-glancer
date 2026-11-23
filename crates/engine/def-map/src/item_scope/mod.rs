@@ -89,7 +89,7 @@ impl ImportableScope {
                 let Some(binding) = bindings.binding(namespace) else {
                     continue;
                 };
-                if binding.attribute_import().is_some() && !binding.has_reexport() {
+                if binding.import_attrs().is_some() && !binding.has_reexport() {
                     continue;
                 }
                 if matches!(binding.def, DefId::Module(_)) {

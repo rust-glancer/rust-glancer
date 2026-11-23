@@ -12,6 +12,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, StaticItem, TraitItem, TypeAliasItem,
+    UserFacingAttrs,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -113,7 +114,13 @@ where
             };
 
             if let ItemKind::Impl(impl_item) = &item.kind {
-                self.lower_impl(local_impl_ref, local_impl.source, owner, impl_item);
+                self.lower_impl(
+                    local_impl_ref,
+                    local_impl.source,
+                    owner,
+                    impl_item,
+                    item.user_facing_attrs,
+                );
             }
         }
 
@@ -137,6 +144,7 @@ where
                     ItemOwner::Module(owner),
                     item,
                     const_item,
+                    item.user_facing_attrs,
                 );
                 ItemId::Const(self.items.consts.alloc(data))
             }
@@ -160,6 +168,7 @@ where
                     ItemOwner::Module(owner),
                     item,
                     fn_def,
+                    item.user_facing_attrs,
                 );
                 ItemId::Function(self.items.functions.alloc(data))
             }
@@ -189,6 +198,7 @@ where
                     ItemOwner::Module(owner),
                     item,
                     type_alias,
+                    item.user_facing_attrs,
                 );
                 ItemId::TypeAlias(self.items.type_aliases.alloc(data))
             }
@@ -242,10 +252,12 @@ where
         source: ItemSource,
         owner: ModuleRef,
         impl_item: &ImplItem,
+        user_facing_attrs: UserFacingAttrs,
     ) {
         // Impl header paths are stored as syntax here; a separate pass can fill resolved self/trait
         // ids once all stores needed by the chosen resolution scope exist.
         self.items.impls.alloc(ImplData {
+            user_facing_attrs,
             local_impl,
             source,
             owner,
@@ -284,14 +296,16 @@ where
 }
 
 impl FunctionData {
-    pub(crate) fn from_item(
+    fn from_item(
         local_def: Option<LocalDefRef>,
         source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &FunctionItem,
+        user_facing_attrs: UserFacingAttrs,
     ) -> Self {
         Self {
+            user_facing_attrs,
             local_def,
             source,
             location: item.location,
@@ -306,14 +320,16 @@ impl FunctionData {
 }
 
 impl TypeAliasData {
-    pub(crate) fn from_item(
+    fn from_item(
         local_def: Option<LocalDefRef>,
         source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &TypeAliasItem,
+        user_facing_attrs: UserFacingAttrs,
     ) -> Self {
         Self {
+            user_facing_attrs,
             local_def,
             source,
             location: item.location,
@@ -328,14 +344,16 @@ impl TypeAliasData {
 }
 
 impl ConstData {
-    pub(crate) fn from_item(
+    fn from_item(
         local_def: Option<LocalDefRef>,
         source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &ConstItem,
+        user_facing_attrs: UserFacingAttrs,
     ) -> Self {
         Self {
+            user_facing_attrs,
             local_def,
             source,
             location: item.location,
@@ -354,22 +372,29 @@ impl AssociatedItemStoreBuilder {
     /// Allocate IDs only for declarations. Macro calls consume no slots; their expanded
     /// declarations must be supplied separately. Members have no module-level binding, so the
     /// lowered data has no `local_def` even though it has its own semantic member ID.
+    /// Keep an impl's presentation attributes on its members so completion can
+    /// check them without reopening the owner or changing Rust name resolution.
     pub fn lower(
         &mut self,
         source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
+        impl_attrs: UserFacingAttrs,
     ) -> Option<AssocItemId> {
+        let attrs = item.user_facing_attrs.merge(impl_attrs);
         Some(match &item.kind {
-            ItemKind::Function(declaration) => AssocItemId::Function(self.alloc_function(
-                FunctionData::from_item(None, source, owner, item, declaration),
-            )),
-            ItemKind::Const(declaration) => AssocItemId::Const(
-                self.alloc_const(ConstData::from_item(None, source, owner, item, declaration)),
-            ),
-            ItemKind::TypeAlias(declaration) => AssocItemId::TypeAlias(self.alloc_type_alias(
-                TypeAliasData::from_item(None, source, owner, item, declaration),
-            )),
+            ItemKind::Function(declaration) => {
+                let data = FunctionData::from_item(None, source, owner, item, declaration, attrs);
+                AssocItemId::Function(self.alloc_function(data))
+            }
+            ItemKind::Const(declaration) => {
+                let data = ConstData::from_item(None, source, owner, item, declaration, attrs);
+                AssocItemId::Const(self.alloc_const(data))
+            }
+            ItemKind::TypeAlias(declaration) => {
+                let data = TypeAliasData::from_item(None, source, owner, item, declaration, attrs);
+                AssocItemId::TypeAlias(self.alloc_type_alias(data))
+            }
             _ => return None,
         })
     }

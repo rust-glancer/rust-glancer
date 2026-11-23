@@ -19,7 +19,7 @@ use rg_tt::{
 use crate::{
     BuiltinMacroItem, CfgSelectArmItem, DeclarationSourceStore, Documentation, ExpandedItemSyntax,
     FileTree, IncludePathExpression, InnerDocs, ItemKind, ItemLowering, ItemMacroSpans, ItemNode,
-    ItemTreeId, LoweredItem, MaybeFromAst, RecordSource,
+    ItemTreeId, LoweredItem, MaybeFromAst, RecordSource, UserFacingAttrs,
 };
 
 /// Build declaration meaning and its source table in the same traversal.
@@ -58,6 +58,7 @@ impl FileLowering<'_> {
             FileTree {
                 file,
                 docs,
+                user_facing_attrs: UserFacingAttrs::from_ast(&source_file),
                 top_level,
                 items: builder.items,
                 source_sensitive: builder.source_sensitive

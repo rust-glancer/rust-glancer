@@ -620,6 +620,33 @@ impl LspEngineFixture {
         expect.assert_eq(&render_responses([(title, rendered)]));
     }
 
+    pub(super) async fn dirty_completion_items(
+        &self,
+        document: &DirtyDocument,
+        marker: &str,
+    ) -> Vec<CompletionItem> {
+        let position = self.marker_position(QueryMarkers::Dirty(document), marker);
+        let input = self.position_snapshot(self.fixture.path(document.path), position);
+        self.completion_items(input).await
+    }
+
+    async fn completion_items(&self, input: DocumentPositionSnapshot) -> Vec<CompletionItem> {
+        self.service
+            .clone()
+            .completion(
+                context::current(),
+                input,
+                CompletionClientCapabilities::default(),
+            )
+            .await
+            .expect("completion query should succeed")
+            .into_value()
+            .items
+            .into_iter()
+            .map(|candidate| candidate.item)
+            .collect()
+    }
+
     pub(super) async fn check_auto_import(
         &self,
         marker: &str,
@@ -640,6 +667,7 @@ impl LspEngineFixture {
                 CompletionClientCapabilities {
                     resolve_additional_text_edits: true,
                     snippet_support: true,
+                    label_details_support: true,
                 },
             )
             .await
@@ -949,22 +977,7 @@ impl LspEngineFixture {
                 let document = self.document_snapshot(path.clone());
                 let current_text = document.document().text().to_string();
                 let input = document.with_position(position);
-                let outcome = self
-                    .service
-                    .clone()
-                    .completion(
-                        context::current(),
-                        input,
-                        CompletionClientCapabilities::default(),
-                    )
-                    .await
-                    .expect("completion query should succeed");
-                let completions = outcome
-                    .into_value()
-                    .items
-                    .into_iter()
-                    .map(|candidate| candidate.item)
-                    .collect::<Vec<_>>();
+                let completions = self.completion_items(input).await;
                 Self::assert_completion_edits_fit_source(&current_text, &completions);
 
                 self.render_completions(rendered, path.as_path(), &completions);

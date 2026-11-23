@@ -9,6 +9,7 @@ use serde::Serialize;
 #[allow(dead_code)]
 pub(crate) enum ReportValue {
     Text(String),
+    Link { label: String, url: String },
     Count(u64),
     Integer(i64),
     Float(f64),

@@ -53,9 +53,9 @@ pub fn use_it(items: Items) {
 "#,
         expect![[r#"
             // for pattern binding completions
-            st Items
             vr item
             vr items
+            st Items
             fn use_it
         "#]],
     );
@@ -113,48 +113,38 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             // match pattern
             variant Data
               detail: variant Action::Data
-              sort: 00-expected|Data|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 2 })
               replace: 447..450
               snippet: Action::Data($0)
             variant Start
               detail: variant Action::Start
-              sort: 00-expected|Start|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 447..450
               insert: Action::Start
             variant Stop
               detail: variant Action::Stop
-              sort: 00-expected|Stop|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 1 })
               replace: 447..450
               snippet: Action::Stop { $0 }
             enum Action
               detail: enum Action
-              sort: 01-module|Action|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 447..450
             type_alias Alias
               detail: type Alias
-              sort: 01-module|Alias|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(4) } })
               replace: 447..450
             struct Marker
               detail: struct Marker
-              sort: 01-module|Marker|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 447..450
             const READY
               detail: const READY
-              sort: 01-module|READY|05|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(5) } })
               replace: 447..450
             struct RecordMarker
               detail: struct RecordMarker
-              sort: 01-module|RecordMarker|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
               replace: 447..450
               snippet: RecordMarker { $0 }
             struct TupleMarker
               detail: struct TupleMarker
-              sort: 01-module|TupleMarker|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(2) } })
               replace: 447..450
               snippet: TupleMarker($0)
             module nested
               detail: mod nested
-              sort: 01-module|nested|03|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 447..450
 
             // qualified pattern root
@@ -175,38 +165,38 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             ev Stop // record variant constructor
 
             // if let pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
             // while let pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
             // let pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
@@ -220,14 +210,14 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             md nested
 
             // closure parameter pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
 
@@ -235,14 +225,14 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             st RecordMarker // record struct constructor
 
             // function parameter pattern
+            ev Data
+            ev Start
+            ev Stop
             en Action
             ta Alias
-            ev Data
             st Marker
             ct READY
             st RecordMarker
-            ev Start
-            ev Stop
             st TupleMarker
             md nested
         "#]],
@@ -265,7 +255,6 @@ pub fn inspect(value: bool) {
             // ref pattern keyword
             keyword ref
               detail: keyword ref
-              sort: ~keyword:00:ref
               replace: 41..42
 
             kw mut // mut pattern keyword
@@ -295,8 +284,8 @@ pub fn inspect(event: Event) {
 "#,
         expect![[r#"
             // pattern invocation macro
-            en Event
             ev Only
+            en Event
             ma pattern_macro
         "#]],
     );

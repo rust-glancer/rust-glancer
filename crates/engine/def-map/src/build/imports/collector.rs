@@ -288,14 +288,14 @@ impl ImportCollector {
                             module,
                             &source,
                             data,
-                            NameBindingProvenance::NamedImport(reference),
+                            NameBindingProvenance::NamedImport,
                         )? {
                             if matches!(data.binding, ImportBinding::Hidden) {
                                 let old = self.modules[owner]
                                     .scope
                                     .unnamed_trait_binding(binding.def)
                                     .copied();
-                                let binding = self.merge(env, old, binding)?;
+                                let binding = Self::merge(env, old, binding)?;
                                 self.modules[owner].scope.set_unnamed_trait_binding(binding);
                                 self.modules[owner].changed |= old != Some(binding);
                             } else if let Some(name) = data.binding_name() {
@@ -387,7 +387,6 @@ impl ImportCollector {
 
     /// Apply ordinary precedence and combine visibility/attributes for routes to the same item.
     fn merge<E: ImportCollectionEnv>(
-        &self,
         env: &E,
         old: Option<NameBinding>,
         incoming: NameBinding,
@@ -431,14 +430,14 @@ impl ImportCollector {
             {
                 incoming
             }
-            _ => self.merge(env, old, incoming)?,
+            _ => Self::merge(env, old, incoming)?,
         };
         if old == Some(binding) {
             return Ok(());
         }
         // Another route to the same definition can improve visibility or supply better display
         // attributes without becoming the route allowed to replace this target later. Preserve
-        // that distinction separately from NameBinding::attribute_import.
+        // that distinction separately from the selected presentation attributes.
         let winner = match old {
             Some(old) if old.def != binding.def || !old.is_explicit() && binding.is_explicit() => {
                 Some(import)
@@ -485,7 +484,7 @@ impl ImportCollector {
                         module,
                         &source,
                         data,
-                        NameBindingProvenance::GlobImport(reference),
+                        NameBindingProvenance::GlobImport,
                     )? {
                         self.stats.glob_bindings_emitted += 1;
                         self.insert(env, owner, &name, namespace, binding, reference.import, 0)?;
@@ -505,7 +504,7 @@ impl ImportCollector {
                             module,
                             &source,
                             data,
-                            NameBindingProvenance::GlobImport(reference),
+                            NameBindingProvenance::GlobImport,
                         )? {
                             self.stats.glob_bindings_emitted += 1;
                             self.insert(
@@ -566,7 +565,7 @@ impl ImportCollector {
                     module,
                     &binding,
                     env.import_data(reference),
-                    NameBindingProvenance::GlobImport(reference),
+                    NameBindingProvenance::GlobImport,
                 )? {
                     self.stats.glob_bindings_emitted += 1;
                     self.modules[owner].evaluated = true;

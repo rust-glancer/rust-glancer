@@ -14,7 +14,7 @@ mod source_symbol;
 mod tests;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Path, Span};
 pub use rg_ir_view::SymbolKind;
 use rg_ir_view::{IndexedViewDb, source::IndexedSourceProvenance, ty::IndexedType};
 use rg_parse::SourceReader;
@@ -34,7 +34,9 @@ pub use self::{
     },
     query::{
         code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
-        completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
+        completion::{
+            CompletionClientCapabilities, CompletionQuery, CompletionRelevance, CompletionSource,
+        },
         references::{
             ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind, ReferenceSourceSelection,
         },
@@ -368,7 +370,7 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    /// Returns best-effort completion candidates for a source offset.
+    /// Returns ranked completion candidates for a source offset.
     ///
     /// Semantic sites cover dot members and postfix transforms, qualified and unqualified names,
     /// imports, patterns, record fields, associated type bindings, and missing trait members.
@@ -388,7 +390,10 @@ impl<'a> Analysis<'a> {
                     &snapshot_text
                 }
             };
-            query::completion::CompletionResolver::new(self, query, source_text).completions_at()
+            let mut result = query::completion::CompletionResolver::new(self, query, source_text)
+                .completions_at()?;
+            CompletionRelevance::sort(&mut result.items);
+            Ok(result)
         })
     }
 
@@ -398,7 +403,8 @@ impl<'a> Analysis<'a> {
     pub fn resolve_completion_import(
         &self,
         query: CompletionQuery<'_>,
-        import: &CompletionImport,
+        path: &Path,
+        anonymous: bool,
         selected: Option<(&str, CompletionKind)>,
         expected_inline_module: Option<&[String]>,
     ) -> anyhow::Result<Option<CompletionAdditionalEdit>> {
@@ -415,7 +421,8 @@ impl<'a> Analysis<'a> {
                 self,
                 query,
                 source,
-                import,
+                path,
+                anonymous,
                 selected,
                 expected_inline_module,
             )

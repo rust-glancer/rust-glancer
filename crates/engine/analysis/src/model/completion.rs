@@ -5,6 +5,8 @@ use rg_ir_model::{
     PrimitiveTy, SemanticItemKind, Span, TraitApplicability, identity::DeclarationRef,
 };
 
+use crate::CompletionRelevance;
+
 /// One completion row produced from a frozen analysis snapshot.
 ///
 /// `target` retains semantic identity for navigation and stable ordering. The primary edit lets
@@ -28,8 +30,8 @@ pub struct CompletionItem {
     pub detail: Option<String>,
     /// Declaration documentation before client-specific markup conversion.
     pub documentation: Option<String>,
-    /// Precomputed lexicographic ordering key for the editor client.
-    pub sort_text: String,
+    /// Inputs used to rank this candidate in the complete list.
+    pub relevance: CompletionRelevance,
     /// Text policy used inside the primary replacement.
     pub insert_text: CompletionInsertText,
     /// Primary source range replaced when the row is accepted.
@@ -41,6 +43,7 @@ pub struct CompletionItem {
 /// Candidates and whether typing more can reveal additional import candidates.
 #[derive(Debug, Default)]
 pub struct CompletionResult {
+    /// Rows ordered from most to least relevant for this request.
     pub items: Vec<CompletionItem>,
     /// Ask the editor to request a fresh list as the prefix changes. Typing `Ha` after `H`
     /// can start an auto-import search and add rows the editor could not get by filtering.
@@ -54,6 +57,8 @@ pub struct CompletionResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionImport {
     pub path: Path,
+    /// Path as it would be written in the receiving crate, including edition-specific escaping.
+    pub display_path: String,
     pub anonymous: bool,
 }
 
@@ -85,7 +90,7 @@ pub struct CompletionAdditionalEdit {
 }
 
 /// Stable analysis identity behind one completion row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompletionTarget {
     /// A module, item, or body-local declaration covered by the shared declaration vocabulary.
     Declaration(DeclarationRef),
@@ -110,7 +115,7 @@ pub enum CompletionTarget {
 }
 
 /// Stable categories for completion rows synthesized from source-adjacent state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyntheticCompletionTarget {
     /// A conventional sibling file offered for an incomplete `mod name;` declaration.
     ModuleDeclaration,
@@ -129,7 +134,7 @@ pub enum SyntheticCompletionTarget {
 }
 
 /// Small, explicit set of Rust keyword and keyword-like snippet completions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeywordCompletion {
     Async,
     Const,
@@ -217,12 +222,8 @@ pub enum CompletionKind {
 }
 
 impl CompletionKind {
-    /// Coarse bucket used as one component of LSP `sortText`.
-    ///
-    /// This is not the enum's full ordering: some variants intentionally share a
-    /// bucket, and completion ordering also includes label, applicability, and
-    /// target identity. Derived `Ord` remains the ordinary total enum order.
-    pub(crate) fn sort_text_rank(self) -> u8 {
+    /// Prefer fields over methods when labels tie. Synthetic rows also group by this order.
+    pub(crate) fn rank(self) -> u8 {
         match self {
             Self::Field => 0,
             Self::InherentMethod => 1,
@@ -245,10 +246,8 @@ impl CompletionKind {
         }
     }
 
-    /// Coarse bucket used by type-position completions that can still accept modules as prefixes.
-    ///
-    /// This is a context-specific component of LSP `sortText`, not the enum's general ordering.
-    pub(crate) fn type_context_sort_text_rank(self) -> u8 {
+    /// Favor names that can complete a type, like `String`, over prefixes like `std`.
+    pub(crate) fn type_context_rank(self) -> u8 {
         match self {
             Self::Struct
             | Self::Enum
@@ -287,20 +286,6 @@ pub enum CompletionApplicability {
     /// The candidate is useful, but semantic lookup could not prove that it applies.
     #[display("maybe")]
     Maybe,
-}
-
-impl CompletionApplicability {
-    /// Coarse bucket used as one component of LSP `sortText`.
-    ///
-    /// This is not the completion item's full ordering: applicability is only
-    /// one part of the final sort key. Derived `Ord` remains the ordinary total
-    /// enum order.
-    pub(crate) fn sort_text_rank(self) -> u8 {
-        match self {
-            Self::Known => 0,
-            Self::Maybe => 1,
-        }
-    }
 }
 
 impl From<TraitApplicability> for CompletionApplicability {

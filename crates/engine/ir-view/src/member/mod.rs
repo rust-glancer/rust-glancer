@@ -12,16 +12,19 @@ mod method;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    ConstRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef, ItemOwner,
-    TraitApplicability, TypeAliasRef, TypeDefId, identity::DeclarationRef,
+    ConstRef, CrateRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef,
+    ItemOwner, TraitApplicability, TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
+use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind, UserFacingAttrs};
 pub use rg_semantic_ir::AssociatedItemFilter;
 use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemStoreQuery};
 use rg_syntax::{Edition, LexedStr, SyntaxKind};
-use rg_ty::lookup::MemberMethodOrigin as TyMemberMethodOrigin;
+use rg_ty::lookup::{
+    AssociatedItemCandidateRef, AssociatedItemRef, MemberMethodCandidateRef,
+    MemberMethodOrigin as TyMemberMethodOrigin,
+};
 
-use crate::{IndexedViewDb, SymbolKind, item::path::PathView, ty::IndexedType};
+use crate::{IndexedViewDb, SymbolKind, item::path::PathView};
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -33,6 +36,13 @@ pub struct MemberField<'a> {
 impl<'a> MemberField<'a> {
     pub fn field_ref(&self) -> FieldRef {
         self.field
+    }
+
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .field
+            .user_facing_attrs
+            .is_suggestible_from(self.field.owner.origin.origin_crate(), use_crate)
     }
 
     pub fn key(&self) -> Option<&'a FieldKey> {
@@ -66,6 +76,13 @@ pub struct MemberEnumVariantField<'a> {
 impl<'a> MemberEnumVariantField<'a> {
     pub fn field_ref(&self) -> EnumVariantFieldRef {
         self.field
+    }
+
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .field
+            .user_facing_attrs
+            .is_suggestible_from(self.field.owner.origin.origin_crate(), use_crate)
     }
 
     pub fn key(&self) -> Option<&'a FieldKey> {
@@ -126,6 +143,12 @@ pub struct MemberFunction<'a> {
 impl<'a> MemberFunction<'a> {
     pub fn function_ref(&self) -> FunctionRef {
         self.function
+    }
+
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .user_facing_attrs
+            .is_suggestible_from(self.function.store.origin.origin_crate(), use_crate)
     }
 
     pub fn name(&self) -> &'a str {
@@ -238,6 +261,13 @@ impl<'a> MemberEnumVariant<'a> {
         self.variant
     }
 
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        self.data
+            .variant
+            .user_facing_attrs
+            .is_suggestible_from(self.variant.origin.origin_crate(), use_crate)
+    }
+
     pub fn owner(&self) -> rg_ir_model::TypeDefRef {
         self.data.owner
     }
@@ -259,20 +289,27 @@ impl<'a> MemberEnumVariant<'a> {
     }
 }
 
-/// One method candidate with enough origin information for UI ranking and labels.
+/// A receiver lookup result together with the method's borrowed declaration.
 #[derive(Debug, Clone, Copy)]
 pub struct MemberMethodCandidate<'a> {
-    function: MemberFunction<'a>,
-    origin: MemberMethodOrigin,
+    candidate: MemberMethodCandidateRef,
+    data: &'a FunctionData,
 }
 
 impl<'a> MemberMethodCandidate<'a> {
     pub fn function(&self) -> MemberFunction<'a> {
-        self.function
+        MemberFunction {
+            function: self.candidate.function(),
+            data: self.data,
+        }
     }
 
     pub fn origin(&self) -> MemberMethodOrigin {
-        self.origin
+        self.candidate.origin().into()
+    }
+
+    pub fn return_type_matches(&self) -> bool {
+        self.candidate.return_type_matches()
     }
 }
 
@@ -329,18 +366,24 @@ impl MemberAssociatedItem {
 /// Projection keeps one declaration and combines that evidence before analysis ranks or filters
 /// the result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MemberAssociatedItemCandidate {
-    item: MemberAssociatedItem,
-    applicability: TraitApplicability,
-}
+pub struct MemberAssociatedItemCandidate(AssociatedItemCandidateRef);
 
 impl MemberAssociatedItemCandidate {
+    pub fn return_type_matches(self) -> bool {
+        self.0.return_type_matches()
+    }
+
     pub fn item(self) -> MemberAssociatedItem {
-        self.item
+        match self.0.item() {
+            AssociatedItemRef::Function(function) => MemberAssociatedItem::Function(function),
+            AssociatedItemRef::TypeAlias(alias) => MemberAssociatedItem::TypeAlias(alias),
+            AssociatedItemRef::Const(konst) => MemberAssociatedItem::Const(konst),
+            AssociatedItemRef::EnumVariant(variant) => MemberAssociatedItem::EnumVariant(variant),
+        }
     }
 
     pub fn applicability(self) -> TraitApplicability {
-        self.applicability
+        self.0.applicability()
     }
 }
 
@@ -351,9 +394,16 @@ pub struct MemberAssociatedItemDefinition {
     label: String,
     kind: SymbolKind,
     documentation: Option<String>,
+    user_facing_attrs: UserFacingAttrs,
 }
 
 impl MemberAssociatedItemDefinition {
+    pub fn is_suggestible_from(&self, use_crate: CrateRef) -> bool {
+        let origin = self.candidate.item().declaration_ref().origin();
+        self.user_facing_attrs
+            .is_suggestible_from(origin.origin_crate(), use_crate)
+    }
+
     pub fn candidate(&self) -> MemberAssociatedItemCandidate {
         self.candidate
     }
@@ -416,29 +466,26 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }))
     }
 
-    /// Return variants of an enum represented by an already-inferred type.
-    pub fn enum_variant_candidates_for_ty(
+    /// Return the variants of an indexed enum.
+    pub fn enum_variant_candidates(
         &self,
-        ty: &IndexedType,
+        owner: TypeDefRef,
     ) -> anyhow::Result<Vec<EnumVariantRef>> {
-        let mut variants = Vec::new();
-        for owner in ty.nominal_type_defs() {
-            rg_std::check_cancel!(self.db, "completion candidate");
-            let TypeDefId::Enum(enum_id) = owner.id else {
-                continue;
-            };
-            let Some(data) = ItemStoreQuery::new(self.db)
-                .enum_data_for_type_def(owner)
-                .context("read inferred enum candidate data")?
-            else {
-                continue;
-            };
-            variants.extend((0..data.variants.len()).map(|index| EnumVariantRef {
+        let TypeDefId::Enum(enum_id) = owner.id else {
+            return Ok(Vec::new());
+        };
+        let Some(data) = ItemStoreQuery::new(self.db)
+            .enum_data_for_type_def(owner)
+            .context("read inferred enum candidate data")?
+        else {
+            return Ok(Vec::new());
+        };
+        Ok((0..data.variants.len())
+            .map(|index| EnumVariantRef {
                 origin: owner.origin,
                 enum_id,
                 index,
-            }));
-        }
-        Ok(variants)
+            })
+            .collect())
     }
 }

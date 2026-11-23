@@ -429,33 +429,37 @@ impl<'a> DeclarationCollector<'a> {
                 }
             }
         };
-        let (origin, inner_docs) = match &module_item.source {
+        let (origin, inner_docs, file_attrs) = match &module_item.source {
             ModuleSource::Inline { .. } => (
                 ModuleOrigin::Inline {
                     declaration_source: source,
                     declaration_location: item.location,
                 },
                 module_item.inner_docs.clone(),
+                Default::default(),
             ),
-            ModuleSource::OutOfLine => (
-                ModuleOrigin::OutOfLine {
+            ModuleSource::OutOfLine => {
+                let definition_file = resolved_file.as_ref().map(|(file, _)| *file);
+                let (inner_docs, file_attrs) = match definition_file {
+                    Some(file) => {
+                        let tree = self
+                            .item_tree
+                            .file(file)
+                            .context("module file should be lowered")?;
+                        (tree.docs.clone(), tree.user_facing_attrs)
+                    }
+                    None => (None, Default::default()),
+                };
+                let origin = ModuleOrigin::OutOfLine {
                     declaration_source: source,
                     declaration_location: item.location,
-                    definition_file: resolved_file.as_ref().map(|(file, _)| *file),
+                    definition_file,
                     file_selection: ModuleFileSelection::from_path_override(
                         module_item.path_override.as_deref(),
                     ),
-                },
-                match &resolved_file {
-                    Some((file, _)) => self
-                        .item_tree
-                        .file(*file)
-                        .context("module docs should exist")?
-                        .docs
-                        .clone(),
-                    None => None,
-                },
-            ),
+                };
+                (origin, inner_docs, file_attrs)
+            }
         };
         let visibility = self
             .state
@@ -467,7 +471,7 @@ impl<'a> DeclarationCollector<'a> {
         module.name = Some(name.clone());
         module.name_location = item.name_location;
         module.docs = ModuleDocumentation::new(item.docs.clone(), inner_docs);
-        module.user_facing_attrs = item.user_facing_attrs;
+        module.user_facing_attrs = item.user_facing_attrs.merge(file_attrs);
         let child = self.state.def_map_builder.alloc_module(module);
         self.state
             .def_map_builder

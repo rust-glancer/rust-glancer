@@ -5,6 +5,7 @@
 //! needs it, then produce the transport-neutral models exported by `model`. Reusable semantic and
 //! source traversal stays in `rg_ir_view`; protocol conversion stays in the LSP crates.
 
+mod active_call;
 pub(crate) mod code_action;
 pub(crate) mod completion;
 mod copied_call;

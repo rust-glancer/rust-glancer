@@ -15,7 +15,7 @@ use rg_ir_model::{
     DefId, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ModuleRef, Path, PathRoot,
     SemanticItemRef, identity::DeclarationRef,
 };
-use rg_item_tree::{BuiltinMacroKind, Documentation, UserFacingAttrs};
+use rg_item_tree::{BuiltinMacroKind, Documentation};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_std::UniqueVec;
 
@@ -105,7 +105,6 @@ pub struct ModuleScopeName {
     documentation: Option<String>,
     function: Option<FunctionRef>,
     macro_kind: Option<MacroKind>,
-    user_facing_attrs: UserFacingAttrs,
 }
 
 impl ModuleScopeName {
@@ -144,10 +143,6 @@ impl ModuleScopeName {
 
     pub fn macro_kind(&self) -> Option<MacroKind> {
         self.macro_kind
-    }
-
-    pub fn user_facing_attrs(&self) -> UserFacingAttrs {
-        self.user_facing_attrs
     }
 }
 
@@ -450,10 +445,9 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
     /// Convert one DefMap-visible route into editor-facing declaration facts.
     ///
     /// The importing module matters even after DefMap has selected the name. Re-export attributes
-    /// can replace the target's user-facing attributes for that route, and cross-crate lookup must
-    /// hide unstable or `doc(hidden)` routes without hiding the same declaration inside its own
-    /// crate. Macro kind comes from DefMap metadata rather than a semantic item shape, so a
-    /// proc-macro export is not mistaken for its implementation function.
+    /// can hide a spelling or explicitly expose a hidden declaration with `doc(inline)`.
+    /// Cross-crate lookup checks both the spelling and declaration. Macro kind comes from DefMap
+    /// metadata so a proc-macro export is kept distinct from its implementation function.
     pub(super) fn module_scope_name(
         &self,
         importing_module: ModuleRef,
@@ -466,7 +460,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         };
         let mut function = None;
         let mut macro_kind = None;
-        let (declaration, kind, documentation, mut user_facing_attrs) = match visible_def.def {
+        let (declaration, kind, documentation, user_facing_attrs) = match visible_def.def {
             DefId::Module(module) => {
                 let Some(data) = self
                     .db
@@ -542,22 +536,12 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             }
         };
 
-        // Attributes on an outer re-export deliberately replace declaration attributes for that
-        // route. This lets a crate expose a supported public facade over a hidden implementation,
-        // while a hidden re-export remains hidden even when its target is otherwise public.
-        if let Some(import_ref) = visible_def.attribute_import
-            && let Some(import) = self
-                .db
-                .import_data(import_ref)
-                .context("read visible name import attributes")?
-        {
-            user_facing_attrs = import.user_facing_attrs;
-        }
-
         let importing_crate = importing_module.origin.origin_crate();
-        if target_crate != importing_crate
-            && (user_facing_attrs.is_doc_hidden() || user_facing_attrs.is_unstable())
-        {
+        if !user_facing_attrs.is_suggestible_through(
+            target_crate,
+            visible_def.import,
+            importing_crate,
+        ) {
             return Ok(None);
         }
 
@@ -570,7 +554,6 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             documentation,
             function,
             macro_kind,
-            user_facing_attrs,
         }))
     }
 }

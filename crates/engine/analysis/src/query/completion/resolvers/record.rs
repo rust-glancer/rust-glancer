@@ -1,16 +1,14 @@
 //! Named-field completion for struct/enum-variant literals and record patterns.
 
 use anyhow::Context as _;
-use rg_ir_model::CrateRef;
-use rg_ir_view::{IndexedViewDb, display::syntax::SyntaxRenderer, member::MemberView};
+use rg_ir_model::{CrateRef, FieldKey};
+use rg_ir_view::{
+    IndexedViewDb, display::syntax::SyntaxRenderer, member::MemberView, source::IndexedRecordOwner,
+};
 
 use crate::{
     model::{CompletionEdit, CompletionItem},
-    query::completion::{
-        candidates::{CompletionCandidateSource, RecordFieldCompletionCandidate},
-        render::FieldCompletionRenderer,
-        site::RecordFieldCompletionSite,
-    },
+    query::completion::{render::FieldCompletionRenderer, site::RecordFieldCompletionSite},
 };
 
 /// Turns a resolved record owner into field rows, excluding fields already written in the list.
@@ -32,7 +30,13 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };
-        let completion_candidates = CompletionCandidateSource::new(self.db);
+        let site = site.source();
+        let use_crate = site.scope().body_ir().crate_ref;
+        let is_available = |key: Option<&FieldKey>| {
+            key.is_some_and(|key| {
+                matches!(key, FieldKey::Named(_)) && !site.existing_fields().contains(key)
+            })
+        };
         let members = MemberView::new(self.db);
         let renderer = FieldCompletionRenderer::new(SyntaxRenderer::new(
             self.db
@@ -41,43 +45,31 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         ));
         let mut completions = Vec::new();
 
-        for candidate in completion_candidates
-            .field_candidates_for_record(&site)
-            .context("collect record field candidates")?
-        {
-            let completion = match candidate {
-                RecordFieldCompletionCandidate::Type(field_ref) => {
-                    let Some(field) = members
-                        .field(field_ref)
-                        .context("read record completion field")?
-                    else {
-                        continue;
-                    };
-                    renderer.completion(field, edit)
+        match site.owner() {
+            IndexedRecordOwner::Type(owner) => {
+                for field in members
+                    .field_candidates_for_type_def(owner)
+                    .context("read record type fields")?
+                {
+                    rg_std::check_cancel!(self.db, "record field completion");
+                    if is_available(field.key()) && field.is_suggestible_from(use_crate) {
+                        completions.extend(renderer.completion(field, edit));
+                    }
                 }
-                RecordFieldCompletionCandidate::EnumVariant(field_ref) => {
-                    let Some(field) = members
-                        .enum_variant_field(field_ref)
-                        .context("read enum variant record completion field")?
-                    else {
-                        continue;
-                    };
-                    renderer.enum_variant_completion(field, edit)
-                }
-            };
-            let Some(completion) = completion else {
-                continue;
-            };
-            if completions.iter().any(|existing: &CompletionItem| {
-                existing.target == completion.target && existing.label == completion.label
-            }) {
-                continue;
             }
-
-            completions.push(completion);
+            IndexedRecordOwner::EnumVariant(owner) => {
+                for field in members
+                    .field_candidates_for_enum_variant(owner)
+                    .context("read record variant fields")?
+                {
+                    rg_std::check_cancel!(self.db, "record field completion");
+                    if is_available(field.key()) && field.is_suggestible_from(use_crate) {
+                        completions.extend(renderer.enum_variant_completion(field, edit));
+                    }
+                }
+            }
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

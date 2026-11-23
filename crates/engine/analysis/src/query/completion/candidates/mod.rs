@@ -6,14 +6,10 @@
 
 mod associated;
 mod auto_import;
-mod member;
 mod module;
 mod scope;
 
-use rg_ir_model::{
-    BodyRef, EnumVariantFieldRef, FieldRef, FunctionRef, ModuleRef, ScopeId,
-    identity::DeclarationRef,
-};
+use rg_ir_model::{BodyRef, FunctionRef, ModuleRef, ScopeId, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb,
     lookup::name::{MacroKind, NameNamespace, NameOrigin},
@@ -169,35 +165,6 @@ enum PrimitiveTypePathScope {
     Body { body: BodyRef, scope: ScopeId },
     Signature(IndexedSignatureTypeScope),
     Module(ModuleRef),
-}
-
-/// Resolved dot-method identity plus the trait applicability used for ranking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DotMethodCompletionCandidate {
-    function: FunctionRef,
-    kind: CompletionKind,
-    applicability: CompletionApplicability,
-}
-
-impl DotMethodCompletionCandidate {
-    pub(crate) fn function_ref(&self) -> FunctionRef {
-        self.function
-    }
-
-    pub(crate) fn kind(&self) -> CompletionKind {
-        self.kind
-    }
-
-    pub(crate) fn applicability(&self) -> CompletionApplicability {
-        self.applicability
-    }
-}
-
-/// Stable field identity selected for a record literal or pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RecordFieldCompletionCandidate {
-    Type(FieldRef),
-    EnumVariant(EnumVariantFieldRef),
 }
 
 /// Turns normalized cursor sites into completion candidates from the matching indexed views.

@@ -327,7 +327,6 @@ impl QueryRunner<'_> {
                     )
                     .context("find current document references")?
                 {
-                    rg_std::check_cancel!(cancellation, "highlight conversion");
                     highlights.push(references_proto::document_highlight(
                         current.line_index,
                         reference.span,

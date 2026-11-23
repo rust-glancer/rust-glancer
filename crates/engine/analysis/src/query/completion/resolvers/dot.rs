@@ -5,22 +5,26 @@
 //! transformations. This module combines the three families and removes duplicate member targets.
 
 use anyhow::Context as _;
-use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView, ty::locals::BodyView};
+use rg_ir_model::PrimitiveTy;
+use rg_ir_view::{
+    display::syntax::SyntaxRenderer,
+    member::{MemberMethodOrigin, MemberView},
+    ty::locals::BodyView,
+};
 
 use super::postfix::PostfixCompletionResolver;
 use crate::{
     Analysis,
     model::{
         CompletionApplicability, CompletionEdit, CompletionImport, CompletionItem, CompletionKind,
-        CompletionTarget,
     },
     query::{
         completion::{
             CompletionContext,
-            candidates::CompletionCandidateSource,
+            relevance::{CompletionSortPolicy, CompletionSortPriority},
             render::{
-                CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
-                FieldCompletionRenderer, FunctionCompletionRenderer, FunctionCompletionRequest,
+                CallCompletionKind, FieldCompletionRenderer, FunctionCompletionRenderer,
+                FunctionCompletionRequest,
             },
             site::DotCompletionSite,
             syntax::CompletionSyntaxContext,
@@ -82,28 +86,43 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };
-        let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
-        let members = MemberView::new(self.analysis.view_db());
+        let db = self.analysis.view_db();
+        let receiver = site.source().receiver();
+        let receiver_ty = BodyView::new(db)
+            .expr_ty(receiver.body_ir(), receiver.expr_id())
+            .context("read dot receiver type")?;
+        let receiver_is_bool =
+            receiver_ty.as_ref().and_then(|ty| ty.primitive()) == Some(PrimitiveTy::Bool);
+        let postfix = PostfixCompletionResolver::new(self.query).completions(
+            &site,
+            syntax_context,
+            receiver_is_bool,
+        );
+        let Some(receiver_ty) = receiver_ty else {
+            return Ok(postfix);
+        };
+
+        let members = MemberView::new(db);
+        let scope = site.source().scope();
+        let use_crate = receiver.body_ir().crate_ref;
+        let ranking = self.query.expected_type;
+        let field_type = ranking.and_then(|ranking| ranking.field_result_type());
+        let call_completion = CallCompletionKind::MethodCall;
+        let call_type = ranking
+            .filter(|_| self.query.completes_call(call_completion))
+            .and_then(|ranking| ranking.call_result_type());
         let mut completions = Vec::new();
 
-        let syntax = SyntaxRenderer::new(
-            self.analysis
-                .view_db()
-                .crate_edition(self.query.crate_ref)
-                .context("read dot completion edition")?,
-        );
+        let syntax = SyntaxRenderer::new(db.crate_edition(self.query.crate_ref)?);
         let field_renderer = FieldCompletionRenderer::new(syntax);
-        for field_ref in completion_candidates
-            .field_candidates_for_dot(&site)
+        for (field, type_matches) in members
+            .field_candidates_for_ty(receiver.body_ir(), &receiver_ty, field_type)
             .context("collect dot field candidates")?
         {
-            let Some(field) = members
-                .field(field_ref)
-                .context("read dot completion field")?
-            else {
+            if !field.is_suggestible_from(use_crate) {
                 continue;
-            };
-            let Some(completion) = field_renderer.completion(field, edit) else {
+            }
+            let Some(mut completion) = field_renderer.completion(field, edit) else {
                 continue;
             };
             if completions
@@ -112,50 +131,49 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             {
                 continue;
             }
-
+            if type_matches && let Some(ranking) = ranking {
+                ranking.promote_match(&mut completion);
+            }
             completions.push(completion);
         }
 
         let function_renderer = FunctionCompletionRenderer::new(self.query, syntax);
-        for method in completion_candidates
-            .method_candidates_for_dot(&site)
+        for method in members
+            .method_candidates_for_ty(scope, &receiver_ty, call_type)
             .context("collect dot method candidates")?
         {
-            let Some(function) = members
-                .function(method.function_ref())
-                .context("read dot completion method")?
-            else {
-                continue;
-            };
-            let target = CompletionTarget::Function(function.function_ref());
-            let completion = function_renderer.completion(FunctionCompletionRequest {
-                function,
-                label_override: None,
-                kind: method.kind(),
-                applicability: method.applicability(),
-                edit,
-                call_completion: CallCompletionKind::MethodCall,
-                sort_policy: CompletionSortPolicy::General,
-                sort_priority: None,
-            });
-            if !completion.has_self_receiver
-                || completions
-                    .iter()
-                    .any(|completion| completion.target == target)
-            {
+            let function = method.function();
+            if !function.is_suggestible_from(use_crate) {
                 continue;
             }
-
-            completions.push(completion.item);
+            let (kind, applicability) = match method.origin() {
+                MemberMethodOrigin::Inherent => (
+                    CompletionKind::InherentMethod,
+                    CompletionApplicability::Known,
+                ),
+                MemberMethodOrigin::Trait { applicability } => {
+                    (CompletionKind::TraitMethod, applicability.into())
+                }
+            };
+            let mut completion = function_renderer.completion(FunctionCompletionRequest {
+                function,
+                label_override: None,
+                kind,
+                applicability,
+                edit,
+                call_completion,
+                sort_policy: CompletionSortPolicy::General,
+                sort_priority: Some(CompletionSortPriority::Member),
+            });
+            if method.return_type_matches()
+                && let Some(ranking) = ranking
+            {
+                ranking.promote_call_match(&mut completion);
+            }
+            completions.push(completion);
         }
 
-        // Postfix transformations are an overlay over this source shape. They use the receiver's
-        // semantic type, but retain their own synthetic candidate and whole-expression renderer.
-        completions.extend(
-            PostfixCompletionResolver::new(self.analysis, self.query)
-                .completions(&site, syntax_context)
-                .context("collect postfix completions")?,
-        );
+        completions.extend(postfix);
 
         if auto_import
             && let Some(prefix) = self
@@ -164,68 +182,51 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                 .get(edit.replace.start as usize..self.query.offset as usize)
                 .map(|prefix| prefix.strip_prefix("r#").unwrap_or(prefix))
             && let Some(deadline) = self.query.auto_import_deadline(prefix)
+            && let Some(import_context) = ImportContext::for_dot_site(db, site.source())?
         {
-            let body = BodyView::new(self.analysis.view_db());
-            let receiver = site.source().receiver();
-            if let Some(ty) = body.expr_ty(receiver.body_ir(), receiver.expr_id())?
-                && let Some(import_context) =
-                    ImportContext::for_dot_site(self.analysis.view_db(), site.source())?
-            {
-                let extensions = members.extension_method_candidates(
-                    site.source().scope(),
-                    import_context.module(),
-                    &ty,
-                    prefix,
-                    deadline,
-                    |name| {
-                        completions.iter().any(|item| {
-                            matches!(
-                                item.kind,
-                                CompletionKind::InherentMethod | CompletionKind::TraitMethod
-                            ) && item.label.strip_prefix("r#").unwrap_or(&item.label) == name
-                        })
-                    },
-                )?;
-                if !extensions.is_empty() {
-                    // The existing rows keep their label order within the first sort bucket.
-                    for item in &mut completions {
-                        item.sort_text.insert_str(0, "00-member|");
-                    }
+            let extensions = members.extension_method_candidates(
+                scope,
+                import_context.module(),
+                &receiver_ty,
+                call_type,
+                prefix,
+                deadline,
+                |name| {
+                    completions.iter().any(|item| {
+                        matches!(
+                            item.kind,
+                            CompletionKind::InherentMethod | CompletionKind::TraitMethod
+                        ) && item.label.strip_prefix("r#").unwrap_or(&item.label) == name
+                    })
+                },
+            )?;
+            for (method, path) in extensions {
+                let mut item = function_renderer.completion(FunctionCompletionRequest {
+                    function: method.function(),
+                    label_override: None,
+                    kind: CompletionKind::TraitMethod,
+                    applicability: CompletionApplicability::Known,
+                    edit,
+                    call_completion,
+                    sort_policy: CompletionSortPolicy::General,
+                    sort_priority: Some(CompletionSortPriority::AutoImport {
+                        path_len: path.component_count(),
+                    }),
+                });
+                if method.return_type_matches()
+                    && let Some(ranking) = ranking
+                {
+                    ranking.promote_call_match(&mut item);
                 }
-                for (function, path) in extensions {
-                    let Some(function) = members.function(function)? else {
-                        continue;
-                    };
-                    let mut item = function_renderer
-                        .completion(FunctionCompletionRequest {
-                            function,
-                            label_override: None,
-                            kind: CompletionKind::TraitMethod,
-                            applicability: CompletionApplicability::Known,
-                            edit,
-                            call_completion: CallCompletionKind::MethodCall,
-                            sort_policy: CompletionSortPolicy::General,
-                            sort_priority: Some(CompletionSortPriority::AutoImport {
-                                path_len: path.component_count(),
-                            }),
-                        })
-                        .item;
-                    let rendered_path = syntax.path(&path);
-                    item.detail = Some(format!(
-                        "{} (use {rendered_path} as _)",
-                        item.detail.as_deref().unwrap_or_default(),
-                    ));
-                    item.import = Some(CompletionImport {
-                        path,
-                        anonymous: true,
-                    });
-                    completions.push(item);
-                }
+                item.import = Some(CompletionImport {
+                    display_path: syntax.path(&path).to_string(),
+                    path,
+                    anonymous: true,
+                });
+                completions.push(item);
             }
         }
 
-        // Keep snapshot output and editor ordering stable across equivalent resolution paths.
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

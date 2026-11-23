@@ -4,7 +4,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ImplPolarity, ParamKind,
-    TypeBound, TypeRef, VisibilityLevel,
+    TypeBound, TypeRef, UserFacingAttrs, VisibilityLevel,
 };
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use rg_text::Name;
@@ -100,6 +100,7 @@ pub struct TraitData {
 /// query code decides whether it needs a single known definition.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImplData {
+    pub user_facing_attrs: UserFacingAttrs,
     pub local_impl: LocalImplRef,
     pub source: ItemSource,
     pub owner: ModuleRef,
@@ -115,6 +116,7 @@ pub struct ImplData {
 /// Function signature and source identity.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct FunctionData {
+    pub user_facing_attrs: UserFacingAttrs,
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
     pub location: SourceId,
@@ -138,6 +140,7 @@ impl FunctionData {
 /// Type alias signature and optional aliased type.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypeAliasData {
+    pub user_facing_attrs: UserFacingAttrs,
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
     pub location: SourceId,
@@ -152,6 +155,7 @@ pub struct TypeAliasData {
 /// Const identity and signature. Evaluating its initializer is a separate body query.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstData {
+    pub user_facing_attrs: UserFacingAttrs,
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
     pub location: SourceId,

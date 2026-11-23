@@ -12,7 +12,7 @@ use rg_ir_model::{
     BindingId, BodyBindingRef, BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FileId,
     FunctionRef, GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef,
     SourceLocationKind, Span,
-    identity::{DeclarationRef, LexicalScopeRef},
+    identity::{DeclarationRef, ExprRef, LexicalScopeRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, SourceSelection};
 use rg_std::ExpectedUnique;
@@ -96,6 +96,7 @@ impl BindingTyCandidate {
 pub struct ResolvedCall<T> {
     source: BodySource,
     target: T,
+    expr: ExprRef,
     param_offset: usize,
     argument_spans: Vec<Span>,
 }
@@ -107,6 +108,10 @@ impl<T> ResolvedCall<T> {
 
     pub fn target(&self) -> &T {
         &self.target
+    }
+
+    pub(super) fn expr(&self) -> ExprRef {
+        self.expr
     }
 
     pub fn param_offset(&self) -> usize {
@@ -641,6 +646,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 calls.push(ResolvedCall {
                     source,
                     target,
+                    expr: ExprRef::new(body_ref, ExprId(expr_idx)),
                     param_offset,
                     argument_spans: args
                         .iter()

@@ -1,0 +1,194 @@
+[
+  {
+    "id": "ripgrep",
+    "url": "https://github.com/BurntSushi/ripgrep.git",
+    "revision": "3fce3b5bb0236da2df6d99672afb8a719642eca7",
+    "entry": {
+      "file": "crates/searcher/src/searcher/core.rs",
+      "anchor": "let count = lines::co|unt(slice,"
+    },
+    "definition": {
+      "file": "crates/searcher/src/lines.rs",
+      "anchor": "pub(crate) fn |count(bytes:"
+    },
+    "completion": {
+      "anchor": "memchr::mem|chr_iter(line_term, bytes)",
+      "label": "memchr_iter"
+    },
+    "edits": [
+      {
+        "before": "-> u64 {\n    memchr::memchr_iter(line_term, bytes).count() as u64",
+        "after": "-> u32 {\n    memchr::memchr_iter(line_term, bytes).count() as u32"
+      }
+    ],
+    "return_type": {
+      "before": "u64",
+      "after": "u32"
+    },
+    "simulation": {
+      "crate_root": "crates/searcher/src/lib.rs",
+      "project_input": "crate::lines::count(b\"line\\n\", b'\\n') as u32 + 95"
+    }
+  },
+  {
+    "id": "helix",
+    "url": "https://github.com/helix-editor/helix.git",
+    "revision": "079a789e8cb08ead67f19e1971a1b7438b37354b",
+    "entry": {
+      "file": "helix-term/src/application.rs",
+      "anchor": "Range::point(pos_at_co|ords(doc.text().slice(..), coords, true))"
+    },
+    "definition": {
+      "file": "helix-core/src/position.rs",
+      "anchor": "pub fn |pos_at_coords(text:"
+    },
+    "completion": {
+      "anchor": "};\n    let line_start = text.line_to_ch|ar(row);\n    let line_end = if limit_before_line_ending",
+      "label": "line_to_char"
+    },
+    "edits": [
+      {
+        "before": "pub fn pos_at_coords(text: RopeSlice, coords: Position, limit_before_line_ending: bool) -> usize",
+        "after": "pub fn pos_at_coords(text: RopeSlice, coords: Position, limit_before_line_ending: bool) -> u32"
+      },
+      {
+        "before": "\n    line_start + col_char_offset\n}\n\n/// Convert visual",
+        "after": "\n    (line_start + col_char_offset) as u32\n}\n\n/// Convert visual"
+      }
+    ],
+    "return_type": {
+      "before": "usize",
+      "after": "u32"
+    },
+    "simulation": {
+      "crate_root": "helix-core/src/lib.rs",
+      "project_input": "crate::position::Position::new(0, 96).col as u32"
+    }
+  },
+  {
+    "id": "rust-analyzer",
+    "url": "https://github.com/rust-lang/rust-analyzer.git",
+    "revision": "aaddfb73fd95f2c0bf001b474dca91ae28bcce3a",
+    "entry": {
+      "file": "crates/vfs/src/lib.rs",
+      "anchor": "let hash = hash_on|ce::<FxHasher>(&*v);"
+    },
+    "definition": {
+      "file": "crates/stdx/src/lib.rs",
+      "anchor": "pub fn |hash_once<Hasher:"
+    },
+    "completion": {
+      "anchor": "std::hash::BuildHasher::hash_o|ne(",
+      "label": "hash_one"
+    },
+    "edits": [
+      {
+        "before": "-> u64 {\n    std::hash::BuildHasher::hash_one(&std::hash::BuildHasherDefault::<Hasher>::default(), thing)",
+        "after": "-> u32 {\n    std::hash::BuildHasher::hash_one(&std::hash::BuildHasherDefault::<Hasher>::default(), thing) as u32"
+      }
+    ],
+    "return_type": {
+      "before": "u64",
+      "after": "u32"
+    },
+    "simulation": {
+      "crate_root": "crates/vfs/src/lib.rs",
+      "project_input": "crate::Vfs::default().iter().count() as u32 + 96"
+    }
+  },
+  {
+    "id": "bevy",
+    "url": "https://github.com/bevyengine/bevy.git",
+    "revision": "396ca727080776bd313bb892423b7d94e03b81b4",
+    "entry": {
+      "file": "crates/bevy_ecs/src/system/system.rs",
+      "anchor": "Tick::MAX.ge|t() - 1,"
+    },
+    "definition": {
+      "file": "crates/bevy_ecs/src/change_detection/tick.rs",
+      "anchor": "pub const fn |get(self)"
+    },
+    "edits": [
+      {
+        "before": "pub const fn get(self) -> u32 {\n        self.tick",
+        "after": "pub const fn get(self) -> u64 {\n        self.tick as u64"
+      }
+    ],
+    "completion": {
+      "anchor": "-> u64 {\n        self.ti|ck as u64",
+      "label": "tick"
+    },
+    "return_type": {
+      "before": "u32",
+      "after": "u64"
+    },
+    "lockfile": "bevy.lock",
+    "simulation": {
+      "crate_root": "crates/bevy_ecs/src/lib.rs",
+      "project_input": "crate::change_detection::Tick::new(96).get()"
+    }
+  },
+  {
+    "id": "lost-in-time",
+    "url": "https://github.com/RaminKav/LostInTime.git",
+    "revision": "3bddd43600d452f39dc3e4e6b2cee9ebefdccede",
+    "entry": {
+      "file": "src/client/mod.rs",
+      "anchor": "if data.current_era.in|dex() == i"
+    },
+    "definition": {
+      "file": "src/world/dimension.rs",
+      "anchor": "pub fn |index(&self) -> usize"
+    },
+    "edits": [
+      {
+        "before": "pub fn index(&self) -> usize",
+        "after": "pub fn index(&self) -> u32"
+      }
+    ],
+    "completion": {
+      "anchor": "Era::Ma|in => 0,\n            Era::Second => 1,",
+      "label": "Main"
+    },
+    "return_type": {
+      "before": "usize",
+      "after": "u32"
+    },
+    "standalone": true,
+    "simulation": {
+      "crate_root": "src/main.rs",
+      "project_input": "crate::world::dimension::Era::Second.get_texture_index() as u32 + 64"
+    }
+  },
+  {
+    "id": "datafusion",
+    "url": "https://github.com/apache/datafusion.git",
+    "revision": "f1f0449a5327a03cc99817fcd0ac8531f0c015ec",
+    "entry": {
+      "file": "datafusion/catalog/src/stream.rs",
+      "anchor": "state.config().batch_si|ze()"
+    },
+    "definition": {
+      "file": "datafusion/execution/src/config.rs",
+      "anchor": "pub fn |batch_size(&self)"
+    },
+    "edits": [
+      {
+        "before": "pub fn batch_size(&self) -> usize {\n        self.options.execution.batch_size.get()",
+        "after": "pub fn batch_size(&self) -> u64 {\n        self.options.execution.batch_size.get() as u64"
+      }
+    ],
+    "completion": {
+      "anchor": "self.options.execution.batch_si|ze.get() as u64",
+      "label": "batch_size"
+    },
+    "return_type": {
+      "before": "usize",
+      "after": "u64"
+    },
+    "simulation": {
+      "crate_root": "datafusion/core/src/lib.rs",
+      "project_input": "crate::execution::context::SessionConfig::new().with_batch_size(96).batch_size() as u32"
+    }
+  }
+]

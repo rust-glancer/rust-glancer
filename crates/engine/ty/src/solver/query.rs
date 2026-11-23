@@ -216,6 +216,20 @@ pub struct ImplSelection<'s> {
 }
 
 impl<'s> InferenceTable<'s> {
+    /// Compare the type resolved by the table with the expected type for exact equality.
+    /// If a projection like `<T as Source>::Item` still needs normalization, use a trial
+    /// so the proof and any assignments stay local to this comparison.
+    pub fn resolves_to(&self, ty: Ty<'s>, expected: &StoredTy) -> bool {
+        let resolved = self.finalize(ty);
+        if !resolved.has_projection() {
+            return &resolved == expected;
+        }
+
+        let trial = self.probe();
+        let normalized = trial.normalize(ty);
+        trial.fulfill() == Outcome::Proven && &trial.finalize(normalized) == expected
+    }
+
     /// Recover a callable bound's arguments and project its output. For `F: Fn(u8) -> R`,
     /// proving `F: FnOnce<(?Arg,)>` learns `?Arg = u8` before the body visits the argument.
     pub fn callable_bound_signature(
@@ -345,7 +359,7 @@ impl<'s> InferenceTable<'s> {
     pub fn method_receiver_bounds_hold(
         &self,
         function: FunctionRef,
-        mut subst: InferenceSubstitution<'s>,
+        subst: &mut InferenceSubstitution<'s>,
     ) -> bool {
         let cx = self.interner();
         let callbacks = cx.track_callbacks();

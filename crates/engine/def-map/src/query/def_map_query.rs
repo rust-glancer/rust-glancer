@@ -293,6 +293,7 @@ where
                     name,
                     namespace,
                     binding,
+                    source_module,
                     VisibleScopeOrigin::ItemScope,
                     false,
                 );
@@ -449,6 +450,7 @@ where
                     name,
                     namespace,
                     binding,
+                    importing_module,
                     VisibleScopeOrigin::ItemScope,
                     false,
                 );
@@ -467,7 +469,14 @@ where
                 prelude,
                 NamespaceSet::ALL,
                 |name, namespace, binding| {
-                    defs.push_binding(name, namespace, binding, VisibleScopeOrigin::Prelude, true);
+                    defs.push_binding(
+                        name,
+                        namespace,
+                        binding,
+                        prelude,
+                        VisibleScopeOrigin::Prelude,
+                        true,
+                    );
                     Ok(())
                 },
             )?;
@@ -498,8 +507,7 @@ where
                     namespace: Namespace::Types,
                     def: rg_ir_model::DefId::Module(module_ref),
                     origin: VisibleScopeOrigin::ExternRoot,
-                    attribute_import: None,
-                    has_reexport: false,
+                    import: None,
                 },
                 false,
             );

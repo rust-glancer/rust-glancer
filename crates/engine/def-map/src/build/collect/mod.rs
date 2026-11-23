@@ -53,6 +53,7 @@ pub(super) fn collect_crate(
         None,
     );
     root.docs = ModuleDocumentation::new(None, root_file.docs.clone());
+    root.user_facing_attrs = root_file.user_facing_attrs;
     let root_module = builder.alloc_module(root);
     let mut state = CrateBuilder {
         crate_ref,

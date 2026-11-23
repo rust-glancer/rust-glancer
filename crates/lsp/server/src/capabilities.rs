@@ -36,6 +36,9 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(true),
             trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+            completion_item: Some(ServerCompletionItemOptions {
+                label_details_support: Some(true),
+            }),
             ..Default::default()
         }),
         document_formatting_provider: Some(true.into()),

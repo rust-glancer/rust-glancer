@@ -18,8 +18,8 @@ use gen_lsp_types::{
 };
 use rg_analysis::{
     Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger,
-    CompletionClientCapabilities as AnalysisCompletionClientCapabilities,
-    CompletionImport as AnalysisCompletionImport, CompletionQuery, CompletionSource,
+    CompletionClientCapabilities as AnalysisCompletionClientCapabilities, CompletionQuery,
+    CompletionSource,
 };
 use rg_ir_model::{Path, Span};
 use rg_lsp_proto::{
@@ -137,9 +137,6 @@ impl<'a> QueryRunner<'a> {
                 let completion_source = CompletionSource::new(source_text, offset);
                 let completion_source_us = completion_source_started.elapsed().as_micros();
 
-                rg_std::check_cancel!(cancellation, "after completion syntax preparation");
-
-                let mut completions = Vec::new();
                 let target = current.target;
                 rg_std::check_cancel!(cancellation, "before semantic completion");
                 let mut query = CompletionQuery::new(target.crate_ref, target.file, offset)
@@ -181,12 +178,19 @@ impl<'a> QueryRunner<'a> {
                             completion_source.as_ref()?.inline_module_path(),
                         )
                     });
-                for (index, item) in result.items.into_iter().enumerate() {
-                    if index % 64 == 0 {
-                        rg_std::check_cancel!(cancellation, "completion conversion");
-                    }
-                    completions.push(completion::completion_candidate(item, current.line_index));
-                }
+                let completions: Vec<_> = result
+                    .items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        completion::completion_candidate(
+                            item,
+                            current.line_index,
+                            index,
+                            client_capabilities.label_details_support,
+                        )
+                    })
+                    .collect();
                 let protocol_conversion_us = protocol_conversion_started.elapsed().as_micros();
 
                 tracing::trace!(
@@ -245,10 +249,6 @@ impl<'a> QueryRunner<'a> {
                     current.selection.start,
                 )
                 .with_source_text(input.document().text());
-                let import = AnalysisCompletionImport {
-                    path,
-                    anonymous: import.anonymous,
-                };
                 let selected = if let Some(candidate) = candidate {
                     let Some(kind) = completion::import_kind(candidate.kind) else {
                         return Ok(None);
@@ -261,7 +261,8 @@ impl<'a> QueryRunner<'a> {
                     .analysis
                     .resolve_completion_import(
                         query,
-                        &import,
+                        &path,
+                        import.anonymous,
                         selected,
                         candidate.and_then(|row| row.inline_module_path.as_deref()),
                     )?
@@ -334,7 +335,6 @@ impl<'a> QueryRunner<'a> {
                 // document version to every action.
                 let mut lsp_actions = Vec::new();
                 for action in actions {
-                    rg_std::check_cancel!(cancellation, "code action conversion");
                     lsp_actions.push(
                         code_action::code_action(
                             document.path(),
@@ -547,18 +547,8 @@ impl<'a> QueryRunner<'a> {
 
                 let mut lsp_hints = hints
                     .into_iter()
-                    .enumerate()
-                    .map(|(index, hint)| {
-                        if index % 64 == 0 {
-                            rg_std::check_cancel!(cancellation, "inlay hint conversion");
-                        }
-                        Ok(inlay_hint::inlay_hint_with_line_index(
-                            current.line_index,
-                            hint,
-                        ))
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()
-                    .context("convert inlay hints")?;
+                    .map(|hint| inlay_hint::inlay_hint_with_line_index(current.line_index, hint))
+                    .collect::<Vec<_>>();
 
                 // Clamping a start beyond the document back to EOF can select text before the requested
                 // coverage. The response still belongs to the client's original numeric range.

@@ -5,11 +5,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{OpenDocumentsRevision, TargetDocumentRevision};
 
-/// Completion client features that the analysis engine needs while rendering items.
+/// Client features that affect which completions we can send and how we display them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub struct CompletionClientCapabilities {
     pub snippet_support: bool,
     pub resolve_additional_text_edits: bool,
+    pub label_details_support: bool,
 }
 
 impl CompletionClientCapabilities {
@@ -21,6 +22,9 @@ impl CompletionClientCapabilities {
             .and_then(|completion| completion.completion_item.as_ref());
         Self {
             snippet_support: item.and_then(|item| item.snippet_support).unwrap_or(false),
+            label_details_support: item
+                .and_then(|item| item.label_details_support)
+                .unwrap_or(false),
             resolve_additional_text_edits: item
                 .and_then(|item| item.resolve_support.as_ref())
                 .is_some_and(|support| {

@@ -8,6 +8,157 @@ use crate::tests::utils::{
 };
 
 #[test]
+fn ranks_the_method_at_the_best_receiver_adjustment() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:receiver_relevance
+struct Record;
+impl Record {
+    fn read_a_other(&self) -> bool { false }
+}
+
+mod extension {
+    pub trait Read {
+        type Output;
+        fn read_z_value(&self) -> Self::Output { loop {} }
+    }
+    impl Read for super::Record { type Output = u8; }
+    impl Read for &super::Record { type Output = u16; }
+}
+
+mod in_scope {
+    use super::{Record, extension::Read};
+    fn demo(record: &Record) {
+        let _: u8 = record.read_$0(); // complete("in-scope method").matching("read_")
+        let result = record.read_z_value()$0; // ty("call inference uses the same adjustment")
+    }
+}
+
+fn out_of_scope(record: &Record) {
+    let _: u8 = record.read_$0(); // complete("extension method").auto_import().matching("read_")
+}
+"#,
+        expect![[r#"
+            // in-scope method
+            tm read_z_value
+            im read_a_other
+
+            u8 // call inference uses the same adjustment
+
+            // extension method
+            tm read_z_value
+            im read_a_other
+        "#]],
+    );
+}
+
+#[test]
+fn ranks_dot_members_using_the_receivers_generic_arguments() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:generic_member_relevance
+struct Packet<T> {
+    field_a_other: u16,
+    field_z_value: T,
+}
+
+impl<T> Packet<T> {
+    fn get_a_other(&self) -> u16 { 0 }
+    fn get_z_value(&self) -> T { loop {} }
+}
+
+trait Available<T> {
+    fn get_y_trait(&self) -> T { loop {} }
+}
+impl<T> Available<T> for Packet<T> {}
+
+mod extensions {
+    pub trait Extension {
+        type Output;
+        fn get_x_extension(&self) -> Self::Output { loop {} }
+    }
+    impl<T> Extension for super::Packet<T> {
+        type Output = T;
+    }
+}
+
+fn inspect(packet: &Packet<u32>) {
+    let _: u32 = packet.field_$0; // complete("field behind a reference").matching("field_")
+    let _: u32 = packet.get_$0(); // complete("inherent and trait methods").matching("get_")
+    let _: u32 = packet.get_$0; // complete("extension with an associated return type").auto_import().matching("get_")
+}
+"#,
+        expect![[r#"
+            // field behind a reference
+            fd field_z_value
+            fd field_a_other
+
+            // inherent and trait methods
+            im get_z_value
+            tm get_y_trait
+            im get_a_other
+
+            // extension with an associated return type
+            im get_z_value
+            tm get_y_trait
+            tm get_x_extension
+            im get_a_other
+        "#]],
+    );
+}
+
+#[test]
+fn balances_dot_member_origin_and_expected_type() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:member_relevance
+struct Widget;
+impl Widget {
+    fn pick_z_inherent(&self) -> bool { false }
+}
+
+trait Available {
+    fn pick_a_trait(&self) -> u32 { 0 }
+}
+impl Available for Widget {}
+
+mod extensions {
+    pub trait Extension {
+        fn pick_b_extension(&self) -> u16 { 0 }
+    }
+    impl Extension for super::Widget {}
+}
+
+fn demo(widget: Widget) {
+    widget.$0; // complete("untyped member list").matching("pick_")
+    widget.pick_$0; // complete("in scope methods first").auto_import().matching("pick_")
+    let _: u32 = widget.pick_$0(); // complete("written call matches the trait result").matching("pick_")
+    let _: u16 = widget.pick_$0; // complete("matching extension is worth its import").auto_import().matching("pick_")
+}
+"#,
+        expect![[r#"
+            // untyped member list
+            im pick_z_inherent
+            tm pick_a_trait
+
+            // in scope methods first
+            im pick_z_inherent
+            tm pick_a_trait
+            tm pick_b_extension
+
+            // written call matches the trait result
+            tm pick_a_trait
+            im pick_z_inherent
+
+            // matching extension is worth its import
+            tm pick_b_extension
+            im pick_z_inherent
+            tm pick_a_trait
+        "#]],
+    );
+}
+
+#[test]
 fn finds_methods_from_trait_objects_without_importing_the_trait() {
     check_analysis(
         r#"
@@ -415,12 +566,10 @@ pub fn use_it(user: User) {
             // bare dot before statement completions
             inherent_method id
               detail: pub fn id(&self)
-              sort: id|01|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(0) })
               replace: 119..119
               snippet: id()$0
             field name
               detail: pub name: String
-              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(0)) }, index: 0 })
               replace: 119..119
         "#]],
     );
@@ -655,8 +804,8 @@ pub fn use_it(wrapper: Wrapper<User>) {
 "#,
         expect![[r#"
             // generic trait completions
-            tm generic_trait_name
             fd value
+            tm generic_trait_name
         "#]],
     );
 }
@@ -1341,12 +1490,10 @@ pub fn use_it(user: User) {
             field name
               detail: pub name: Profile
               docs: Name field.
-              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(1)) }, index: 0 })
               replace: 216..218
             inherent_method name
               detail: pub fn name(&self) -> Profile
               docs: Name method.
-              sort: name|01|00|Function(FunctionRef { store: ItemStoreRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Impl(ImplId(0)) }, id: FunctionId(0) })
               replace: 216..218
               snippet: name()$0
         "#]],

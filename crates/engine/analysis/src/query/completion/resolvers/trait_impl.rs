@@ -25,7 +25,7 @@ use anyhow::Context as _;
 use rg_ir_view::trait_impl::{MissingTraitMemberRef, MissingTraitMemberScaffold};
 
 use crate::{
-    Analysis,
+    Analysis, CompletionRelevance,
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -33,7 +33,8 @@ use crate::{
     query::{
         completion::{
             CompletionContext,
-            render::{CompletionSortPolicy, escape_lsp_snippet_text},
+            relevance::CompletionSortPriority,
+            render::escape_lsp_snippet_text,
             site::{TraitImplCompletionSite, TraitImplMemberKind},
         },
         trait_member::{RenderedTraitMember, TraitImplMemberQuery},
@@ -70,6 +71,9 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
 
         for member in members {
             rg_std::check_cancel!(self.analysis, "completion candidate");
+            if !member.is_suggestible() {
+                continue;
+            }
             let (member_kind, kind, target) = match member.member() {
                 MissingTraitMemberRef::Function(function) => (
                     TraitImplMemberKind::Function,
@@ -111,18 +115,11 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
                     format!("{} = ${{1:todo!()}};", escape_lsp_snippet_text(signature))
                 }
             };
-            let requirement = if member.is_required() {
-                "required"
+            let (requirement, priority) = if member.is_required() {
+                ("required", CompletionSortPriority::RequiredTraitMember)
             } else {
-                "default"
+                ("default", CompletionSortPriority::DefaultTraitMember)
             };
-            let base_sort = CompletionSortPolicy::General.sort_text(
-                None,
-                member.label(),
-                kind,
-                CompletionApplicability::Known,
-                target,
-            );
             completions.push(CompletionItem {
                 label: member.label().to_string(),
                 filter_text: site.filter_text(member.label()),
@@ -134,14 +131,7 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
                     rendered.signature
                 )),
                 documentation: member.documentation().map(ToString::to_string),
-                sort_text: format!(
-                    "{}|{base_sort}",
-                    if member.is_required() {
-                        "00-required"
-                    } else {
-                        "01-default"
-                    }
-                ),
+                relevance: CompletionRelevance::new(priority),
                 insert_text: if self.query.client_capabilities.snippet_support {
                     CompletionInsertText::Snippet(snippet)
                 } else {
@@ -152,7 +142,6 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
             });
         }
 
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 }

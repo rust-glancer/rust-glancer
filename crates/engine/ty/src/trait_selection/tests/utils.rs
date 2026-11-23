@@ -514,6 +514,7 @@ pub(super) fn type_alias_data(
     aliased_ty: Option<TypeRef>,
 ) -> TypeAliasData {
     TypeAliasData {
+        user_facing_attrs: Default::default(),
         local_def: None,
         source: dummy_source(),
         location: fixture_location(),
@@ -692,6 +693,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         // the fixture instead of hiding it in Rust construction code.
         let resolved_self_ty = self.resolve_impl_self_ty(&self_ty, note.as_deref());
         let impl_data = ImplData {
+            user_facing_attrs: Default::default(),
             local_impl: Self::local_impl(id),
             source: dummy_source(),
             owner: module(),
@@ -732,6 +734,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         };
         let (name, generics) = Self::parse_named_generics(name);
         self.functions.push(FunctionData {
+            user_facing_attrs: Default::default(),
             local_def: None,
             source: dummy_source(),
             location: fixture_location(),

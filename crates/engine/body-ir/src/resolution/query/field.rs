@@ -1,5 +1,7 @@
 //! Field types for owned receivers and pattern bindings.
 
+use std::collections::HashSet;
+
 use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, PatId, ScopeId, TypeDefId, TypeDefRef};
 use rg_item_tree::FieldList;
@@ -27,15 +29,42 @@ where
 
     /// Collect fields along the same receiver chain used by live field inference. The body's
     /// bounds and lexical declarations stay available while generic Deref targets are resolved.
-    pub fn field_candidates_for_ty(&self, ty: &Ty) -> Result<Vec<FieldRef>, ReadError> {
+    /// With an expected type, compare the field as accessed on the receiver. For a
+    /// `Box<Slot<u8>>`, a field declared as `T` on `Slot<T>` is compared as `u8`.
+    pub fn field_candidates_for_ty(
+        &self,
+        ty: &Ty,
+        expected: Option<&Ty>,
+    ) -> Result<Vec<(FieldRef, bool)>, ReadError> {
         let context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&context, &self.context);
         declarations.with_table(|table, params| {
             let receiver = table.interner().lower_ty(ty, params);
+            let items = self.context.item_query();
+            let live = self.context.live();
+            let mut seen_fields = HashSet::new();
             let mut fields = Vec::new();
             for receiver in table.autoderef(receiver) {
-                if let Some(adt) = receiver.as_adt() {
-                    fields.extend(self.context.item_query().fields_for_type(adt.def)?);
+                let Some(adt) = receiver.as_adt() else {
+                    continue;
+                };
+                for field in items.fields_for_type(adt.def)? {
+                    // Access stops at the first field with this name, even if a later
+                    // dereference exposes the same declaration with different arguments.
+                    let matches = if let Some(expected) = expected
+                        && let Some(data) = items.field_data(field)?
+                        && data
+                            .field
+                            .key
+                            .as_ref()
+                            .is_some_and(|key| seen_fields.insert(key))
+                    {
+                        live.field_ty_on_receiver(adt, field, &table)?
+                            .is_some_and(|ty| table.resolves_to(ty, expected))
+                    } else {
+                        false
+                    };
+                    fields.push((field, matches));
                 }
             }
             Ok(fields)

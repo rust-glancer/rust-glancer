@@ -85,7 +85,91 @@ To run all configured targets:
 cargo bench -p rg_project --bench analysis_pipeline
 ```
 
-## LSP comparisons
+## LSP benchmarks
+
+From the repository root, run:
+
+```sh
+rustup toolchain install 1.100.0 --profile minimal --component rust-src --component rust-analyzer
+just compare-lsp
+just compare-lsp --mode full --rust-analyzer "$(rustup which --toolchain 1.100.0 rust-analyzer)"
+```
+
+Fast mode runs one paired synthetic edit on ripgrep. Full mode runs five pairs per workload on
+ripgrep, Helix, rust-analyzer, Bevy, LostInTime, and DataFusion. It includes synthetic edits,
+user simulations, first editor hints, isolated requests, and restarts. Bevy uses a
+checked-in lockfile. Full mode also runs the standalone library edit and generated-source startup.
+Use `--mode full --pairs 1` to cover every workload with one pair. Use `--workload` and `--target`
+to focus a run.
+
+Each pair runs both servers back to back. The first server alternates within each workload,
+and the starting order rotates across workloads. The report shows medians, sample counts, and
+individual observations.
+
+```sh
+just compare-lsp --baseline /path/to/old/rust-glancer --candidate /path/to/new/rust-glancer --pairs 6
+just compare-lsp --mode full --workload user-simulation
+just compare-lsp --mode full --workload restart --target bevy
+just compare-lsp --workload isolated-requests --target helix --target datafusion --pairs 3
+just compare-lsp --from-run /path/to/observations.json
+```
+
+Each run writes `report.html` and `observations.json` under `target/compare-lsp` by default.
+`--output-dir` changes that parent directory. The JSON includes the versions, project
+revisions, configuration, and individual request attempts. The same JSON can regenerate
+the HTML with `--from-run`. Benchmark builds capture the checkout's Git revision, dirty state,
+and branch when it differs from `main`. For a prebuilt binary, the report reads its `--version`.
+To stamp a standalone build, run `sh tools/with-build-source.sh cargo build --release -p rust-glancer`
+from its checkout root.
+
+The first use fetches the pinned checkouts and Cargo dependencies.
+The managed template cache keeps checkouts by project and revision. To use a custom
+template directory, put each checkout under its project name at the pinned revision
+and pass `--templates`. The [target definitions](lsp/targets.json) contain the pins.
+
+Synthetic edits overlap editor hints with navigation, completion, and a type change.
+Each user simulation navigates existing code, adds a module to a real crate, and saves an API
+with a function, struct, trait implementation, declarative macro, and inline module. Out-of-line
+tests call the project’s own API. The replay types at about 350 characters per minute with per-pair
+jitter, completes a qualified import and a field, and queries the new API across files. It also
+finds references to a local binding in the test. The standalone library edit requests an
+auto-import for the same type. The replay records completion outcomes and applies the ordinary
+text edit when a completion is unavailable.
+
+Synthetic edits, user simulations, and isolated requests use fresh processes, checkouts, and
+Cargo output directories. User simulation sends a hover immediately after opening a file and
+retries until the expected result arrives. It waits for the ready signal, which includes
+rust-analyzer’s cache priming, before requesting hints and navigating to start the edit.
+Synthetic edits and isolated requests also start their measured actions after readiness.
+Isolated requests run hover and hints twice each, one at a time on an unchanged file.
+Restart seeds its cache in a separate, unedited checkout before reopening that checkout in
+a new process. Cargo downloads are shared, and the OS filesystem cache is left alone.
+Generated-source runs prepare build outputs with Cargo before launch. During measured
+startup, rust-analyzer runs a warm Cargo check to collect build-script messages.
+The regular workloads disable diagnostics, and rust-analyzer runs them with build scripts
+and procedural macros disabled. The benchmark supplies an empty user-config directory
+to the pinned rust-analyzer. The client prefers Markdown for hover. The JSON records the
+client capabilities.
+
+Action wait runs from the editor trigger to a usable result, including retries. Final RTT runs
+from dispatch to receipt of the last attempt and includes server queueing. First result measures
+launch to the first usable hover in startup and user simulation workloads. Server ready measures
+launch to the server's ready notification, which may arrive after the first hover. Run time adds
+up waits during the measured workflow, counting overlapping waits once. For User simulation,
+it covers the editing actions that follow readiness. Startup-only runs end at the first result,
+so their run time is zero.
+
+In the HTML, sort and filter Actions and Raw data without splitting server pairs. Sorting uses
+the first server's value. Actions compares timings across pairs with a usable result from both
+servers. Skipped actions after an earlier failure are marked blocked and stay in the planned
+action count. Raw data shows each trial's individual observations and expandable retry
+timings. The JSON contains the request parameters and full responses.
+
+The binary comparison uses paired changes. Its timing assessment needs at least six complete
+pairs for a 95% sign-test interval. The interval must clear both 5 ms and 5% of the baseline
+median to classify a change.
+
+## LSP compatibility sweeps
 
 Comparisons use the rust-analyzer available on PATH. Install rust-src before
 either server indexes the fixture so both can resolve standard-library types.

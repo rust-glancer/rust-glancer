@@ -728,6 +728,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .completions_at(completion_query)
                     .expect("fixture completion query should resolve")
                     .items;
+                // Keep the query's order so snapshots also cover ranking.
                 Self::filter_completions(query, &mut completions);
                 if matches!(
                     query.kind,
@@ -1034,15 +1035,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
         }
     }
 
-    fn render_completions(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
-        completions.sort_by_key(|completion| {
-            (
-                completion.label.clone(),
-                completion.kind,
-                completion.applicability,
-            )
-        });
-
+    fn render_completions(&self, completions: Vec<CompletionItem>, dump: &mut String) {
         if completions.is_empty() {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;
@@ -1109,12 +1102,10 @@ impl AnalysisQuerySnapshot<'_, '_> {
 
     fn render_completions_verbose(
         &self,
-        mut completions: Vec<CompletionItem>,
+        completions: Vec<CompletionItem>,
         query: CompletionQuery<'_>,
         dump: &mut String,
     ) {
-        completions.sort_by_key(|completion| completion.sort_text.clone());
-
         if completions.is_empty() {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;
@@ -1126,14 +1117,17 @@ impl AnalysisQuerySnapshot<'_, '_> {
             if let Some(detail) = &completion.detail {
                 writeln!(dump, "  detail: {detail}").expect("string writes should not fail");
             }
+            if let Some(import) = &completion.import {
+                let alias = if import.anonymous { " as _" } else { "" };
+                writeln!(dump, "  import: use {}{alias}", import.display_path)
+                    .expect("string writes should not fail");
+            }
             if let Some(docs) = &completion.documentation {
                 writeln!(dump, "  docs: {docs}").expect("string writes should not fail");
             }
             if let Some(filter_text) = &completion.filter_text {
                 writeln!(dump, "  filter: {filter_text}").expect("string writes should not fail");
             }
-            writeln!(dump, "  sort: {}", completion.sort_text)
-                .expect("string writes should not fail");
             if let Some(edit) = completion.edit {
                 let span = edit.replace;
                 writeln!(dump, "  replace: {}..{}", span.start, span.end)
@@ -1143,7 +1137,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 && let Some(edit) = self
                     .db
                     .analysis()
-                    .resolve_completion_import(query, import, None, None)
+                    .resolve_completion_import(query, &import.path, import.anonymous, None, None)
                     .expect("fixture import should resolve")
             {
                 writeln!(

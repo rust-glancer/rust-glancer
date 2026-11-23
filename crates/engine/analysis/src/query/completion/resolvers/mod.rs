@@ -36,6 +36,7 @@ use self::{
 };
 use super::{
     CompletionContext, CompletionQuery,
+    expected_type::ExpectedTypeRanking,
     site::{
         CompletionSite, CompletionSiteDetector, ItemListCompletionKind, NameCompletionContext,
         SpecializedCompletionContext, SyntaxCompletionContext,
@@ -76,6 +77,8 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 source_text,
                 client_capabilities: query.client_capabilities,
                 auto_import_budget: query.auto_import_budget,
+                expected_type: None,
+                call_suffix: Default::default(),
             },
         }
     }
@@ -175,13 +178,22 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 CompletionSite::Unqualified(site) => site.context().supports_auto_import(),
                 _ => false,
             };
-        let items = match site {
+        let ranking = ExpectedTypeRanking::at(self.analysis, self.query, syntax_context, &site)?;
+        let query = CompletionContext {
+            expected_type: ranking.as_ref(),
+            call_suffix: syntax_context
+                .map(CompletionSyntaxContext::call_suffix)
+                .unwrap_or_default(),
+            ..self.query
+        };
+        let mut items = match site {
             CompletionSite::AssociatedTypeBinding(site) => {
                 AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)
                     .completions(site)
             }
-            CompletionSite::Dot(sites) => DotCompletionResolver::new(self.analysis, self.query)
-                .completions(&sites, syntax_context),
+            CompletionSite::Dot(sites) => {
+                DotCompletionResolver::new(self.analysis, query).completions(&sites, syntax_context)
+            }
             CompletionSite::ModuleDeclaration(site) => ModuleDeclarationCompletionResolver::new(
                 self.analysis,
                 self.query.crate_ref,
@@ -200,12 +212,11 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                             .item_list_completions(item_list, syntax_context)
                             .context("collect item keywords beside incomplete module macro")?,
                     );
-                    completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 }
                 Ok(completions)
             }
             CompletionSite::Path(site) => {
-                PathCompletionResolver::new(self.analysis, self.query).completions(site)
+                PathCompletionResolver::new(self.analysis, query).completions(site)
             }
             CompletionSite::TraitImpl(site) => {
                 let mut completions = TraitImplCompletionResolver::new(self.analysis, self.query)
@@ -216,7 +227,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                         .completions(syntax_context)
                         .context("collect trait impl keyword completions")?,
                 );
-                completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 Ok(completions)
             }
             CompletionSite::Unqualified(site) => {
@@ -229,7 +239,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 let path_root_edit = CompletionEdit {
                     replace: site.replace_span(),
                 };
-                let mut completions = UnqualifiedCompletionResolver::new(self.analysis, self.query)
+                let mut completions = UnqualifiedCompletionResolver::new(self.analysis, query)
                     .completions(site)
                     .context("collect unqualified completions")?;
                 if context == NameCompletionContext::Type
@@ -262,7 +272,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                         NameCompletionContext::Const => Vec::new(),
                         NameCompletionContext::Import => Vec::new(),
                     });
-                    completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 }
                 let keywords = KeywordCompletionResolver::new(self.query.client_capabilities);
                 for root in keywords
@@ -277,7 +286,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                         completions.push(root);
                     }
                 }
-                completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
                 Ok(completions)
             }
             CompletionSite::RecordField(site) => {
@@ -285,6 +293,9 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .completions(site)
             }
         }?;
+        if let Some(ranking) = ranking {
+            ranking.rank(self.analysis, &mut items)?;
+        }
         Ok(CompletionResult {
             items,
             is_incomplete,

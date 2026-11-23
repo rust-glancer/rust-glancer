@@ -6,8 +6,8 @@
 
 use std::cmp::Ordering;
 
-use rg_ir_model::{DefId, ImportRef, ModuleRef};
-use rg_item_tree::FieldList;
+use rg_ir_model::{DefId, ModuleRef};
+use rg_item_tree::{FieldList, UserFacingAttrs};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -160,8 +160,8 @@ pub enum NameBindingProvenance {
     DirectMacroRules,
     /// Direct `#[macro_export] macro_rules!` binding whose named re-exports may be public.
     DirectMacroExport,
-    NamedImport(ImportRef),
-    GlobImport(ImportRef),
+    NamedImport,
+    GlobImport,
     ExternCrate,
     /// Public crate-root route injected for an exported `macro_rules!` definition.
     MacroExport,
@@ -170,11 +170,11 @@ pub enum NameBindingProvenance {
 impl NameBindingProvenance {
     fn priority(self) -> BindingPriority {
         match self {
-            Self::GlobImport(_) => BindingPriority::Glob,
+            Self::GlobImport => BindingPriority::Glob,
             Self::Direct
             | Self::DirectMacroRules
             | Self::DirectMacroExport
-            | Self::NamedImport(_)
+            | Self::NamedImport
             | Self::ExternCrate
             | Self::MacroExport => BindingPriority::Explicit,
         }
@@ -212,7 +212,7 @@ enum BindingPriority {
 pub struct NameBinding {
     pub def: DefId,
     pub visibility: Visibility,
-    attribute_import: Option<ImportRef>,
+    import_attrs: Option<UserFacingAttrs>,
     priority: BindingPriority,
     // A same-name macro import removes textual-order filtering without erasing the fact that a
     // direct declaration exists. Proc-macro export censoring still needs the latter.
@@ -222,7 +222,6 @@ pub struct NameBinding {
     direct_macro_rules: bool,
     exported_macro: bool,
     has_reexport: bool,
-    preferred_import: bool,
 }
 
 impl NameBinding {
@@ -230,11 +229,11 @@ impl NameBinding {
         Self {
             def,
             visibility,
-            attribute_import: match provenance {
-                NameBindingProvenance::NamedImport(import)
-                | NameBindingProvenance::GlobImport(import) => Some(import),
-                _ => None,
-            },
+            import_attrs: matches!(
+                provenance,
+                NameBindingProvenance::NamedImport | NameBindingProvenance::GlobImport
+            )
+            .then(UserFacingAttrs::default),
             priority: provenance.priority(),
             direct_only: provenance.is_direct(),
             has_direct_declaration: provenance.is_direct(),
@@ -247,7 +246,6 @@ impl NameBinding {
                 NameBindingProvenance::DirectMacroExport | NameBindingProvenance::MacroExport
             ),
             has_reexport: false,
-            preferred_import: false,
         }
     }
 
@@ -259,8 +257,11 @@ impl NameBinding {
     ) -> Self {
         Self {
             has_reexport: import.is_reexport,
-            preferred_import: !import.user_facing_attrs.is_doc_hidden()
-                && !import.user_facing_attrs.is_unstable(),
+            // Keep the attributes of this spelling. Completion can inspect the
+            // defining item separately without forwarding attributes through globs.
+            // TODO: Account for intermediate aliases if completion needs rustdoc's
+            // transitive rules for re-exported spellings.
+            import_attrs: Some(import.user_facing_attrs),
             ..Self::new(def, visibility, provenance)
         }
     }
@@ -290,8 +291,8 @@ impl NameBinding {
         self.exported_macro
     }
 
-    pub fn attribute_import(self) -> Option<ImportRef> {
-        self.attribute_import
+    pub fn import_attrs(self) -> Option<UserFacingAttrs> {
+        self.import_attrs
     }
 
     /// Select one binding while letting the storage owner compare module visibility regions.
@@ -310,6 +311,26 @@ impl NameBinding {
             Ordering::Equal => {}
         }
 
+        // In `macro_rules! m { ... } pub(crate) use m;`, the import supplies attributes while the
+        // declaration flags preserve textual-order and re-export rules. Between imports,
+        // prefer an exposed spelling, including an explicit request to inline a hidden item.
+        let preference = |attrs: UserFacingAttrs| (!attrs.is_restricted(), attrs.is_doc_inline());
+        match (self.visibility, incoming.visibility) {
+            // The private route cannot make a different public route documented.
+            (Visibility::Public, visibility) if visibility != Visibility::Public => {}
+            (visibility, Visibility::Public) if visibility != Visibility::Public => {
+                self.import_attrs = incoming.import_attrs;
+            }
+            _ => {
+                if let Some(attrs) = incoming.import_attrs
+                    && self
+                        .import_attrs
+                        .is_none_or(|current| preference(attrs) > preference(current))
+                {
+                    self.import_attrs = Some(attrs);
+                }
+            }
+        }
         if self.visibility != incoming.visibility {
             self.visibility = broadest_visibility(self.visibility, incoming.visibility)?;
         }
@@ -318,19 +339,6 @@ impl NameBinding {
         self.direct_macro_rules |= incoming.direct_macro_rules;
         self.exported_macro |= incoming.exported_macro;
         self.has_reexport |= incoming.has_reexport;
-
-        // In `macro_rules! m { ... } pub(crate) use m;`, the import supplies attributes while the
-        // declaration flags above preserve textual-order and re-export rules. Between imports,
-        // prefer an ordinary API source; stable ties keep the first source.
-        // TODO: Mixed public/private routes may need different attribute sources for callers in
-        // different visibility regions; this keeps one source for every caller.
-        if incoming.attribute_import().is_some()
-            && (self.attribute_import().is_none()
-                || incoming.preferred_import && !self.preferred_import)
-        {
-            self.attribute_import = incoming.attribute_import;
-            self.preferred_import = incoming.preferred_import;
-        }
         Ok(self)
     }
 
@@ -346,9 +354,7 @@ impl NameBinding {
 mod tests {
     use std::convert::Infallible;
 
-    use rg_ir_model::{
-        CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, ModuleId, ModuleRef, PackageSlot,
-    };
+    use rg_ir_model::{CrateId, CrateRef, DefId, ModuleId, ModuleRef, PackageSlot};
 
     use super::{NameBinding, NameBindingProvenance, Visibility};
 
@@ -399,10 +405,7 @@ mod tests {
         NameBinding::new(
             DefId::Module(owner(module)),
             Visibility::Public,
-            NameBindingProvenance::GlobImport(ImportRef {
-                origin: DefMapRef::Crate(crate_ref()),
-                import: ImportId(0),
-            }),
+            NameBindingProvenance::GlobImport,
         )
     }
 

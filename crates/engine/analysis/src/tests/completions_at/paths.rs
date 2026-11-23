@@ -3,6 +3,32 @@ use expect_test::expect;
 use crate::tests::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 
 #[test]
+fn shorter_names_sort_before_names_that_extend_them() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:completion_order
+mod memory {
+    pub fn alloc_zeroed() {}
+    pub struct AllocatorClone;
+    pub fn alloc() {}
+    pub struct Allocator;
+}
+
+fn main() {
+    memory::$0; // complete("prefix-related labels")
+}
+"#,
+        expect![[r#"
+            // prefix-related labels
+            st Allocator
+            st AllocatorClone
+            fn alloc
+            fn alloc_zeroed
+        "#]],
+    );
+}
+
+#[test]
 fn completes_copied_names_after_generated_path_parts() {
     check_analysis(
         r#"
@@ -67,111 +93,111 @@ pub fn body(param: u8) {
             st Wrapper
             fn body
             fn consume
+            fn signature
             kw crate
             kw self
-            fn signature
             kw super
 
             // empty type path
-            st ModuleType
             tp T
+            st ModuleType
             st Wrapper
             pt bool
             pt char
-            kw crate
-            kw dyn
             pt f128
             pt f16
             pt f32
             pt f64
-            kw fn
-            kw for
             pt i128
             pt i16
             pt i32
             pt i64
             pt i8
             pt isize
-            kw self
             pt str
-            kw super
             pt u128
             pt u16
             pt u32
             pt u64
             pt u8
             pt usize
+            kw crate
+            kw dyn
+            kw fn
+            kw self
+            kw for
+            kw super
 
             // empty expression path
-            ct MODULE_VALUE
             st ModuleType
-            st Wrapper
-            kw async
             vr before
+            vr param
+            ct MODULE_VALUE
+            st Wrapper
             fn body
             fn consume
-            kw crate
-            kw false
-            kw if
-            kw loop
-            kw match
-            kw move
-            vr param
-            kw return
-            kw self
             fn signature
+            kw crate
+            kw if
+            kw match
+            kw self
+            kw loop
             kw super
+            kw return
             kw true
+            kw false
+            kw async
+            kw move
 
             // empty argument path
+            vr before
+            vr param
             ct MODULE_VALUE
             st ModuleType
             st Wrapper
-            kw async
-            vr before
             fn body
             fn consume
-            kw crate
-            kw false
-            kw if
-            kw loop
-            kw match
-            kw move
-            vr param
-            kw return
-            kw self
             fn signature
+            kw crate
+            kw if
+            kw match
+            kw self
+            kw loop
             kw super
+            kw return
             kw true
+            kw false
+            kw async
+            kw move
 
             // empty generic argument path
             st ModuleType
             st Wrapper
             pt bool
             pt char
-            kw crate
-            kw dyn
             pt f128
             pt f16
             pt f32
             pt f64
-            kw fn
-            kw for
             pt i128
             pt i16
             pt i32
             pt i64
             pt i8
             pt isize
-            kw self
             pt str
-            kw super
             pt u128
             pt u16
             pt u32
             pt u64
             pt u8
             pt usize
+            kw crate
+            kw dyn
+            kw fn
+            kw self
+            kw for
+            kw super
         "#]],
     );
 }
@@ -302,7 +328,6 @@ pub fn use_it() {
             // path metadata completions
             struct User
               detail: struct User
-              sort: User|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 79..81
         "#]],
     );
