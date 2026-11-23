@@ -47,9 +47,9 @@ use crate::IndexedViewDb;
 
 /// Source site for member access after a dot.
 ///
-/// The expression id supplies the inferred receiver type. Its exact written span is retained
-/// separately so request-local postfix syntax can verify that it is describing the same receiver
-/// before adding edits that replace the whole expression.
+/// The expression id supplies the inferred receiver type. The written range is separate so
+/// request-local postfix syntax can match it before proposing a whole-expression edit.
+/// A copied receiver's range may include trivia before the dot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IndexedMemberAccessSite {
     receiver: ExprRef,

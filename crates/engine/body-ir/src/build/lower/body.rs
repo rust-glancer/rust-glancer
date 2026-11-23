@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
-    BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro, GeneratedBodySyntax,
+    BodyMacroCallOrigin, BodyMacroExprExpansion, CopiedArgumentFragments, ExpandedBodyMacro,
+    GeneratedBodySyntax,
 };
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceId, Span};
 use rg_item_tree::{ItemKind, ItemNode, RecordSource, SourceRole};
@@ -24,6 +25,7 @@ pub(super) struct BodyLowering<'a> {
     owner_module: ModuleRef,
     fallback_module: ModuleRef,
     body_source: BodySource,
+    written_text: &'a str,
     pub(super) cfg: CfgEvaluator<'a>,
     pub(super) builder: BodyBuilder,
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
@@ -32,11 +34,13 @@ pub(super) struct BodyLowering<'a> {
 }
 
 impl<'a> BodyLowering<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,
         fallback_module: ModuleRef,
         body_source: BodySource,
+        written_text: &'a str,
         cfg: CfgEvaluator<'a>,
         macro_expansion: &'a mut dyn BodyMacroExpansionContext,
         argument_copies: &'a mut ArgumentCopies,
@@ -46,6 +50,7 @@ impl<'a> BodyLowering<'a> {
             owner_module,
             fallback_module,
             body_source,
+            written_text,
             cfg,
             builder: BodyBuilder::default(),
             macro_expansion,
@@ -108,7 +113,10 @@ impl BodyLowering<'_> {
         scope: ScopeId,
         kind: ExprKind,
     ) -> ExprId {
-        let source = self.source_id(syntax);
+        // Expressions can need a whole written range, for example a copied call whose
+        // argument positions are shown in the editor. Name locations still use their own IDs.
+        let source = self.expression_source(syntax);
+        let source = self.builder.sources.record(source);
         self.alloc_expr_at(source, scope, kind)
     }
 
@@ -143,6 +151,15 @@ impl BodyLowering<'_> {
         }
 
         source_for(self.body_source.file_id, syntax)
+    }
+
+    pub(super) fn expression_source(&self, syntax: &SyntaxNode) -> BodySource {
+        if let Some(context) = &self.generated_context
+            && let Some(span) = context.fragments.span(syntax)
+        {
+            return BodySource::macro_argument(context.source.file_id, span);
+        }
+        self.source(syntax)
     }
 
     /// Record a range within a node, such as its method name. In an expansion, use the whole
@@ -258,26 +275,35 @@ impl BodyLowering<'_> {
             )
         })
         .map(Arc::new);
+        let fragments = CopiedArgumentFragments::new(
+            &expanded_context,
+            syntax.syntax(),
+            call_source,
+            self.written_text,
+        );
         self.generated_context = Some(GeneratedBodyMacroContext {
             source: call_source,
             expanded: expanded_context,
             copies,
+            fragments,
         });
         let result = f(self, syntax);
         self.generated_context = previous;
         result
     }
 
-    pub(super) fn set_expansion(
-        &mut self,
-        source: BodySource,
-        expanded: ExpandedBodyMacro<SyntaxNode>,
-        copies: Option<Arc<ExpansionCopies>>,
-    ) {
+    pub(super) fn set_expansion(&mut self, task: &GeneratedBodyTask) {
+        let fragments = CopiedArgumentFragments::new(
+            &task.body.expansion,
+            &task.body.syntax,
+            task.body.source,
+            self.written_text,
+        );
         self.generated_context = Some(GeneratedBodyMacroContext {
-            source,
-            expanded,
-            copies,
+            source: task.body.source,
+            expanded: task.body.expansion.clone(),
+            copies: task.copies.clone(),
+            fragments,
         });
     }
 
@@ -426,4 +452,5 @@ struct GeneratedBodyMacroContext {
     source: BodySource,
     expanded: ExpandedBodyMacro<SyntaxNode>,
     copies: Option<Arc<ExpansionCopies>>,
+    fragments: CopiedArgumentFragments,
 }

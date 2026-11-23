@@ -20,6 +20,7 @@ use crate::{DefMapQuery, DefinitionReader, MacroDefinitionView, NameResolutionEn
 mod call;
 mod expanded;
 mod format;
+mod fragments;
 
 use self::call::{BodyMacroCallee, BodyMacroInvocation, ResolvedBodyMacroCall};
 pub use self::{
@@ -29,6 +30,7 @@ pub use self::{
         BodyMacroInputSources, BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome,
         BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
     },
+    fragments::CopiedArgumentFragments,
 };
 
 const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;

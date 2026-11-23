@@ -109,13 +109,22 @@ impl<T> ExpandedBodyMacro<T> {
     }
 
     fn argument_token(&self, call_source: BodySource, range: TextRange) -> Option<(Span, TtSpan)> {
+        let (span, origin) = self.argument_origin(call_source, range)?;
+        (span.len() == u32::from(range.len())).then_some((span, origin))
+    }
+
+    pub(super) fn argument_origin(
+        &self,
+        call_source: BodySource,
+        range: TextRange,
+    ) -> Option<(Span, TtSpan)> {
         let origin = self.source_map.span_for_range_in_file(
             range,
             self.call_package.0,
             call_source.file_id.as_raw(),
         )?;
         let span = self.input_span(call_source, origin)?;
-        (span.len() == u32::from(range.len())).then_some((span, origin))
+        Some((span, origin))
     }
 
     fn input_span(&self, call_source: BodySource, span: TtSpan) -> Option<Span> {

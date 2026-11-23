@@ -147,17 +147,25 @@ impl<'a> BodyTaskLowering<'a> {
         tasks: &[BodyLoweringTask],
         macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<()> {
+        let file = tasks
+            .first()
+            .expect("file task group is non-empty")
+            .source
+            .physical_range()
+            .0;
+        let source_reader = SourceReader::new(self.db);
+        let written_text = source_reader.text(file)?;
         let mut parse = None;
         for task in tasks {
             rg_std::check_cancel!(self.cancellation, "body lowering task");
             let (node, source, has_errors) = match &task.source {
                 BodyTaskSource::File { file, span } => {
                     if parse.is_none() {
-                        parse = Some(SourceReader::new(self.db).syntax(*file, self.edition)?);
+                        parse = Some(source_reader.syntax(*file, self.edition)?);
                     }
                     let parse = parse.as_ref().expect("written body has a file parse");
-                    let range = TextRange::new(span.start.into(), span.end.into());
                     let tree = parse.tree();
+                    let range = TextRange::new(span.start.into(), span.end.into());
                     if !tree.syntax().text_range().contains_range(range) {
                         continue;
                     }
@@ -205,12 +213,13 @@ impl<'a> BodyTaskLowering<'a> {
                 task.owner_module,
                 task.fallback_module,
                 source,
+                &written_text,
                 self.cfg,
                 macro_expansion,
                 &mut self.lowered_bodies.argument_copies,
             );
             if let BodyTaskSource::Generated(task) = &task.source {
-                lowering.set_expansion(source, task.body.expansion.clone(), task.copies.clone());
+                lowering.set_expansion(task);
             }
             if has_errors {
                 lowering.record_unmodeled_syntax(&node);

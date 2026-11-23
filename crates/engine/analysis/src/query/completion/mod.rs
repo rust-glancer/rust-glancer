@@ -216,7 +216,8 @@ pub(crate) fn resolve_import(
             }
             site.replace_span()
         }
-        Some(CompletionSite::Dot(site)) if import.anonymous => {
+        Some(CompletionSite::Dot(sites)) if import.anonymous && sites.len() == 1 => {
+            let site = sites[0];
             let Some(context) = ImportContext::for_dot_site(db, site.source())? else {
                 return Ok(None);
             };

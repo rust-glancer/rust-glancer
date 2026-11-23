@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use rg_body_ir::{ExprKind, ExprWrapperKind};
-use rg_ir_model::{CrateRef, ExprId, FileId, Span};
+use rg_ir_model::{BodySource, CrateRef, ExprId, FileId, Span};
 use rg_semantic_ir::{ItemStoreQuery, SourceSelection};
 use rg_ty::Ty;
 
@@ -53,19 +53,14 @@ pub enum BodyClosingBraceBlockKind {
 /// A typed method call that feeds another method segment in a chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MethodChainExprTy {
-    file_id: FileId,
-    span: Span,
+    source: BodySource,
     parent_dot_span: Span,
     ty: IndexedType,
 }
 
 impl MethodChainExprTy {
-    pub fn file_id(&self) -> FileId {
-        self.file_id
-    }
-
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn source(&self) -> BodySource {
+        self.source
     }
 
     pub fn parent_dot_span(&self) -> Span {
@@ -106,16 +101,23 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 rg_std::check_cancel!(self.db, "body structure");
-                if !body.source_at(expr.source).is_written_in_file(file_id) {
+                let source = body.source_at(expr.source);
+                if !source.is_exact_in_file(file_id) {
                     continue;
                 }
                 if !matches!(expr.kind, ExprKind::MethodCall { .. }) {
                     continue;
                 }
-                let Some(parent_dot_span) = parent_dot_by_receiver.get(&ExprId(expr_idx)).copied()
+                let Some(parent_dot) = parent_dot_by_receiver.get(&ExprId(expr_idx)).copied()
                 else {
                     continue;
                 };
+                if !source.is_written()
+                    && (!parent_dot.is_exact_in_file(file_id)
+                        || parent_dot.span.start < source.span.end)
+                {
+                    continue;
+                }
                 let Some(ty) = body.expr_ty(ExprId(expr_idx)).cloned() else {
                     continue;
                 };
@@ -124,9 +126,8 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
                 }
 
                 expr_tys.push(MethodChainExprTy {
-                    file_id: body.source_at(expr.source).file_id,
-                    span: body.source_at(expr.source).span,
-                    parent_dot_span,
+                    source,
+                    parent_dot_span: parent_dot.span,
                     ty: IndexedType::new(ty),
                 });
             }
@@ -190,7 +191,9 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     }
 
     /// Map a method receiver expression to the parent call's dot span.
-    fn method_parent_dots_by_receiver(body: rg_body_ir::BodyView<'_>) -> HashMap<ExprId, Span> {
+    fn method_parent_dots_by_receiver(
+        body: rg_body_ir::BodyView<'_>,
+    ) -> HashMap<ExprId, BodySource> {
         let mut parent_dot_by_receiver = HashMap::new();
         for expr in body.exprs() {
             let ExprKind::MethodCall {
@@ -204,7 +207,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
             let receiver = Self::chain_receiver_base(body, *receiver);
             parent_dot_by_receiver
                 .entry(receiver)
-                .or_insert(body.span(*dot_location));
+                .or_insert(body.source_at(*dot_location));
         }
 
         parent_dot_by_receiver

@@ -37,7 +37,7 @@ use crate::Analysis;
 /// ```
 pub(crate) enum CompletionSite {
     AssociatedTypeBinding(IndexedAssociatedTypeBindingSite),
-    Dot(DotCompletionSite),
+    Dot(Vec<DotCompletionSite>),
     ModuleDeclaration(ModuleDeclarationCompletionSite),
     ModuleMacro(ModuleMacroCompletionSite),
     Path(PathCompletionSite),
@@ -47,6 +47,11 @@ pub(crate) enum CompletionSite {
 }
 
 impl CompletionSite {
+    fn from_member_access_sites(sites: Vec<IndexedMemberAccessSite>) -> Option<Self> {
+        (!sites.is_empty())
+            .then(|| Self::Dot(sites.into_iter().map(DotCompletionSite::new).collect()))
+    }
+
     fn from_signature_type_site(site: IndexedSignatureTypeSite) -> Self {
         match site {
             IndexedSignatureTypeSite::AssociatedTypeBinding(site) => {
@@ -1092,11 +1097,9 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                 return Ok(None);
             }
             if syntax.after_dot {
-                return Ok(source
-                    .member_access_site_at(crate_ref, file_id, offset)
-                    .context("scan member access completion site")?
-                    .map(DotCompletionSite::new)
-                    .map(CompletionSite::Dot));
+                return Ok(CompletionSite::from_member_access_sites(
+                    source.member_access_sites_at(crate_ref, file_id, offset)?,
+                ));
             }
             if syntax.after_colon_colon {
                 if let Some(path) = syntax.empty_qualified_path {
@@ -1148,11 +1151,10 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         // specific source interpretation: member access, qualified path, record field, lexical
         // body name, declaration signature, then import path fallback. Most requests happen in a
         // body, so signature scanning stays behind the body-owned sites.
-        if let Some(site) = source
-            .member_access_site_at(crate_ref, file_id, offset)
-            .context("scan member access completion site")?
-        {
-            return Ok(Some(CompletionSite::Dot(DotCompletionSite::new(site))));
+        if let Some(site) = CompletionSite::from_member_access_sites(
+            source.member_access_sites_at(crate_ref, file_id, offset)?,
+        ) {
+            return Ok(Some(site));
         }
 
         if let Some(site) = source

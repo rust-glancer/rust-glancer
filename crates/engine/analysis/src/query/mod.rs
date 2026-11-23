@@ -7,6 +7,7 @@
 
 pub(crate) mod code_action;
 pub(crate) mod completion;
+mod copied_call;
 pub(crate) mod folding;
 pub(crate) mod highlight;
 pub(crate) mod hover;

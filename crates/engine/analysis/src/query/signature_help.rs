@@ -8,10 +8,13 @@ use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::{
     display::signature::{CallSignature, SignatureRenderer},
     member::MemberView,
-    ty::locals::{BodyView, CallTarget},
+    ty::locals::{BodyView, CallTarget, ResolvedCall},
 };
-use rg_syntax::{AstNode as _, SyntaxKind, TextSize, ast};
+use rg_parse::syntax_edition;
+use rg_std::ExpectedUnique;
+use rg_syntax::{AstNode as _, SyntaxKind, TextRange, TextSize, ast};
 
+use super::copied_call;
 use crate::{Analysis, SignatureHelp};
 
 pub(crate) fn signature_help(
@@ -38,18 +41,62 @@ pub(crate) fn signature_help(
         };
         token = previous;
     }
+    let db = analysis.view_db();
+    let bodies = BodyView::new(db);
+
+    if token
+        .parent_ancestors()
+        .any(|node| ast::TokenTree::can_cast(node.kind()))
+    {
+        let mut calls = bodies.copied_calls_at(crate_ref, file_id, u32::from(offset))?;
+        calls.sort_by_key(|call| (call.source().span.len(), call.source().span.start));
+        let text = source.syntax().text();
+        let edition = syntax_edition(db.crate_edition(crate_ref)?);
+        let mut selected_len = None;
+        let mut help = ExpectedUnique::new();
+        for copies in calls.chunk_by(|left, right| left.source().span == right.source().span) {
+            let span = copies[0].source().span;
+            if selected_len.is_some_and(|len| len < span.len()) {
+                break;
+            }
+            let fragment = text
+                .slice(TextRange::new(span.start.into(), span.end.into()))
+                .to_string();
+            let local_offset = offset - TextSize::from(span.start);
+            let Some(arguments) = copied_call::argument_list(&fragment, edition)
+                .filter(|list| contains_offset(list, local_offset))
+            else {
+                continue;
+            };
+            selected_len = Some(span.len());
+            for call in copies {
+                // An unresolved or differently resolved copy cannot pick a signature for
+                // the other copies at the same written site.
+                let Some(target) = call.target() else {
+                    return Ok(None);
+                };
+                help.push(render(
+                    analysis,
+                    crate_ref,
+                    call,
+                    target,
+                    &arguments,
+                    local_offset,
+                    span.start,
+                )?);
+            }
+        }
+        if selected_len.is_some() {
+            return Ok(help.into_option().flatten());
+        }
+    }
+
     // Check the innermost list first. In `outer(inner()$0, value)`, the cursor is past the
     // inner closing paren, so keep walking up to `outer`.
     let arguments = token
         .parent_ancestors()
         .filter_map(ast::ArgList::cast)
-        .find(|list| {
-            list.l_paren_token()
-                .is_some_and(|open| open.text_range().end() <= offset)
-                && list
-                    .r_paren_token()
-                    .is_none_or(|close| offset <= close.text_range().start())
-        });
+        .find(|list| contains_offset(list, offset));
     let Some(arguments) = arguments else {
         return Ok(None);
     };
@@ -57,13 +104,42 @@ pub(crate) fn signature_help(
         return Ok(None);
     };
 
-    let db = analysis.view_db();
     let call_span = Span::from_text_range(call_syntax.text_range());
-    let Some(call) = BodyView::new(db).resolved_call(crate_ref, file_id, call_span)? else {
+    let Some(call) = bodies.resolved_call(crate_ref, file_id, call_span)? else {
         return Ok(None);
     };
+    render(
+        analysis,
+        crate_ref,
+        &call,
+        call.target(),
+        &arguments,
+        offset,
+        0,
+    )
+}
+
+fn contains_offset(arguments: &ast::ArgList, offset: TextSize) -> bool {
+    arguments
+        .l_paren_token()
+        .is_some_and(|open| open.text_range().end() <= offset)
+        && arguments
+            .r_paren_token()
+            .is_none_or(|close| offset <= close.text_range().start())
+}
+
+fn render<T>(
+    analysis: &Analysis<'_>,
+    crate_ref: CrateRef,
+    call: &ResolvedCall<T>,
+    target: &CallTarget,
+    arguments: &ast::ArgList,
+    offset: TextSize,
+    source_start: u32,
+) -> anyhow::Result<Option<SignatureHelp>> {
+    let db = analysis.view_db();
     let renderer = SignatureRenderer::new(db.crate_edition(crate_ref)?);
-    let (signature, is_variadic) = match call.target() {
+    let (signature, is_variadic) = match target {
         CallTarget::Function(function) => {
             let members = MemberView::new(db);
             let Some(function) = members
@@ -111,7 +187,8 @@ pub(crate) fn signature_help(
             argument_index += usize::from(!disabled_argument);
             disabled_argument = false;
         } else if let Some(argument) = child.into_node().and_then(ast::Expr::cast) {
-            let span = Span::from_text_range(argument.syntax().text_range());
+            let range = argument.syntax().text_range() + TextSize::from(source_start);
+            let span = Span::from_text_range(range);
             // A macro-expanded argument can point to a token within its written expression.
             disabled_argument = lowered
                 .next_if(|arg| span.contains_span(arg.span()))

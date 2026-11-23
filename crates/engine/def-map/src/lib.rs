@@ -40,7 +40,7 @@ pub use self::{
         BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
         BodyMacroExpansionScope, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
         BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
-        ExpandedBodyMacro,
+        CopiedArgumentFragments, ExpandedBodyMacro,
     },
     build::{
         AssociatedItemInput, AssociatedItemOwner, CrateBuildOutput, CrateDependencies,

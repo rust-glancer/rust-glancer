@@ -49,7 +49,7 @@ pub(crate) struct DotCompletionSite {
     pub body: BodyRef,
     pub receiver: ExprId,
     pub scope: ScopeId,
-    /// Exact written source range of the receiver expression before the dot.
+    /// Written receiver range before the dot. Copied receivers may include trailing trivia.
     pub receiver_span: Span,
     /// Member-name prefix already typed after the dot.
     ///

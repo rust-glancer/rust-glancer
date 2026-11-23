@@ -46,8 +46,38 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
     /// Collects member completions for a dot site like `user.na$0`.
     pub(super) fn completions(
         &self,
+        sites: &[DotCompletionSite],
+        syntax_context: Option<&CompletionSyntaxContext<'_>>,
+    ) -> anyhow::Result<Vec<CompletionItem>> {
+        let Some((first, copies)) = sites.split_first() else {
+            return Ok(Vec::new());
+        };
+        if copies.is_empty() {
+            return self.completions_in_scope(
+                *first,
+                syntax_context,
+                self.query.client_capabilities.auto_import,
+            );
+        }
+
+        // Repeated copies can have different scopes. Offer the member choices that apply in
+        // every scope. Imports and postfix edits have a single source context to resolve against.
+        let mut items = self.completions_in_scope(*first, None, false)?;
+        for copy in copies {
+            if items.is_empty() {
+                break;
+            }
+            let other = self.completions_in_scope(*copy, None, false)?;
+            items.retain(|item| other.contains(item));
+        }
+        Ok(items)
+    }
+
+    fn completions_in_scope(
+        &self,
         site: DotCompletionSite,
         syntax_context: Option<&CompletionSyntaxContext<'_>>,
+        auto_import: bool,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
@@ -127,7 +157,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                 .context("collect postfix completions")?,
         );
 
-        if self.query.client_capabilities.auto_import
+        if auto_import
             && let Some(prefix) = self
                 .query
                 .source_text
