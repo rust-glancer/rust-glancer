@@ -7,6 +7,66 @@ use super::utils::check_project_body_ir;
 use crate::testonly::BodyIrFixture;
 
 #[test]
+fn declaration_attrs_survive_each_lowering_route() {
+    let mut fixture = BodyIrFixture::build_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:declaration_attrs
+#[doc(hidden)]
+struct Written;
+
+cfg_select! {
+    true => {
+        #[doc(hidden)]
+        struct Selected;
+    }
+}
+
+macro_rules! hidden_item {
+    ($name:ident) => {
+        #[doc(hidden)]
+        struct $name;
+    };
+}
+
+hidden_item!(Generated);
+
+fn outer() {
+    #[doc(hidden)]
+    struct Local;
+    hidden_item!(GeneratedLocal);
+}
+"#,
+    );
+    fixture.inspect(|view| {
+        let target = view
+            .semantic()
+            .crate_ref("declaration_attrs", TargetKind::Lib);
+        let target_map = view.def_map(target).expect("target declarations");
+        let target_defs = target_map
+            .local_defs(None)
+            .expect("read target declarations");
+        let outer = view.body_key(target, "outer").body(BodyId(0));
+        let local_map = view.body_def_map(outer).expect("local declarations");
+
+        for name in [
+            "Written",
+            "Selected",
+            "Generated",
+            "Local",
+            "GeneratedLocal",
+        ] {
+            let definition = target_defs
+                .iter()
+                .map(|(_, definition)| *definition)
+                .chain(local_map.local_defs())
+                .find(|definition| definition.name.as_str() == name)
+                .unwrap_or_else(|| panic!("fixture should define {name}"));
+            assert!(definition.user_facing_attrs.is_doc_hidden(), "{name}");
+        }
+    });
+}
+
+#[test]
 fn body_local_extern_blocks_collect_declarations_without_scheduling_foreign_bodies() {
     let mut fixture = BodyIrFixture::build(
         r#"

@@ -5,14 +5,12 @@
 
 mod def_map;
 mod item_store;
-mod lower;
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::BodyRef;
 use rg_std::CancellationToken;
 
-pub(crate) use self::lower::LocalItemLowering;
 use self::{def_map::LocalDefMapCollector, item_store::LocalItemStoreCollector};
 use crate::{BodyData, BodyLocalItems, BodySource, BodySourceItems, BodySourceStore, ScopeData};
 

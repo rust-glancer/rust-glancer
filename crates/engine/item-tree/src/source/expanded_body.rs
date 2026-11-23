@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use rg_ir_model::{CrateRef, Span};
 use rg_std::{MemorySize, Shrink};
-use rg_syntax::{AstNode as _, ast};
 use rg_tt::{Span as TtSpan, TopSubtree};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -24,17 +23,4 @@ pub struct ExpandedItemBodies {
     pub call_site: TtSpan,
     pub dollar_crate: Option<CrateRef>,
     pub items: Vec<(ItemTreeId, Span)>,
-}
-
-impl ExpandedItemBodies {
-    /// Keep the full item range. A function needs its parameters along with its block.
-    pub fn item_range(item: &ast::Item) -> Option<Span> {
-        match item {
-            ast::Item::Fn(item) => item.body().map(|_| item.syntax().text_range()),
-            ast::Item::Const(item) => item.body().map(|_| item.syntax().text_range()),
-            ast::Item::Static(item) => item.body().map(|_| item.syntax().text_range()),
-            _ => None,
-        }
-        .map(Span::from_text_range)
-    }
 }

@@ -2,6 +2,7 @@ mod discovery;
 mod file_tree;
 mod item;
 mod lower;
+mod lower_item;
 mod query;
 mod source;
 
@@ -35,6 +36,7 @@ pub use self::{
         UseImportKind, UseItem, UsePath, UsePathSegment, UsePathSegmentKind, UserFacingAttrs,
         VisibilityLevel, WherePredicate,
     },
+    lower_item::{ItemLowering, ItemMacroSpans, LoweredItem},
     query::{FileDeclarations, file_declaration_sources, file_declarations},
     source::{
         DeclarationSourceBuilder, DeclarationSourceStore, ExpandedItemBodies, NoSource,
