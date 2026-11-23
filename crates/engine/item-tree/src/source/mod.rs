@@ -15,7 +15,7 @@
 //! Bounded initializer previews also live on this side: changing `2 + 2` to `4` changes display
 //! text and body meaning, but leaves the const's declaration and its occurrence IDs unchanged.
 
-mod expanded_body;
+mod expanded_syntax;
 
 use std::collections::HashMap;
 
@@ -25,7 +25,7 @@ use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_tt::{Span as TtSpan, TokenOwner};
 use wincode::{SchemaRead, SchemaWrite};
 
-pub use self::expanded_body::ExpandedItemBodies;
+pub use self::expanded_syntax::ExpandedItemSyntax;
 
 /// Source data indexed by the owner/local pair in [`SourceId`].
 ///

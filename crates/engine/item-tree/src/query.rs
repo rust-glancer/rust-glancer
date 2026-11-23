@@ -7,7 +7,7 @@ use rg_workspace::PackageInput;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    DeclarationSourceStore, ExpandedItemBodies, FileTree, ItemTreeId, lower::FileLowering,
+    DeclarationSourceStore, ExpandedItemSyntax, FileTree, ItemTreeId, lower::FileLowering,
 };
 
 /// Declaration meaning and separate source data from lowering one file.
@@ -49,22 +49,22 @@ pub fn file_declarations(
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct FileExpandedBodies {
     items: Vec<(ItemTreeId, usize)>,
-    expansions: Vec<ajika::Output<ExpandedItemBodies>>,
+    expansions: Vec<ajika::Output<ExpandedItemSyntax>>,
 }
 
 impl FileExpandedBodies {
-    fn new(db: &QueryContext<'_>, bodies: Vec<ExpandedItemBodies>) -> ajika::Result<Self> {
+    fn new(db: &QueryContext<'_>, bodies: Vec<ExpandedItemSyntax>) -> ajika::Result<Self> {
         let mut items = Vec::new();
         let mut expansions = Vec::with_capacity(bodies.len());
         for (index, bodies) in bodies.into_iter().enumerate() {
-            items.extend(bodies.items.iter().map(|(item, _)| (*item, index)));
+            items.extend(bodies.body_items.iter().map(|(item, _)| (*item, index)));
             expansions.push(db.output(("cfg body tokens", index), Arc::new(bodies))?);
         }
         items.sort_unstable_by_key(|(item, _)| item.0);
         Ok(Self { items, expansions })
     }
 
-    pub fn get(&self, item: ItemTreeId) -> Option<&ajika::Output<ExpandedItemBodies>> {
+    pub fn get(&self, item: ItemTreeId) -> Option<&ajika::Output<ExpandedItemSyntax>> {
         let index = self
             .items
             .binary_search_by_key(&item.0, |(item, _)| item.0)

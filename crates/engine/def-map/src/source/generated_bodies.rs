@@ -7,11 +7,12 @@
 use std::sync::Arc;
 
 use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot};
-use rg_item_tree::{ExpandedItemBodies, ItemTreeId, ItemTreeRef, file_declarations};
+use rg_item_tree::{ItemTreeId, ItemTreeRef, file_declarations};
 use rg_macro_runtime::{ExpansionParseKind, ExpansionSyntax};
 use rg_source::QueryContext;
 use rg_syntax::{AstNode as _, SyntaxNode, TextRange, ast};
 
+use super::expansion::{SavedItemExpansion, parsed_item_expansion};
 use crate::{ExpandedBodyMacro, MacroExpansionRef, body_macros::BodyMacroInputSources};
 
 /// The selected item and the expansion context needed to lower it.
@@ -41,20 +42,27 @@ impl GeneratedBodySyntax {
             return Ok(None);
         };
         // TODO: Publish copy coverage for pre-lowered arms through the file source output.
-        Self::open(db, krate, output.clone(), item.item, None)
+        Self::open(
+            db,
+            krate,
+            SavedItemExpansion::File(output.clone()),
+            item.item,
+            None,
+        )
     }
 
     pub(super) fn open(
         db: &QueryContext<'_>,
         krate: CrateRef,
-        output: ajika::Output<ExpandedItemBodies>,
+        output: SavedItemExpansion,
         item: ItemTreeId,
         invocation: Option<MacroExpansionRef>,
     ) -> ajika::Result<Option<Self>> {
-        let parsed = parsed_generated_bodies(db, krate, output)?;
-        let Some((_, range)) = parsed.data.items.iter().find(|(id, _)| *id == item) else {
+        let (data, _) = output.load(db)?;
+        let Some((_, range)) = data.body_items.iter().find(|(id, _)| *id == item) else {
             return Ok(None);
         };
+        let parsed = body_expansion(db, krate, output)?;
         // An invocation can generate several owners at the same physical range. These offsets
         // select the item in the reproduced expansion, where each owner has a distinct range.
         let range = TextRange::new(range.start.into(), range.end.into());
@@ -73,9 +81,8 @@ impl GeneratedBodySyntax {
     }
 }
 
-struct ParsedGeneratedBodies {
+struct ParsedBodyExpansion {
     root: SyntaxNode,
-    data: Arc<ExpandedItemBodies>,
     source: BodySource,
     expansion: ExpandedBodyMacro<SyntaxNode>,
 }
@@ -84,31 +91,38 @@ struct ParsedGeneratedBodies {
 /// The saved token IDs resolve through this snapshot's declaration source table. Moving the
 /// invocation can shift every written range while leaving the packed tokens unchanged.
 #[ajika::query(transient, returns(ref))]
-fn parsed_generated_bodies(
+fn body_expansion(
     db: &QueryContext<'_>,
     krate: CrateRef,
-    output: ajika::Output<ExpandedItemBodies>,
-) -> ajika::Result<ParsedGeneratedBodies> {
-    let data = output.value(db)?;
-    let (parse, span_map) =
-        ExpansionSyntax::parse_token_tree(&data.tokens, ExpansionParseKind::Items);
+    output: SavedItemExpansion,
+) -> ajika::Result<ParsedBodyExpansion> {
+    let (data, forwarding) = output.load(db)?;
+    let (root, spans) = if let Some(inputs) = forwarding.filter(|inputs| !inputs.is_empty()) {
+        // Restore before parsing. A lifetime such as `'a` joins two token-tree spans into
+        // one syntax token, and the parser needs the written origins when it joins them.
+        // Change only the spans so body ranges and copy IDs still use the saved offsets.
+        let tokens = data.tokens.map_spans(|span| inputs.original(span));
+        let (parse, spans) = ExpansionSyntax::parse_token_tree(&tokens, ExpansionParseKind::Items);
+        (parse.syntax_node(), Arc::new(spans))
+    } else {
+        let parsed = parsed_item_expansion(db, output)?;
+        (parsed.root.clone(), Arc::clone(&parsed.spans))
+    };
     let package = PackageSlot(data.call_site.anchor.package as usize);
     let file = FileId::from_raw(data.call_site.anchor.file_id.raw_file_id());
     let inputs = file_declarations(db, package, file)?.sources.value(db)?;
     let span = inputs
         .token_span(data.call_site)
         .ok_or_else(|| ajika::Error::contract("generated body invocation range is absent"))?;
-    let root = parse.syntax_node();
     let expansion = ExpandedBodyMacro::new(
         root.clone(),
-        span_map,
+        spans,
         BodyMacroInputSources::Declaration(inputs),
         data.call_site,
         data.dollar_crate.unwrap_or(krate),
     );
-    Ok(ParsedGeneratedBodies {
+    Ok(ParsedBodyExpansion {
         root,
-        data,
         source: BodySource::macro_generated(file, span),
         expansion,
     })

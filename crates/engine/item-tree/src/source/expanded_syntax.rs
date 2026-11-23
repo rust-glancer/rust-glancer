@@ -15,12 +15,12 @@ use crate::ItemTreeId;
 /// Each function has its own item ID and byte range in the expanded syntax. Save those ranges
 /// with the tokens so body lowering can find the right item when it parses the expansion again.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ExpandedItemBodies {
+pub struct ExpandedItemSyntax {
     #[shrink(skip)]
     pub tokens: Arc<TopSubtree>,
     #[memsize(skip)]
     #[shrink(skip)]
     pub call_site: TtSpan,
     pub dollar_crate: Option<CrateRef>,
-    pub items: Vec<(ItemTreeId, Span)>,
+    pub body_items: Vec<(ItemTreeId, Span)>,
 }

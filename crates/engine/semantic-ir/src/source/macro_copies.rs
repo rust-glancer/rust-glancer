@@ -1,12 +1,15 @@
 //! Find item macro invocations covering a written range.
 //!
-//! DefMap records the input token origins for each expansion. This index resolves those origins
-//! into spans in the active snapshot, once per target, file, and source store. A file reached
-//! through multiple `include!` calls can have several owners with their own expansion results.
+//! Index invocation ranges in the active snapshot, once per target, file, and source store.
+//! Open the expansion's copy coverage when its invocation contains the edit. Keep separate
+//! entries for each source route even when the written ranges match. Two `include!` calls can
+//! put the same source under different macros in scope, and rename must check both results.
 
 use std::collections::{HashMap, hash_map::Entry};
 
-use rg_def_map::{GeneratedSourceStoreId, MacroCopyCoverage, MacroExpansionRef};
+use rg_def_map::{
+    GeneratedSourceStoreId, ItemMacroCopySource, MacroCopyCoverage, MacroExpansionRef,
+};
 use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, Span};
 use rg_item_tree::file_declaration_sources;
 use rg_source::QueryContext;
@@ -14,10 +17,10 @@ use rg_source::QueryContext;
 use super::{DeclarationSourceResolver, ItemSourceView, SourceSelection};
 
 /// What the item expansion recorded for an invocation covering the range.
-pub enum ItemMacroCoverage {
+pub enum ItemMacroCoverage<'db> {
     Expanded {
         id: MacroExpansionRef,
-        coverage: MacroCopyCoverage,
+        coverage: &'db MacroCopyCoverage,
         /// This call has its own written invocation. A nested generated call can share the
         /// enclosing invocation's range as a fallback.
         is_root: bool,
@@ -28,7 +31,7 @@ pub enum ItemMacroCoverage {
 
 pub struct ItemMacroCopyIndex<'db> {
     db: &'db QueryContext<'db>,
-    stores: HashMap<(CrateRef, FileId, GeneratedSourceStoreId), Vec<IndexedMacroCall>>,
+    stores: HashMap<(CrateRef, FileId, GeneratedSourceStoreId), Vec<IndexedMacroCall<'db>>>,
 }
 
 impl<'db> ItemMacroCopyIndex<'db> {
@@ -46,7 +49,7 @@ impl<'db> ItemMacroCopyIndex<'db> {
         krate: CrateRef,
         file: FileId,
         edit: Span,
-        mut visit: impl FnMut(&ItemMacroCoverage),
+        mut visit: impl FnMut(ItemMacroCoverage<'db>),
     ) -> ajika::Result<()> {
         let db = self.db;
         let members = DeclarationSourceResolver::new(db, krate)
@@ -71,7 +74,15 @@ impl<'db> ItemMacroCopyIndex<'db> {
                 .take_while(|call| call.span.start <= edit.start)
             {
                 if call.span.contains_span(edit) {
-                    visit(&call.coverage);
+                    let coverage = match call.expansion {
+                        Some((id, source)) => ItemMacroCoverage::Expanded {
+                            id,
+                            coverage: source.coverage(db)?,
+                            is_root: source.is_root,
+                        },
+                        None => ItemMacroCoverage::Unverified,
+                    };
+                    visit(coverage);
                 }
             }
         }
@@ -79,18 +90,18 @@ impl<'db> ItemMacroCopyIndex<'db> {
     }
 
     fn index_store(
-        db: &QueryContext<'_>,
+        db: &'db QueryContext<'db>,
         krate: CrateRef,
         file: FileId,
         store: GeneratedSourceStoreId,
-    ) -> ajika::Result<Vec<IndexedMacroCall>> {
-        let Some(inventory) =
-            ItemSourceView::generated_sources(db, krate, store)?.macro_copies(db)?
+    ) -> ajika::Result<Vec<IndexedMacroCall<'db>>> {
+        let Some(sources) =
+            ItemSourceView::generated_sources(db, krate, store)?.macro_copy_sources(db)?
         else {
             return Ok(Vec::new());
         };
         let mut calls = Vec::new();
-        for &call in inventory.unverified_calls() {
+        for &call in sources.unverified_calls() {
             if call.anchor.file_id.raw_file_id() == file.as_raw()
                 && let Some(span) =
                     file_declaration_sources(db, PackageSlot(call.anchor.package as usize), file)?
@@ -99,47 +110,31 @@ impl<'db> ItemMacroCopyIndex<'db> {
                 calls.push(IndexedMacroCall {
                     span,
                     max_end: span.end,
-                    coverage: ItemMacroCoverage::Unverified,
+                    expansion: None,
                 });
             }
         }
-        for (source, copies) in inventory.expansions() {
+        for (source, copy_source) in sources.expansions() {
             db.check_cancelled()?;
-            let anchor = copies.call_site.anchor;
+            let anchor = copy_source.call_site.anchor;
             if anchor.file_id.raw_file_id() != file.as_raw() {
                 continue;
             }
             let inputs = file_declaration_sources(db, PackageSlot(anchor.package as usize), file)?;
-            let Some(span) = inputs.token_span(copies.call_site) else {
+            let Some(span) = inputs.token_span(copy_source.call_site) else {
                 continue;
             };
             calls.push(IndexedMacroCall {
                 span,
                 max_end: span.end,
-                coverage: ItemMacroCoverage::Expanded {
-                    id: MacroExpansionRef::Item {
+                expansion: Some((
+                    MacroExpansionRef::Item {
                         krate,
                         store,
                         source,
                     },
-                    coverage: MacroCopyCoverage {
-                        file,
-                        copies: copies
-                            .tokens
-                            .iter()
-                            .filter_map(|&(token, origin)| {
-                                Some((token, inputs.token_span(origin)?))
-                            })
-                            .collect(),
-                        transformed: copies
-                            .transformed
-                            .iter()
-                            .filter_map(|&origin| inputs.token_span(origin))
-                            .collect(),
-                        forwarded: copies.forwarded.clone(),
-                    },
-                    is_root: copies.is_root,
-                },
+                    copy_source,
+                )),
             });
         }
         calls.sort_unstable_by_key(|call| call.span.start);
@@ -152,8 +147,8 @@ impl<'db> ItemMacroCopyIndex<'db> {
     }
 }
 
-struct IndexedMacroCall {
+struct IndexedMacroCall<'db> {
     span: Span,
     max_end: u32,
-    coverage: ItemMacroCoverage,
+    expansion: Option<(MacroExpansionRef, &'db ItemMacroCopySource)>,
 }

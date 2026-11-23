@@ -39,7 +39,7 @@ pub use self::{
     lower_item::{ItemLowering, ItemMacroSpans, LoweredItem},
     query::{FileDeclarations, file_declaration_sources, file_declarations},
     source::{
-        DeclarationSourceBuilder, DeclarationSourceStore, ExpandedItemBodies, NoSource,
+        DeclarationSourceBuilder, DeclarationSourceStore, ExpandedItemSyntax, NoSource,
         RecordSource, SourceLocations, SourceRole, TypeSource, initializer_preview,
     },
 };

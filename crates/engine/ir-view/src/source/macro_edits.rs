@@ -49,9 +49,9 @@ impl<'a, 'db> MacroEditSourceView<'a, 'db> {
                     coverage,
                     is_root,
                 } => {
-                    let copied = evidence.record(*id, span, coverage);
+                    let copied = evidence.record(id, span, coverage);
                     // A different semantic route may discard the argument altogether.
-                    if *is_root && !copied {
+                    if is_root && !copied {
                         evidence.mark_unverified();
                     }
                 }

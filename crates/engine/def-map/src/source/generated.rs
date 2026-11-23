@@ -1,22 +1,22 @@
 //! Retain generated item payloads during collection and publish their source data afterward.
 //!
 //! Semantic lowering consumes the generated declarations. Later source readers need only their
-//! token origins, copy inventories, and handles to the tokens used to reopen bodies.
+//! token origins and handles to the expansion tokens, which can be reopened for bodies or rename.
 
 use std::{collections::HashSet, sync::Arc};
 
 use rg_arena::Arena;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, SourceId};
-use rg_item_tree::{DeclarationSourceStore, ExpandedItemBodies, ItemNode, ItemTreeId, ItemTreeRef};
+use rg_item_tree::{DeclarationSourceStore, ItemNode, ItemTreeId, ItemTreeRef};
 use rg_source::QueryContext;
 use rg_std::{MemorySize, Shrink};
 use rg_tt::Span as TtSpan;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
-    GeneratedBodySyntax, GeneratedItemRef, GeneratedSourceId, GeneratedSourceStoreId, ItemSource,
+    GeneratedBodySyntax, GeneratedItemExpansion, GeneratedItemRef, GeneratedSourceId,
+    GeneratedSourceStoreId, ItemMacroCopySource, ItemSource, expansion::SavedItemExpansion,
 };
-use crate::MacroCopyRef;
 
 /// Item-tree-shaped payload produced for one macro expansion or synthetic declaration.
 ///
@@ -27,8 +27,7 @@ use crate::MacroCopyRef;
 pub(crate) struct GeneratedSourceData {
     pub(crate) origin_file_id: FileId,
     pub(crate) locations: GeneratedLocations,
-    pub(crate) bodies: Option<ExpandedItemBodies>,
-    pub(crate) copies: Option<ExpansionTokenCopies>,
+    pub(crate) expansion: Option<GeneratedItemExpansion>,
     pub(crate) origin_source: ItemTreeRef,
     pub(crate) top_level: Vec<ItemTreeId>,
     pub(crate) items: Arena<ItemTreeId, ItemNode>,
@@ -75,32 +74,42 @@ impl GeneratedItemStore {
 
     /// Keep provenance after Semantic IR has copied the generated declaration meaning.
     ///
-    /// The locations table keeps one slot per expansion. Saved bodies and copy records carry
-    /// the original [`GeneratedSourceId`], so they can omit expansions with no payload.
+    /// The locations table keeps the slots assigned during lowering. Body and copy readers use
+    /// the same [`GeneratedSourceId`] and reopen the same saved output. Keep a copy source even
+    /// for an expansion such as `use $path;`, which copies an argument and has no body.
     pub fn into_sources(self, db: &QueryContext<'_>) -> ajika::Result<GeneratedSourceStore> {
         let mut sources = Vec::with_capacity(self.sources.len());
         let mut bodies = Vec::new();
         let mut expansions = Vec::new();
         for (index, source) in self.sources.into_vec().into_iter().enumerate() {
-            if let Some(data) = source.bodies {
-                // A source lookup can open the locations without loading the expanded tokens.
-                let output = db.output(("generated bodies", index), Arc::new(data))?;
-                bodies.push((GeneratedSourceId(index), output));
-            }
-            if let Some(copies) = source.copies {
-                expansions.push((GeneratedSourceId(index), copies));
+            if let Some(data) = source.expansion {
+                let id = GeneratedSourceId(index);
+                let has_bodies = !data.syntax.body_items.is_empty();
+                let call_site = data.syntax.call_site;
+                let is_root = data.forwarding.is_none();
+                let output = db.output(("generated expansion", index), Arc::new(data))?;
+                if has_bodies {
+                    bodies.push((id, output.clone()));
+                }
+                expansions.push((
+                    id,
+                    ItemMacroCopySource {
+                        call_site,
+                        is_root,
+                        expansion: output,
+                    },
+                ));
             }
             sources.push(source.locations);
         }
         bodies.shrink_to_fit();
-        // Navigation reads locations. Only edit verification needs to open the complete
-        // inventory, including tokens that have no semantic occurrence.
-        let copies = if expansions.is_empty() && self.unverified_calls.is_empty() {
+        // Rename can find the invocations covering an edit before opening their expansion tokens.
+        let copy_sources = if expansions.is_empty() && self.unverified_calls.is_empty() {
             None
         } else {
             Some(db.output(
-                "item macro copies",
-                Arc::new(ItemMacroCopies {
+                "item macro copy sources",
+                Arc::new(ItemMacroCopySources {
                     expansions,
                     unverified_calls: self.unverified_calls,
                 }),
@@ -109,7 +118,7 @@ impl GeneratedItemStore {
         Ok(GeneratedSourceStore {
             sources,
             bodies,
-            copies,
+            copy_sources,
         })
     }
 
@@ -206,32 +215,17 @@ impl GeneratedExpansionLocations {
     }
 }
 
-/// The parts of copy coverage retained before physical token positions are opened.
-/// This also exists for expansions that produce no bodies.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ExpansionTokenCopies {
-    #[memsize(skip)]
-    #[shrink(skip)]
-    pub call_site: TtSpan,
-    #[memsize(skip)]
-    #[shrink(skip)]
-    pub tokens: Vec<(u32, TtSpan)>,
-    #[memsize(skip)]
-    #[shrink(skip)]
-    pub transformed: Vec<TtSpan>,
-    pub forwarded: Vec<MacroCopyRef>,
-    pub is_root: bool,
-}
-
+/// Invocation sources used to find the expansions an edit can affect. An opaque invocation with
+/// a known range stays visible here so rename can refuse an edit it cannot verify.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
-pub struct ItemMacroCopies {
-    expansions: Vec<(GeneratedSourceId, ExpansionTokenCopies)>,
+pub struct ItemMacroCopySources {
+    expansions: Vec<(GeneratedSourceId, ItemMacroCopySource)>,
     unverified_calls: Vec<TtSpan>,
 }
 
-impl ItemMacroCopies {
-    pub fn expansions(&self) -> impl Iterator<Item = (GeneratedSourceId, &ExpansionTokenCopies)> {
-        self.expansions.iter().map(|(id, copies)| (*id, copies))
+impl ItemMacroCopySources {
+    pub fn expansions(&self) -> impl Iterator<Item = (GeneratedSourceId, &ItemMacroCopySource)> {
+        self.expansions.iter().map(|(id, source)| (*id, source))
     }
 
     pub fn unverified_calls(&self) -> &[TtSpan] {
@@ -261,20 +255,20 @@ pub struct GeneratedSourceStore {
     sources: Vec<GeneratedLocations>,
     #[memsize(skip)]
     #[shrink(skip)]
-    bodies: Vec<(GeneratedSourceId, ajika::Output<ExpandedItemBodies>)>,
+    bodies: Vec<(GeneratedSourceId, ajika::Output<GeneratedItemExpansion>)>,
     #[memsize(skip)]
     #[shrink(skip)]
-    copies: Option<ajika::Output<ItemMacroCopies>>,
+    copy_sources: Option<ajika::Output<ItemMacroCopySources>>,
 }
 
 impl GeneratedSourceStore {
-    pub fn macro_copies<'db>(
+    pub fn macro_copy_sources<'db>(
         &self,
         db: &'db QueryContext<'db>,
-    ) -> ajika::Result<Option<&'db ItemMacroCopies>> {
-        self.copies
+    ) -> ajika::Result<Option<&'db ItemMacroCopySources>> {
+        self.copy_sources
             .as_ref()
-            .map(|copies| copies.value_ref(db))
+            .map(|sources| sources.value_ref(db))
             .transpose()
     }
 
@@ -297,7 +291,7 @@ impl GeneratedSourceStore {
         GeneratedBodySyntax::open(
             db,
             krate,
-            self.bodies[index].1.clone(),
+            SavedItemExpansion::Macro(self.bodies[index].1.clone()),
             generated.item,
             Some(generated.expansion(krate)),
         )

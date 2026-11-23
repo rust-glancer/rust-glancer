@@ -70,9 +70,9 @@ pub use self::{
         ResolvePathResult,
     },
     source::{
-        BodyItemSourceRef, ExpansionTokenCopies, GeneratedBodySyntax, GeneratedExpansionLocations,
-        GeneratedItemRef, GeneratedItemStore, GeneratedLocation, GeneratedLocations,
-        GeneratedSourceId, GeneratedSourceStore, GeneratedSourceStoreId, ItemSource,
+        BodyItemSourceRef, GeneratedBodySyntax, GeneratedExpansionLocations, GeneratedItemRef,
+        GeneratedItemStore, GeneratedLocation, GeneratedLocations, GeneratedSourceId,
+        GeneratedSourceStore, GeneratedSourceStoreId, ItemMacroCopySource, ItemSource,
         ItemSourceKind, SourceOccurrenceLocation,
     },
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},

@@ -228,8 +228,7 @@ impl BuiltinDeriveExpansion {
             source: GeneratedSourceData {
                 origin_file_id: file_id,
                 locations: GeneratedLocations::Inherited(source),
-                bodies: None,
-                copies: None,
+                expansion: None,
                 origin_source,
                 top_level: vec![impl_id],
                 items,

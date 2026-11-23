@@ -17,7 +17,7 @@ use rg_tt::{
 };
 
 use crate::{
-    BuiltinMacroItem, CfgSelectArmItem, DeclarationSourceStore, Documentation, ExpandedItemBodies,
+    BuiltinMacroItem, CfgSelectArmItem, DeclarationSourceStore, Documentation, ExpandedItemSyntax,
     FileTree, IncludePathExpression, InnerDocs, ItemKind, ItemLowering, ItemMacroSpans, ItemNode,
     ItemTreeId, LoweredItem, MaybeFromAst, RecordSource,
 };
@@ -41,7 +41,7 @@ impl FileLowering<'_> {
     ) -> (
         FileTree,
         DeclarationSourceStore<Span>,
-        Vec<ExpandedItemBodies>,
+        Vec<ExpandedItemSyntax>,
     ) {
         let package = u32::try_from(package.0).expect("package slot should fit macro span storage");
         let mut builder = FileTreeBuilder::new(package, file);
@@ -244,11 +244,11 @@ impl FileLowering<'_> {
                 // `cfg_select!` saves its own arm separately because it has a different parse.
                 let body_items = expansion.body_items.into_inner();
                 if !body_items.is_empty() {
-                    builder.cfg_select_bodies.push(ExpandedItemBodies {
+                    builder.cfg_select_bodies.push(ExpandedItemSyntax {
                         tokens: Arc::new(arm.payload.clone()),
                         call_site,
                         dollar_crate: None,
-                        items: body_items,
+                        body_items,
                     });
                 }
                 CfgSelectArmItem::lowered(arm.predicate.clone(), items)
@@ -291,7 +291,7 @@ struct FileTreeBuilder {
     items: Arena<ItemTreeId, ItemNode>,
     sources: DeclarationSourceStore<Span>,
     source_sensitive: bool,
-    cfg_select_bodies: Vec<ExpandedItemBodies>,
+    cfg_select_bodies: Vec<ExpandedItemSyntax>,
 }
 
 impl FileTreeBuilder {

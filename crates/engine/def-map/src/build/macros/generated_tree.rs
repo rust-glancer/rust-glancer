@@ -4,13 +4,13 @@
 //! It collects the result as item-tree nodes so semantic lowering can read the declarations in
 //! the usual shape.
 
-use std::{cell::RefCell, sync::Arc};
+use std::cell::RefCell;
 
 use anyhow::{Context as _, Result};
 use rg_arena::Arena;
 use rg_ir_model::{CrateRef, FileId, Span};
 use rg_item_tree::{
-    DeclarationSourceStore, ExpandedItemBodies, ItemKind, ItemLowering, ItemMacroSpans, ItemNode,
+    DeclarationSourceStore, ExpandedItemSyntax, ItemKind, ItemLowering, ItemMacroSpans, ItemNode,
     ItemTreeId, ItemTreeRef, LoweredItem, SourceRole,
 };
 use rg_macro_runtime::ExpansionSyntax;
@@ -21,9 +21,9 @@ use rg_syntax::{
 use rg_tt::{Span as TtSpan, TokenOrigins, TokenOwner, syntax_bridge::ExpansionSpanMap};
 
 use crate::{
-    macro_copies::{ForwardedMacroInputs, expansion_tokens, is_argument_origin},
+    macro_copies::{ForwardedMacroInputs, expansion_argument_origin, is_argument_origin},
     source::{
-        ExpansionTokenCopies, GeneratedExpansionLocations, GeneratedLocation, GeneratedLocations,
+        GeneratedExpansionLocations, GeneratedItemExpansion, GeneratedLocation, GeneratedLocations,
         GeneratedSourceData,
     },
 };
@@ -41,7 +41,8 @@ pub(super) struct GeneratedSourceLowering<'expansion> {
     locations: DeclarationSourceStore<GeneratedLocation>,
     items: Arena<ItemTreeId, ItemNode>,
     body_items: Vec<(ItemTreeId, Span)>,
-    copied: &'expansion [(rg_syntax::TextRange, TtSpan)],
+    raw_spans: &'expansion ExpansionSpanMap,
+    forwarding: Option<&'expansion ForwardedMacroInputs>,
 }
 
 impl GeneratedSourceLowering<'_> {
@@ -55,42 +56,27 @@ impl GeneratedSourceLowering<'_> {
     ) -> Result<GeneratedSourceData> {
         let ExpansionSyntax {
             parse,
-            mut span_map,
-            mut item_tokens,
+            span_map,
+            item_tokens,
             transformed_inputs,
         } = expansion;
         let file = ast::MacroItems::cast(parse.syntax_node())
             .context("while attempting to cast macro expansion syntax root")?;
-        // Unmapped tokens belong to the invocation as a whole. Prepare this once so nested
-        // calls and definitions can borrow the token map without rebuilding their fallback.
-        let fallback_span = call_site;
-        let mut forwarded = Vec::new();
-        let copied: Vec<_> = expansion_tokens(file.syntax(), &span_map)
-            .filter_map(|(range, token)| {
-                let origin = forwarding.map_or(token, |inputs| inputs.original(token));
-                if !is_argument_origin(call_site, origin) {
-                    return None;
-                }
-                forwarded.extend(forwarding.and_then(|inputs| inputs.copy(token)));
-                Some((range, origin))
-            })
-            .collect();
-        if let Some(inputs) = forwarding.filter(|inputs| !inputs.is_empty()) {
-            // Body preparation reparses these tokens after the nested call has dropped its
-            // temporary input table, so restore the original spans in both representations.
-            span_map.map_spans(|span| inputs.original(span));
-            item_tokens =
-                item_tokens.map(|tokens| Arc::new(tokens.map_spans(|span| inputs.original(span))));
-        }
+        // Recorded locations need written origins. Keep the raw map too when a nested
+        // expansion uses parent copy IDs, so copy detection can use the same spans as replay.
+        let restored_spans = forwarding
+            .filter(|inputs| !inputs.is_empty())
+            .map(|inputs| inputs.restore_spans(&span_map));
         let mut lowering = GeneratedSourceLowering {
             file_id,
             dollar_crate,
-            fallback_span,
-            span_map: &span_map,
+            fallback_span: call_site,
+            span_map: restored_spans.as_ref().unwrap_or(&span_map),
             locations: DeclarationSourceStore::default(),
             items: Arena::new(),
             body_items: Vec::new(),
-            copied: &copied,
+            raw_spans: &span_map,
+            forwarding,
         };
         let top_level = file.items().map(|item| lowering.lower_item(item)).collect();
 
@@ -99,25 +85,15 @@ impl GeneratedSourceLowering<'_> {
             locations: GeneratedLocations::Expansion(GeneratedExpansionLocations::new(
                 lowering.locations,
             )),
-            copies: Some(ExpansionTokenCopies {
-                call_site,
-                tokens: copied
-                    .iter()
-                    .map(|(range, origin)| (range.start().into(), *origin))
-                    .collect(),
-                transformed: transformed_inputs
-                    .into_iter()
-                    .map(|span| forwarding.map_or(span, |inputs| inputs.original(span)))
-                    .filter(|&span| is_argument_origin(call_site, span))
-                    .collect(),
-                forwarded,
-                is_root: forwarding.is_none(),
-            }),
-            bodies: (!lowering.body_items.is_empty()).then(|| ExpandedItemBodies {
-                tokens: item_tokens.expect("item expansion keeps its expanded tokens"),
-                call_site,
-                dollar_crate,
-                items: lowering.body_items,
+            expansion: Some(GeneratedItemExpansion {
+                syntax: ExpandedItemSyntax {
+                    tokens: item_tokens.expect("item expansion keeps its expanded tokens"),
+                    call_site,
+                    dollar_crate,
+                    body_items: lowering.body_items,
+                },
+                transformed_inputs,
+                forwarding: forwarding.cloned(),
             }),
             origin_source,
             top_level,
@@ -128,7 +104,8 @@ impl GeneratedSourceLowering<'_> {
     fn lower_item(&mut self, item: ast::Item) -> ItemTreeId {
         let span_map = self.span_map;
         let fallback = self.fallback_span;
-        let copied = self.copied;
+        let raw_spans = self.raw_spans;
+        let forwarding = self.forwarding;
         // Only syntax copied from this invocation gets its own selectable occurrence. Template
         // names, mixed-origin ranges, and whole declaration containers navigate to the call.
         // Store this decision with the origin so later readers cannot mistake the fallback for
@@ -139,10 +116,13 @@ impl GeneratedSourceLowering<'_> {
                     origin,
                     editable: true,
                     copy: {
-                        let mut candidates = copied
-                            [copied.partition_point(|(token, _)| token.end() <= range.start())..]
-                            .iter()
-                            .take_while(|(token, _)| token.start() < range.end());
+                        // Give a location a copy ID only if it identifies one whole copied
+                        // token with the same origin. Rename will look for that token's start
+                        // when it opens the full coverage for this expansion.
+                        let mut candidates =
+                            raw_spans.token_spans(range).filter_map(|(range, raw)| {
+                                Some((range, expansion_argument_origin(fallback, raw, forwarding)?))
+                            });
                         let copy = candidates.next().filter(|(token, input)| {
                             range.contains_range(*token) && *input == origin
                         });
@@ -159,7 +139,10 @@ impl GeneratedSourceLowering<'_> {
         };
         let mut recorder = self.locations.start_owner(&mut map);
         let children = ItemLowering::lower_children(&item, |child| Some(self.lower_item(child)));
-        let is_call = matches!(&item, ast::Item::MacroCall(_));
+        let call_input = match &item {
+            ast::Item::MacroCall(call) => call.token_tree().map(|tree| tree.syntax().text_range()),
+            _ => None,
+        };
         let forwarded = RefCell::new(Vec::new());
         let LoweredItem {
             mut node,
@@ -170,10 +153,12 @@ impl GeneratedSourceLowering<'_> {
             macro_spans: Some(ItemMacroSpans {
                 token: &|range, _| {
                     let origin = span_map.span_for_range(range).unwrap_or(fallback);
-                    if is_call
-                        && let Ok(index) =
-                            copied.binary_search_by_key(&range.start(), |(range, _)| range.start())
-                        && copied[index].0 == range
+                    // Forward an exact parser token as one parent copy. Some callback ranges
+                    // cover only part of a token, such as punctuation split by the bridge.
+                    if call_input.is_some_and(|input| input.contains_range(range))
+                        && let Some((token, raw)) = raw_spans.token_spans(range).next()
+                        && token == range
+                        && expansion_argument_origin(fallback, raw, forwarding).is_some()
                     {
                         let token = u32::from(range.start());
                         forwarded.borrow_mut().push((token, origin));

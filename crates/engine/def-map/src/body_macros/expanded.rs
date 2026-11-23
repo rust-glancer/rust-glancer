@@ -12,7 +12,7 @@ use rg_tt::{
 };
 
 use super::BodyMacroCallOrigin;
-use crate::macro_copies::{expansion_tokens, forwarded_input_id, is_argument_origin};
+use crate::macro_copies::{forwarded_input_id, is_argument_origin};
 
 /// Generated body syntax plus the macro-definition origin needed while lowering it.
 ///
@@ -41,14 +41,14 @@ pub struct ExpandedBodyMacro<T> {
 impl<T> ExpandedBodyMacro<T> {
     pub(crate) fn new(
         syntax: T,
-        source_map: ExpansionSpanMap,
+        source_map: Arc<ExpansionSpanMap>,
         input_sources: BodyMacroInputSources,
         call_site: TtSpan,
         dollar_crate: CrateRef,
     ) -> Self {
         Self {
             syntax,
-            source_map: Arc::new(source_map),
+            source_map,
             input_sources,
             call_site,
             dollar_crate,
@@ -192,10 +192,12 @@ impl ExpandedBodyMacro<SyntaxNode> {
             .ancestors()
             .last()
             .expect("expansion syntax has a root");
-        expansion_tokens(&root, &self.source_map).filter_map(move |(range, origin)| {
-            let span = self.input_span(call_source, origin)?;
-            Some((range, span, self.input_sources.parent_range(origin)))
-        })
+        self.source_map
+            .token_spans(root.text_range())
+            .filter_map(move |(range, origin)| {
+                let span = self.input_span(call_source, origin)?;
+                Some((range, span, self.input_sources.parent_range(origin)))
+            })
     }
 
     /// Some inputs also affect text created by the template, such as a concatenated name.
@@ -260,7 +262,7 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
             transformed_inputs: expansion.transformed_inputs.into(),
             ..Self::new(
                 expansion.parse,
-                expansion.span_map,
+                Arc::new(expansion.span_map),
                 input_sources,
                 call_site,
                 dollar_crate,

@@ -8,6 +8,7 @@
 //! If a reader later needs to lower a function or initializer, it can reopen that item from the
 //! saved expansion tokens.
 
+mod expansion;
 mod generated;
 mod generated_bodies;
 
@@ -17,11 +18,12 @@ use rg_item_tree::{ItemTreeId, ItemTreeRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-pub(crate) use self::generated::GeneratedSourceData;
+pub(crate) use self::{expansion::GeneratedItemExpansion, generated::GeneratedSourceData};
 pub use self::{
+    expansion::ItemMacroCopySource,
     generated::{
-        ExpansionTokenCopies, GeneratedExpansionLocations, GeneratedItemStore, GeneratedLocation,
-        GeneratedLocations, GeneratedSourceStore,
+        GeneratedExpansionLocations, GeneratedItemStore, GeneratedLocation, GeneratedLocations,
+        GeneratedSourceStore,
     },
     generated_bodies::GeneratedBodySyntax,
 };
