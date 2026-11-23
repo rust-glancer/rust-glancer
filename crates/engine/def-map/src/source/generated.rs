@@ -72,12 +72,12 @@ impl GeneratedItemStore {
         }
     }
 
-    /// Keep provenance after Semantic IR has copied the generated declaration meaning.
+    /// Publish generated declaration provenance as outputs of the owning query.
     ///
     /// The locations table keeps the slots assigned during lowering. Body and copy readers use
     /// the same [`GeneratedSourceId`] and reopen the same saved output. Keep a copy source even
     /// for an expansion such as `use $path;`, which copies an argument and has no body.
-    pub fn into_sources(self, db: &QueryContext<'_>) -> ajika::Result<GeneratedSourceStore> {
+    pub fn publish_sources(self, db: &QueryContext<'_>) -> ajika::Result<GeneratedSourceStore> {
         let mut sources = Vec::with_capacity(self.sources.len());
         let mut bodies = Vec::new();
         let mut expansions = Vec::new();

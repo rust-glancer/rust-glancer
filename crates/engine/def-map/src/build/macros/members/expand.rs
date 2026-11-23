@@ -208,7 +208,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
         files.sort_unstable();
         Ok(ExpandedAssociatedItems {
             items: self.items,
-            sources: self.generated.into_sources(self.db)?,
+            sources: self.generated.publish_sources(self.db)?,
             files,
         })
     }

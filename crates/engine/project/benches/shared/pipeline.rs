@@ -151,7 +151,7 @@ impl PreparedScopes {
                 db,
                 &self.declarations.definitions[&target.krate],
                 target.trees,
-                target.generated,
+                &target.generated,
                 &target.member_inputs,
                 &self.declarations,
             )?;

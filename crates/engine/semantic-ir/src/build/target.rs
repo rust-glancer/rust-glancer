@@ -110,17 +110,17 @@ pub fn target_declarations(
         visible_crates,
         lang_item_owners,
         lookup,
-        generated_sources,
         symbol_names,
         mut source_ownership,
     } = TargetItemData::build(
         db,
         &data,
         trees,
-        built.generated_items,
+        &built.generated_items,
         &built.member_inputs,
         &dependencies,
     )?;
+    let generated_sources = built.generated_items.publish_sources(db)?;
     let mut body_owners = Vec::new();
     for owner in BodyOwnerData::for_crate(&items, data.def_map()) {
         db.check_cancelled()?;
@@ -204,7 +204,6 @@ pub struct TargetItemData {
     pub visible_crates: UniqueVec<CrateRef>,
     pub lang_item_owners: Vec<ItemStoreId>,
     pub lookup: ItemLookupIndex,
-    pub generated_sources: GeneratedSourceStore,
     pub symbol_names: SymbolNameIndex,
     pub source_ownership: SourceOwnershipIndex,
 }
@@ -213,15 +212,16 @@ impl TargetItemData {
     /// Lower module declarations and owner headers, then build lookup and search hints.
     /// Member syntax is inspected for names and language attributes, without expanding calls or
     /// constructing member signatures. This is enough to select an owner for a later query.
+    /// The caller retains the generated item store to publish its source data in the owning query.
     pub fn build(
         db: &QueryContext<'_>,
         data: &CrateData,
         trees: ItemTrees,
-        generated_items: GeneratedItemStore,
+        generated_items: &GeneratedItemStore,
         member_inputs: &HashMap<AssociatedItemOwner, AssociatedItemInput>,
         dependencies: &(impl CrateDefinitionSource + CrateItemSource),
     ) -> ajika::Result<Self> {
-        let mut items = ItemStore::lower_crate(data.def_map(), &trees, &generated_items)
+        let mut items = ItemStore::lower_crate(data.def_map(), &trees, generated_items)
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
         let mut lookup_hints = HashMap::new();
         let mut lang_item_owners = Vec::new();
@@ -292,7 +292,6 @@ impl TargetItemData {
             lookup_hints.insert(owner.id, hints);
         }
         drop(trees);
-        let generated_sources = generated_items.into_sources(db)?;
 
         // Read the active target locally so header resolution never asks for its unpublished
         // outputs. Only completed dependencies go through the supplied readers.
@@ -328,7 +327,6 @@ impl TargetItemData {
             visible_crates,
             lang_item_owners,
             lookup,
-            generated_sources,
             symbol_names,
             source_ownership,
         })
