@@ -118,6 +118,45 @@ async fn copied_macro_names_are_references_and_rename_together() {
 }
 
 #[tokio::test]
+async fn finds_macro_references_in_a_file_using_only_an_alias() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_macro_alias_references"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        #[macro_export]
+        macro_rules! ori$0ginal { () => { () }; } // references("macro references", false)
+        pub use crate::original as alias;
+
+        macro_rules! generate {
+            ($name:ident) => { fn generated() { crate::$name!(); } };
+        }
+        mod calls;
+
+        //- /src/calls.rs
+        generate!(alias);
+        pub fn direct() { crate::alias!(); }
+        "#,
+    )
+    .await;
+    fixture.did_open_saved("src/lib.rs", 1).await;
+
+    fixture
+        .check(expect![[r#"
+            // macro references
+            /src/calls.rs:0:10-0:15
+            /src/calls.rs:1:25-1:30
+            /src/lib.rs:2:15-2:23
+        "#]])
+        .await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn dirty_global_queries_and_versioned_rename_share_the_editor_view() {
     let fixture = LspEngineFixture::initialized(
         r#"

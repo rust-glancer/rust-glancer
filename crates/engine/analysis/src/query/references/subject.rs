@@ -8,8 +8,9 @@
 //! Hints are only used to skip work. The actual reference decision still comes from resolving a
 //! source symbol back to the selected declarations.
 //!
-//! Named items are searched by their declaration spelling. For example, searching `User` after
-//! `use User as Account` finds the import's `User`, but does not follow uses spelled `Account`.
+//! Ordinary paths are searched by their declaration spelling. For example, searching `User`
+//! after `use User as Account` finds the import's `User`. Macro calls can match by identity
+//! through an alias because expansion already resolved the call's definition.
 //! Find References also searches `Self` for nominal types. A type rename only edits its name.
 //! Modules also search `self` and `super`. Crate roots add `crate` and the crate name.
 
@@ -22,12 +23,13 @@ use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::declaration::{Declaration, DeclarationView},
     source::{
-        IndexedSourceSurface, ReferenceMacroTargets, ReferenceSourceSelection, SourceOccurrenceView,
+        IndexedSourceSurface, ReferenceMacroTargets, ReferenceSearchLabel,
+        ReferenceSourceSelection, SourceOccurrenceView,
     },
 };
 use rg_std::UniqueVec;
 
-use super::{ReferenceSearchKind, ReferenceSearchLabel};
+use super::ReferenceSearchKind;
 use crate::{model::SymbolAt, source_symbol::SourceSymbol};
 
 /// Request-local declaration identity for one reference lookup.
@@ -169,8 +171,8 @@ impl ReferenceSearchHints {
         self.local_owners.as_deref()
     }
 
-    /// Skip unrelated spellings before semantic resolution. Imported aliases with another spelling
-    /// are not followed; matching names still have to resolve to the selected declaration.
+    /// Skip unrelated spellings before semantic resolution. A macro occurrence already carries
+    /// its resolved definition, so it can be matched by identity even with a different spelling.
     pub(super) fn rejects_candidate(
         &self,
         db: &IndexedViewDb<'_>,

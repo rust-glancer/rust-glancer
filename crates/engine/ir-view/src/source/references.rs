@@ -83,7 +83,7 @@ impl ReferenceSearchLabel {
         &self.spelling
     }
 
-    pub fn spelling_in(&self, krate: CrateRef) -> Option<&str> {
+    fn spelling_in(&self, krate: CrateRef) -> Option<&str> {
         self.only_in
             .is_none_or(|owner| owner == krate)
             .then_some(self.as_str())
@@ -119,6 +119,19 @@ pub struct ReferenceSourceSelection {
 }
 
 impl ReferenceSourceSelection {
+    pub fn spellings_in(&self, krate: CrateRef) -> impl Iterator<Item = &str> {
+        self.labels
+            .iter()
+            .filter_map(move |label| label.spelling_in(krate))
+    }
+
+    /// A macro call can resolve to the searched definition through an alias. Use the invocation
+    /// marker as an alternative to the declared spelling, including for calls copied into the
+    /// output of another invocation.
+    pub fn macro_call_marker(&self) -> Option<&'static str> {
+        (!matches!(self.macros, ReferenceMacroTargets::None)).then_some("!")
+    }
+
     /// Choose outer owners in one file; selecting one also includes its nested bodies.
     ///
     /// This reads declaration metadata and syntax, never inferred bodies.
@@ -136,20 +149,19 @@ impl ReferenceSourceSelection {
         if self.labels.is_empty() {
             return Ok(owners.map(|owner| key(owner.owner)).collect());
         }
-        let labels: Vec<_> = self
-            .labels
-            .iter()
-            .filter_map(|label| label.spelling_in(krate))
-            .collect();
-        if labels.is_empty() {
+        let labels: Vec<_> = self.spellings_in(krate).collect();
+        let macro_marker = self.macro_call_marker();
+        if labels.is_empty() && macro_marker.is_none() {
             return Ok(Vec::new());
         }
         let text = db.sources().text(file)?;
+        let macro_marker = macro_marker.filter(|marker| text.contains(marker));
         // A capture such as `caf\u{e9}` need not contain its decoded name in the file text.
         // Escapes require the syntax pass below before we can rule out its references.
         let syntax = if labels.iter().any(|label| text.contains(*label))
             || text.contains("include")
             || text.contains('\\')
+            || macro_marker.is_some()
         {
             Some(db.source_syntax(krate, file)?.syntax_node())
         } else {
@@ -188,7 +200,11 @@ impl ReferenceSourceSelection {
             let text = token.text();
             // Raw identifiers such as `r#type` must match the label `type` too.
             let text = text.strip_prefix("r#").unwrap_or(text);
-            if labels.contains(&text) || matches!(text, "impl" | "mod" | "include") {
+            let macro_call = macro_marker == Some(text)
+                && token
+                    .parent()
+                    .is_some_and(|node| node.kind() == SyntaxKind::MACRO_CALL);
+            if labels.contains(&text) || matches!(text, "impl" | "mod" | "include") || macro_call {
                 let span = Span {
                     start: token.text_range().start().into(),
                     end: token.text_range().end().into(),
@@ -212,7 +228,7 @@ impl ReferenceSourceSelection {
             let span = if generated {
                 // `generate!(alias)` can copy a call to a macro imported under another name.
                 // Keep the owner when matching uses of that macro by identity.
-                if !matches!(self.macros, ReferenceMacroTargets::None) {
+                if macro_marker.is_some() {
                     selected.push(key(owner.owner));
                     continue;
                 }
@@ -228,8 +244,11 @@ impl ReferenceSourceSelection {
                 }
                 db.source_span(DefMapRef::Crate(krate), owner.source, owner.location)?
             };
-            // An include can introduce references absent from the invoking source.
-            if Self::contains(&tokens, "include", span) {
+            // An include can introduce references absent from the invoking source. A macro
+            // call in this owner may also reach the searched definition through an alias.
+            if Self::contains(&tokens, "include", span)
+                || macro_marker.is_some_and(|marker| Self::contains(&tokens, marker, span))
+            {
                 selected.push(key(owner.owner));
                 continue;
             }

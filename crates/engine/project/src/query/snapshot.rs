@@ -1,6 +1,6 @@
 //! Read-only access to the source view selected for one Project operation.
 
-use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel};
+use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSourceSelection};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_ir_view::IndexedViewDb;
 use rg_semantic_ir::TargetDeclarationReader;
@@ -81,20 +81,20 @@ impl<'a> ProjectSnapshot<'a> {
         )
     }
 
-    /// Returns crate/file pairs whose source text contains one of the safe reference labels.
+    /// Returns crate/file pairs that pass the text prefilter for the reference selection.
     ///
     /// This is a request-local text prefilter. It narrows expensive semantic scans without storing
     /// a persistent text index or changing the declaration matcher that proves each result.
-    pub fn reference_search_files_matching_labels(
+    pub fn reference_search_files(
         &self,
         search_crates: &[CrateRef],
-        labels: &[ReferenceSearchLabel],
+        selection: &ReferenceSourceSelection,
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
-        ReferenceSearchPlanner::new(self.state).files_matching_labels(
+        ReferenceSearchPlanner::new(self.state).files(
             self.db,
             search_crates,
-            labels,
+            selection,
             cancellation,
         )
     }
