@@ -39,8 +39,8 @@ pub fn demo(user: User) {
 
 pub struct First;
 pub struct Second;
-impl First { pub fn run(&self) -> u32 { 1 } }
-impl Second { pub fn run(&self) -> u32 { 2 } }
+impl First { pub fn $first$run(&self) -> u32 { 1 } }
+impl Second { pub fn $second$run(&self) -> u32 { 2 } }
 macro_rules! both { ($member:ident) => { (First.$member(), Second.$member()) }; }
 pub fn repeated_meanings() { let _ = both!($ambiguous$run); }
 "#;
@@ -348,6 +348,256 @@ pub fn demo() {
 }
 
 #[test]
+fn references_keep_both_meanings_of_a_copied_macro_name() {
+    check_analysis_queries(
+        FIXTURE,
+        &[
+            AnalysisQuery::references("first method", "first", ReferenceQuery::all()),
+            AnalysisQuery::references("second method", "second", ReferenceQuery::all()),
+        ],
+        expect![[r#"
+            // first method
+            `run` @ src/lib.rs:33:21-33:24
+            `run` @ src/lib.rs:36:44-36:47
+
+            // second method
+            `run` @ src/lib.rs:34:22-34:25
+            `run` @ src/lib.rs:36:44-36:47
+        "#]],
+    );
+}
+
+#[test]
+fn generated_sibling_bodies_keep_each_meaning_of_a_copied_name() {
+    check_analysis_queries(
+        r#"
+//- /macros/src/lib.rs crate:generated_definitions root:macros
+pub struct Left;
+pub struct Right;
+impl Left { pub fn $left$run(&self) -> u8 { 1 } }
+impl Right { pub fn $right$run(&self) -> bool { true } }
+
+#[macro_export]
+macro_rules! forward { ($value:expr) => { $value }; }
+#[macro_export]
+macro_rules! emit {
+    ($member:ident) => {
+        fn first() { $crate::forward!($crate::Left.$member()); }
+        fn second() { $crate::Right.$member(); }
+    };
+}
+
+//- /app/src/lib.rs crate:generated_consumer root:app deps:generated_definitions
+generated_definitions::emit!(r$module$un);
+pub fn nested() { generated_definitions::emit!(r$local$un); }
+struct Host;
+impl Host { generated_definitions::emit!(r$member$un); }
+"#,
+        &[
+            AnalysisQuery::hover("module expansion", "module").in_lib("generated_consumer"),
+            AnalysisQuery::goto("module expansion", "module").in_lib("generated_consumer"),
+            AnalysisQuery::hover("body-local expansion", "local").in_lib("generated_consumer"),
+            AnalysisQuery::goto("body-local expansion", "local").in_lib("generated_consumer"),
+            AnalysisQuery::goto("member expansion", "member").in_lib("generated_consumer"),
+            AnalysisQuery::references(
+                "references in generated bodies",
+                "left",
+                ReferenceQuery::all(),
+            )
+            .in_lib("generated_definitions"),
+            AnalysisQuery::references(
+                "right references in generated bodies",
+                "right",
+                ReferenceQuery::all(),
+            )
+            .in_lib("generated_definitions"),
+        ],
+        expect![[r#"
+            // module expansion
+            range: 1:30-1:33
+            block:
+              kind: method
+              path: generated_definitions::Left::run
+              signature:
+                pub fn run(&self) -> u8
+            block:
+              kind: method
+              path: generated_definitions::Right::run
+              signature:
+                pub fn run(&self) -> bool
+
+            // module expansion
+            fn run @ 3:20-3:23
+            fn run @ 4:21-4:24
+
+            // body-local expansion
+            range: 2:48-2:51
+            block:
+              kind: method
+              path: generated_definitions::Left::run
+              signature:
+                pub fn run(&self) -> u8
+            block:
+              kind: method
+              path: generated_definitions::Right::run
+              signature:
+                pub fn run(&self) -> bool
+
+            // body-local expansion
+            fn run @ 3:20-3:23
+            fn run @ 4:21-4:24
+
+            // member expansion
+            fn run @ 3:20-3:23
+            fn run @ 4:21-4:24
+
+            // references in generated bodies
+            `run` @ generated_consumer/src/lib.rs:1:30-1:33
+            `run` @ generated_consumer/src/lib.rs:2:48-2:51
+            `run` @ generated_consumer/src/lib.rs:4:42-4:45
+            `run` @ generated_definitions/src/lib.rs:3:20-3:23
+
+            // right references in generated bodies
+            `run` @ generated_consumer/src/lib.rs:1:30-1:33
+            `run` @ generated_consumer/src/lib.rs:2:48-2:51
+            `run` @ generated_consumer/src/lib.rs:4:42-4:45
+            `run` @ generated_definitions/src/lib.rs:4:21-4:24
+        "#]],
+    );
+}
+
+#[test]
+fn forwarded_dollar_crate_in_generated_bodies_keeps_its_defining_crate() {
+    check_analysis_queries(
+        r#"
+//- /macros/src/lib.rs crate:forwarding_defs root:macros
+pub fn value() -> u8 { 1 }
+#[macro_export]
+macro_rules! emit {
+    ($name:ident) => { fn first() { forward_expr!($crate::$name()); } };
+}
+#[macro_export]
+macro_rules! forward {
+    ($name:ident) => { forward_item!($crate::$name()); };
+}
+
+//- /app/src/lib.rs crate:forwarding_app root:app deps:forwarding_defs
+macro_rules! forward_expr { ($value:expr) => { $value }; }
+macro_rules! forward_item { ($value:expr) => { fn second() { $value; } }; }
+fn value() -> bool { true }
+forwarding_defs::emit!(va$expression$lue);
+forwarding_defs::forward!(va$item$lue);
+"#,
+        &[
+            AnalysisQuery::hover("forwarded expression", "expression").in_lib("forwarding_app"),
+            AnalysisQuery::hover("forwarded item", "item").in_lib("forwarding_app"),
+        ],
+        expect![[r#"
+            // forwarded expression
+            range: 4:24-4:29
+            block:
+              kind: fn
+              path: forwarding_defs::value
+              signature:
+                pub fn value() -> u8
+
+            // forwarded item
+            range: 5:27-5:32
+            block:
+              kind: fn
+              path: forwarding_defs::value
+              signature:
+                pub fn value() -> u8
+        "#]],
+    );
+}
+
+#[test]
+fn dollar_crate_in_generated_types_keeps_its_defining_crate() {
+    check_analysis_queries(
+        r#"
+//- /macros/src/lib.rs crate:widget_macros root:macros
+pub struct Widget<T>(pub T);
+impl<T> Widget<T> {
+    pub fn new() -> Self { loop {} }
+}
+#[macro_export]
+macro_rules! make {
+    () => { fn direct() -> $crate::Widget<u8> { loop {} } };
+}
+#[macro_export]
+macro_rules! forward {
+    () => { emit_type!($crate::Widget<u8>); };
+}
+#[macro_export]
+macro_rules! widget_type { () => { $crate::Widget<u8> }; }
+#[macro_export]
+macro_rules! construct { () => { $crate::Widget::<u8>::new() }; }
+
+//- /app/src/lib.rs crate:widget_app root:app deps:widget_macros
+struct Widget;
+macro_rules! emit_type {
+    ($ty:ty) => { fn forwarded() -> $ty { loop {} } };
+}
+widget_macros::make!();
+widget_macros::forward!();
+fn observe() {
+    let di$direct$rect_result = direct();
+    let fo$forwarded$rwarded_result = forwarded();
+    let an$annotation$notated: widget_macros::widget_type!() = loop {};
+    let fr$associated$om_method = widget_macros::construct!();
+}
+"#,
+        &[
+            AnalysisQuery::ty("generated signature", "direct").in_lib("widget_app"),
+            AnalysisQuery::ty("forwarded signature", "forwarded").in_lib("widget_app"),
+            AnalysisQuery::ty("expanded annotation", "annotation").in_lib("widget_app"),
+            AnalysisQuery::ty("associated call", "associated").in_lib("widget_app"),
+        ],
+        expect![[r#"
+            nominal struct widget_macros[lib]::crate::Widget<u8> // generated signature
+            nominal struct widget_macros[lib]::crate::Widget<u8> // forwarded signature
+            nominal struct widget_macros[lib]::crate::Widget<u8> // expanded annotation
+            nominal struct widget_macros[lib]::crate::Widget<u8> // associated call
+        "#]],
+    );
+}
+
+#[test]
+fn selected_cfg_arm_bodies_use_the_written_token_ranges() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:cfg_arm_body
+pub fn calculate() -> u8 { 1 }
+cfg_select! {
+    true => {
+        cfg_select! {
+            true => {
+                pub fn selected() -> u8 { cal$call$culate() }
+            }
+        }
+    }
+}
+"#,
+        &[
+            AnalysisQuery::hover("call in selected arm", "call").in_lib("cfg_arm_body"),
+            AnalysisQuery::goto("call in selected arm", "call").in_lib("cfg_arm_body"),
+        ],
+        expect![[r#"
+            // call in selected arm
+            range: 6:43-6:52
+            block:
+              kind: fn
+              path: cfg_arm_body::calculate
+              signature:
+                pub fn calculate() -> u8
+
+            fn calculate @ 1:8-1:17 // call in selected arm
+        "#]],
+    );
+}
+
+#[test]
 fn macro_arguments_keep_external_crate_provenance() {
     check_analysis_queries(
         r#"
@@ -647,6 +897,81 @@ pub fn demo(user: User, café: u32, number: f64, width: usize, precision: usize,
               kind: variable
               signature:
                 let self: &User
+        "#]],
+    );
+}
+
+#[test]
+fn copied_member_names_and_single_segment_pattern_paths_are_occurrences() {
+    check_analysis_queries(
+        r#"
+//- /src/lib.rs crate:copied_names
+enum Choice { Chosen(u8) }
+use Choice::Chosen;
+macro_rules! declare {
+    ($field:ident, $variant:ident) => {
+        struct Hidden { $field: u8 }
+        enum Local { $variant }
+    };
+}
+macro_rules! read {
+    ($variant:ident) => { match Chosen(1) { $variant(value) => value } };
+}
+pub fn demo() {
+    declare!(co$field$pied, Na$variant$med);
+    let _ = Hidden { copied: 0 };
+    let _ = Local::Named;
+    let _ = read!(Cho$pattern$sen);
+}
+"#,
+        &[
+            AnalysisQuery::references("copied field declaration", "field", ReferenceQuery::all()),
+            AnalysisQuery::references(
+                "copied variant declaration",
+                "variant",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::goto("copied pattern constructor", "pattern"),
+            AnalysisQuery::references(
+                "copied pattern constructor",
+                "pattern",
+                ReferenceQuery::all(),
+            ),
+        ],
+        expect![[r#"
+            // copied field declaration
+            `copied` @ src/lib.rs:13:14-13:20
+            `copied` @ src/lib.rs:14:22-14:28
+
+            // copied variant declaration
+            `Named` @ src/lib.rs:13:22-13:27
+            `Named` @ src/lib.rs:15:20-15:25
+
+            variant Chosen @ 1:15-1:21 // copied pattern constructor
+
+            // copied pattern constructor
+            `Chosen` @ src/lib.rs:1:15-1:21
+            `Chosen` @ src/lib.rs:2:13-2:19
+            `Chosen` @ src/lib.rs:16:19-16:25
+        "#]],
+    );
+}
+
+#[test]
+fn rename_preserves_the_format_capture_spelling_of_keywords() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:format_rename
+pub fn demo(va$rename$lue: u8) {
+    let _ = format_args!("{value}");
+}
+"#,
+        &[AnalysisQuery::rename("rename as keyword", "rename", "type").in_lib("format_rename")],
+        expect![[r#"
+            // rename as keyword
+            target `value` @ format_rename/src/lib.rs:1:13-1:18
+            `value` -> `r#type` @ format_rename/src/lib.rs:1:13-1:18
+            `value` -> `type` @ format_rename/src/lib.rs:2:28-2:33
         "#]],
     );
 }

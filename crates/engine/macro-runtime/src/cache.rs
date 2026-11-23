@@ -13,9 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
 use rg_ir_model::LocalDefRef;
-use rg_macro_expand::{DeclarativeMacro, Edition, ExpansionParseKind, ExpansionSyntax};
+use rg_macro_expand::{DeclarativeMacro, ExpansionParseKind, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};
 
 use super::{DeclarativeMacroDefinition, executor::MacroExpansionWork};
@@ -33,26 +32,36 @@ impl MacroExpansionCache {
         &mut self,
         def_ref: LocalDefRef,
         definition: DeclarativeMacroDefinition<'_>,
-        edition: Edition,
     ) -> CachedMacroCompileResult {
-        if self.compiled.contains_key(&def_ref) {
-            let macro_ = self.compiled.get(&def_ref).and_then(Clone::clone);
-            let failed = self
-                .compiled
-                .get(&def_ref)
-                .is_some_and(|compiled| compiled.is_none());
+        if let Some(compiled) = self.compiled.get(&def_ref) {
             return CachedMacroCompileResult {
-                macro_,
-                record: MacroCompileRecord::CacheHit { failed },
+                macro_: compiled.clone(),
+                record: MacroCompileRecord::CacheHit {
+                    failed: compiled.is_none(),
+                },
             };
         }
 
         let started_at = Instant::now();
-        let compiled = Self::compile_macro(definition, edition);
+        let compiled = match definition {
+            DeclarativeMacroDefinition::MacroRules { body, .. } => {
+                body.map(DeclarativeMacro::from_macro_rules_tokens)
+            }
+            DeclarativeMacroDefinition::MacroDef { args, body, .. } => {
+                body.map(|body| DeclarativeMacro::from_macro_def_tokens(args, body))
+            }
+        };
         let elapsed = started_at.elapsed();
 
         match compiled {
-            Ok(compiled) => {
+            Some(mut compiled) => {
+                let origin = definition.dollar_crate();
+                compiled.bind_dollar_crate(
+                    u32::try_from(origin.package.0)
+                        .expect("macro definition package fits its span"),
+                    u32::try_from(origin.crate_id.0)
+                        .expect("macro definition target fits its span"),
+                );
                 let compiled = Arc::new(compiled);
                 self.compiled.insert(def_ref, Some(Arc::clone(&compiled)));
                 CachedMacroCompileResult {
@@ -63,7 +72,7 @@ impl MacroExpansionCache {
                     },
                 }
             }
-            Err(_) => {
+            None => {
                 self.compiled.insert(def_ref, None);
                 CachedMacroCompileResult {
                     macro_: None,
@@ -125,22 +134,6 @@ impl MacroExpansionCache {
         syntax: Option<ExpansionSyntax>,
     ) {
         self.expanded.insert(key, syntax);
-    }
-
-    fn compile_macro(
-        definition: DeclarativeMacroDefinition<'_>,
-        edition: Edition,
-    ) -> anyhow::Result<DeclarativeMacro> {
-        match definition {
-            DeclarativeMacroDefinition::MacroRules { body, .. } => {
-                let body = body.context("while attempting to fetch macro_rules body")?;
-                DeclarativeMacro::from_macro_rules_tokens(body, edition)
-            }
-            DeclarativeMacroDefinition::MacroDef { args, body, .. } => {
-                let body = body.context("while attempting to fetch macro body")?;
-                DeclarativeMacro::from_macro_def_tokens(args, body, edition)
-            }
-        }
     }
 }
 

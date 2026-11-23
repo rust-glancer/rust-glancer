@@ -24,6 +24,7 @@
 mod collector;
 mod walker;
 
+use rg_def_map::SourceOccurrenceLocation;
 use rg_ir_model::{
     CrateRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, Path, Span,
 };
@@ -85,15 +86,15 @@ pub(crate) enum SignatureCompletionSite {
 pub(crate) enum SignatureSourceCandidate {
     Field {
         field: FieldRef,
-        span: Span,
+        location: SourceOccurrenceLocation,
     },
     Function {
         function: FunctionRef,
-        span: Span,
+        location: SourceOccurrenceLocation,
     },
     EnumVariant {
         variant: EnumVariantRef,
-        span: Span,
+        location: SourceOccurrenceLocation,
     },
     TypePath {
         scope: SignatureTypePathScope,
@@ -101,17 +102,17 @@ pub(crate) enum SignatureSourceCandidate {
         // Only cursor queries retain full type syntax. Keep broad reference scans compact.
         type_ref: Option<Box<TypeRef>>,
         file_id: FileId,
-        span: Span,
+        location: SourceOccurrenceLocation,
     },
 }
 
 impl SignatureSourceCandidate {
     fn span(&self) -> Span {
         match self {
-            Self::Field { span, .. }
-            | Self::Function { span, .. }
-            | Self::EnumVariant { span, .. }
-            | Self::TypePath { span, .. } => *span,
+            Self::Field { location, .. }
+            | Self::Function { location, .. }
+            | Self::EnumVariant { location, .. }
+            | Self::TypePath { location, .. } => location.span(),
         }
     }
 }
@@ -128,16 +129,15 @@ pub(crate) struct SignatureSourceScanner<'view, 'db> {
 }
 
 impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
-    pub(crate) fn at(
+    pub(crate) fn new(
         db: &'view IndexedViewDb<'db>,
         crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
+        selection: SourceSelection,
     ) -> Self {
         Self {
             db,
             origin: DefMapRef::Crate(crate_ref),
-            selection: SourceSelection::at(file_id, offset),
+            selection,
         }
     }
 
@@ -276,18 +276,6 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         }
 
         Ok(best.finish())
-    }
-
-    pub(crate) fn in_crate(
-        db: &'view IndexedViewDb<'db>,
-        crate_ref: CrateRef,
-        file_id: Option<FileId>,
-    ) -> Self {
-        Self {
-            db,
-            origin: DefMapRef::Crate(crate_ref),
-            selection: file_id.map_or(SourceSelection::All, SourceSelection::AllInFile),
-        }
     }
 
     /// Collect the source facts owned by each semantic item family in the selected store.

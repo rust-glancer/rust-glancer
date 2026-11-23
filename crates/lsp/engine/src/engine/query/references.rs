@@ -1,8 +1,8 @@
 //! Reference planning, document highlights, and rename queries.
 //!
 //! Cross-file reference work has a two-step shape. First, resolve the cursor far enough to find
-//! candidate crates and safe identifier labels. Those labels can often prefilter the scan to exact
-//! source files. Then run the semantic query with that selection.
+//! candidate crates and source criteria. Use those criteria to prefilter files before running
+//! the semantic query over the selected sources.
 //!
 //! Rename uses the same search plan, but has a stricter publication boundary: every target must be
 //! workspace-owned and every source span must still contain the text analysis expected to replace.
@@ -27,9 +27,8 @@ use crate::proto::{
 
 /// Source coverage selected before a reference-like query can run.
 ///
-/// `targets` is the conservative crate scope. `files = Some(...)` means identifier prefiltering
-/// safely narrowed that scope to concrete crate/file pairs. `None` means no safe label was
-/// available, so the query must scan every target crate.
+/// `targets` is the conservative crate scope. `files = Some(...)` narrows the scan to concrete
+/// crate/file pairs. `None` leaves the full target scope available to the query.
 ///
 /// For `struct User`, Find References also searches files containing `Self`. Rename only needs
 /// candidate spellings of `User`. Analysis resolves the occurrences in the selected files.
@@ -74,11 +73,11 @@ impl QueryRunner<'_> {
                 &cancellation.token(),
             )
             .context("plan reference search crates")?;
-        let labels = analysis
-            .reference_search_labels(context.crate_ref, context.file, offset, kind)
-            .context("collect reference-search labels")?;
+        let selection = analysis
+            .reference_source_selection(context.crate_ref, context.file, offset, kind)
+            .context("collect reference source criteria")?;
         let files = snapshot
-            .reference_search_files_matching_labels(&targets, &labels, &cancellation.token())
+            .reference_search_files(&targets, &selection, &cancellation.token())
             .context("prefilter reference-search files")?;
         Ok(Some((
             context,

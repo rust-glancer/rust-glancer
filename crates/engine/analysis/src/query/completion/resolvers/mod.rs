@@ -174,7 +174,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         // at `H` needs a new search once the user reaches `Ha`.
         let is_incomplete = self.query.client_capabilities.auto_import
             && match &site {
-                CompletionSite::Dot(_) => true,
+                CompletionSite::Dot(sites) => sites.len() == 1,
                 CompletionSite::Unqualified(site) => site.context().supports_auto_import(),
                 _ => false,
             };
@@ -191,8 +191,8 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)
                     .completions(site)
             }
-            CompletionSite::Dot(site) => {
-                DotCompletionResolver::new(self.analysis, query).completions(site, syntax_context)
+            CompletionSite::Dot(sites) => {
+                DotCompletionResolver::new(self.analysis, query).completions(&sites, syntax_context)
             }
             CompletionSite::ModuleDeclaration(site) => ModuleDeclarationCompletionResolver::new(
                 self.analysis,

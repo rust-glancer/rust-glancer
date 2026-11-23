@@ -5,7 +5,7 @@
 
 use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::ty::locals::{BodyView, CallTarget, ResolvedCall};
-use rg_syntax::{AstNode as _, SyntaxKind, TextSize, ast};
+use rg_syntax::{AstNode as _, SyntaxKind, SyntaxNode, SyntaxToken, TextSize, ast};
 
 use crate::Analysis;
 
@@ -21,48 +21,38 @@ pub(super) enum ActiveArgument {
 /// is zero. A consumer of the full method signature adds the offset for `self`.
 pub(super) struct ActiveCall {
     call: ResolvedCall<CallTarget>,
-    span: Span,
     argument_index: usize,
     argument: ActiveArgument,
 }
 
 impl ActiveCall {
+    pub(super) fn token_at(source: &SyntaxNode, offset: TextSize) -> Option<SyntaxToken> {
+        if offset > source.text_range().end() {
+            return None;
+        }
+
+        // At `send($0)` or `send(value,$0)`, start with the opening paren or comma on the left.
+        // In `send(value, $0`, walk back over the space to find the comma inside the list.
+        let mut token = source.token_at_offset(offset).left_biased()?;
+        while token.kind().is_trivia() {
+            token = token.prev_token()?;
+        }
+        Some(token)
+    }
+
     pub(super) fn at(
         analysis: &Analysis<'_>,
         crate_ref: CrateRef,
         file_id: FileId,
-        offset: u32,
+        token: &SyntaxToken,
+        offset: TextSize,
     ) -> anyhow::Result<Option<Self>> {
-        let source = analysis.source_syntax(crate_ref, file_id)?;
-        let offset = TextSize::from(offset);
-        if offset > source.syntax().text_range().end() {
-            return Ok(None);
-        }
-
-        // At `send($0)` or `send(value,$0)`, start with the opening paren or comma on the left.
-        // An unfinished list can end before the cursor. In `send(value, $0`, walk back over the
-        // space to find the comma inside the list.
-        let Some(mut token) = source.syntax().token_at_offset(offset).left_biased() else {
-            return Ok(None);
-        };
-        while token.kind().is_trivia() {
-            let Some(previous) = token.prev_token() else {
-                return Ok(None);
-            };
-            token = previous;
-        }
         // Check the innermost list first. In `outer(inner()$0, value)`, the cursor is past the
         // inner closing paren, so keep walking up to `outer`.
         let arguments = token
             .parent_ancestors()
             .filter_map(ast::ArgList::cast)
-            .find(|list| {
-                list.l_paren_token()
-                    .is_some_and(|open| open.text_range().end() <= offset)
-                    && list
-                        .r_paren_token()
-                        .is_none_or(|close| offset <= close.text_range().start())
-            });
+            .find(|list| Self::contains_offset(list, offset));
         let Some(arguments) = arguments else {
             return Ok(None);
         };
@@ -75,6 +65,32 @@ impl ActiveCall {
         let Some(call) = BodyView::new(db).resolved_call(crate_ref, file_id, call_span)? else {
             return Ok(None);
         };
+        let (argument_index, argument) =
+            Self::argument_at(&arguments, call.argument_spans(), offset, 0);
+        Ok(Some(Self {
+            call,
+            argument_index,
+            argument,
+        }))
+    }
+
+    pub(super) fn contains_offset(arguments: &ast::ArgList, offset: TextSize) -> bool {
+        arguments
+            .l_paren_token()
+            .is_some_and(|open| open.text_range().end() <= offset)
+            && arguments
+                .r_paren_token()
+                .is_none_or(|close| offset <= close.text_range().start())
+    }
+
+    /// A copied argument list is parsed from a fragment, so shift its ranges back to the file
+    /// before comparing them with the lowered argument spans.
+    pub(super) fn argument_at(
+        arguments: &ast::ArgList,
+        argument_spans: &[Span],
+        offset: TextSize,
+        source_start: u32,
+    ) -> (usize, ActiveArgument) {
         // Count the commas in this list before the cursor. The comma in `(1, 2)` belongs to the
         // tuple. The parser wraps the comma in `send(, $0)` in an error node. That comma still
         // ends the first slot.
@@ -82,7 +98,8 @@ impl ActiveCall {
         // Body IR skips cfg-disabled arguments. In `send(#[cfg(any())] (), $0value)`, the next
         // lowered span belongs to `value`. Leave it in the iterator and skip the comma after
         // `()` so `value` still gets the first parameter.
-        let mut lowered = call.args().iter().peekable();
+        let mut lowered = argument_spans.iter().copied().peekable();
+        let source_start = TextSize::from(source_start);
         let mut disabled_argument = false;
         let mut argument_index = 0;
         let mut argument = ActiveArgument::Empty;
@@ -101,12 +118,11 @@ impl ActiveCall {
                 argument_index += usize::from(!disabled_argument);
                 disabled_argument = false;
             } else if let Some(expr) = child.into_node().and_then(ast::Expr::cast) {
-                let span = Span::from_text_range(expr.syntax().text_range());
+                let range = expr.syntax().text_range();
+                let span = Span::from_text_range(range + source_start);
                 // A macro-expanded argument can point to a token within its written expression.
-                disabled_argument = lowered
-                    .next_if(|arg| span.contains_span(arg.span()))
-                    .is_none();
-                if span.end >= u32::from(offset) {
+                disabled_argument = lowered.next_if(|arg| span.contains_span(*arg)).is_none();
+                if range.end() >= offset {
                     argument = if disabled_argument {
                         ActiveArgument::Disabled
                     } else {
@@ -117,12 +133,7 @@ impl ActiveCall {
             }
         }
 
-        Ok(Some(Self {
-            call,
-            span: call_span,
-            argument_index,
-            argument,
-        }))
+        (argument_index, argument)
     }
 
     pub(super) fn call(&self) -> &ResolvedCall<CallTarget> {
@@ -135,9 +146,5 @@ impl ActiveCall {
 
     pub(super) fn argument(&self) -> ActiveArgument {
         self.argument
-    }
-
-    pub(super) fn span(&self) -> Span {
-        self.span
     }
 }

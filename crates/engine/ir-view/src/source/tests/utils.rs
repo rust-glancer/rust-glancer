@@ -154,8 +154,6 @@ fn render_occurrence(
     };
     match provenance {
         IndexedSourceProvenance::Direct => surface,
-        IndexedSourceProvenance::MacroArgument { duplicated } => {
-            format!("macro_argument(duplicated={duplicated}) {surface}")
-        }
+        IndexedSourceProvenance::MacroArgument { .. } => format!("macro_argument {surface}"),
     }
 }

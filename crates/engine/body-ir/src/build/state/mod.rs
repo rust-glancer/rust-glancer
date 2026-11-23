@@ -19,7 +19,7 @@ use rg_std::CancellationToken;
 use rg_text::RustEdition;
 
 use super::lower::LoweredBodies;
-use crate::{BodyLocalItems, BodySourceStore, PreparedBodyStore};
+use crate::{BodyLocalItems, PreparedBody};
 
 // Phase logs explain a slow owner preparation without emitting one event for every normal phase.
 const SLOW_PREPARATION_PHASE: Duration = Duration::from_secs(1);
@@ -73,7 +73,7 @@ impl<'source> BodyStoreBuilder<'source> {
         def_map: &DefinitionReader<'_>,
         semantic_ir: &ItemReader<'_>,
         cfg: CfgEvaluator<'_>,
-    ) -> anyhow::Result<(PreparedBodyStore, Arena<BodyId, BodySourceStore>)> {
+    ) -> anyhow::Result<PreparedBody> {
         let span = tracing::debug_span!(
             "body_ir_preparation",
             rg.crate_id = self.key.krate.crate_id.0,
@@ -119,7 +119,7 @@ impl<'source> BodyStoreBuilder<'source> {
         let body_count = self.lowered_bodies.bodies().len();
         let finish_started = Instant::now();
         rg_std::check_cancel!(self.cancellation, "finalize body preparation");
-        let bodies = self.finish();
+        let bodies = self.finish()?;
         let finish_ms = finish_started.elapsed().as_millis();
         tracing::trace!(
             body_count,

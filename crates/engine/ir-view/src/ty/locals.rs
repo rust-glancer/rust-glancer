@@ -9,8 +9,9 @@ use anyhow::Context as _;
 use rg_body_ir::{BindingKind, ExprKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FileId, FunctionRef,
-    GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, Span,
+    BindingId, BodyBindingRef, BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FileId,
+    FunctionRef, GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef,
+    SourceLocationKind, Span,
     identity::{DeclarationRef, ExprRef, LexicalScopeRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, SourceSelection};
@@ -72,53 +73,37 @@ pub enum BodyLexicalName {
     },
 }
 
-/// Body binding with a known inferred type.
+/// A binding at a possible hint position. Copied bindings with no hint type still participate
+/// in deciding what to show at their shared written position.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InferredBindingTy {
-    file_id: FileId,
-    span: Span,
-    ty: IndexedType,
+pub struct BindingTyCandidate {
+    source: BodySource,
+    ty: Option<IndexedType>,
 }
 
-impl InferredBindingTy {
-    pub fn file_id(&self) -> FileId {
-        self.file_id
+impl BindingTyCandidate {
+    pub fn source(&self) -> BodySource {
+        self.source
     }
 
-    pub fn span(&self) -> Span {
-        self.span
-    }
-
-    pub fn ty(&self) -> &IndexedType {
-        &self.ty
-    }
-}
-
-/// One resolved call argument span.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResolvedCallArg {
-    span: Span,
-}
-
-impl ResolvedCallArg {
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn ty(&self) -> Option<&IndexedType> {
+        self.ty.as_ref()
     }
 }
 
 /// A written call site paired with the target used to interpret its arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedCall<T> {
-    file_id: FileId,
+    source: BodySource,
     target: T,
     expr: ExprRef,
     param_offset: usize,
-    args: Vec<ResolvedCallArg>,
+    argument_spans: Vec<Span>,
 }
 
 impl<T> ResolvedCall<T> {
-    pub fn file_id(&self) -> FileId {
-        self.file_id
+    pub fn source(&self) -> BodySource {
+        self.source
     }
 
     pub fn target(&self) -> &T {
@@ -133,8 +118,9 @@ impl<T> ResolvedCall<T> {
         self.param_offset
     }
 
-    pub fn args(&self) -> &[ResolvedCallArg] {
-        &self.args
+    /// Source spans of the arguments that survived cfg, in parameter order.
+    pub fn argument_spans(&self) -> &[Span] {
+        &self.argument_spans
     }
 }
 
@@ -465,17 +451,18 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(names)
     }
 
-    /// Return bindings whose inferred type is already known from body facts.
+    /// Return inferred type candidates at written binding positions.
     ///
     /// These are the local pattern bindings that can carry inferred type hints: ordinary `let`
     /// bindings, `let else` and match-pattern bindings, `for` loop pattern bindings, and
-    /// unannotated closure parameters.
-    pub fn inferred_binding_tys(
+    /// unannotated closure parameters. Keep copied bindings even when an annotation or an unknown
+    /// type suppresses their hint, since another copy may yield a type at the same position.
+    pub fn binding_ty_candidates(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         range: Span,
-    ) -> anyhow::Result<Vec<InferredBindingTy>> {
+    ) -> anyhow::Result<Vec<BindingTyCandidate>> {
         let mut bindings = Vec::new();
         for (_, body) in self
             .db
@@ -500,31 +487,35 @@ impl<'a, 'db> BodyView<'a, 'db> {
             }
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 rg_std::check_cancel!(self.db, "local declaration candidates");
-                if !body.source_at(binding.source).is_written_in_file(file_id) {
-                    continue;
+                let mut source = body.source_at(binding.source);
+                // A pattern such as `mut $name` can mix template tokens with a
+                // copied name. Put the hint after the name the caller wrote.
+                if !source.is_written()
+                    && let Some(name) = binding.name_location
+                {
+                    source = body.source_at(name);
                 }
-                let binding_id = BindingId(binding_idx);
-                if !matches!(binding.kind, BindingKind::Let)
-                    && !inferred_closure_params.contains(&binding_id)
+                if !source.is_exact_in_file(file_id)
+                    || !range.touches(source.span.end)
+                    || binding.name.is_none()
                 {
                     continue;
                 }
-                if binding.name.is_none() || binding.annotation.is_some() {
-                    continue;
+                let binding_id = BindingId(binding_idx);
+                let can_hint = binding.annotation.is_none()
+                    && (matches!(binding.kind, BindingKind::Let)
+                        || inferred_closure_params.contains(&binding_id));
+                let ty = if can_hint {
+                    body.binding_ty(binding_id)
+                        .filter(|ty| !matches!(ty, Ty::Unknown))
+                        .cloned()
+                        .map(IndexedType::new)
+                } else {
+                    None
+                };
+                if ty.is_some() || !source.is_written() {
+                    bindings.push(BindingTyCandidate { source, ty });
                 }
-                let ty = body.binding_ty(binding_id).cloned().unwrap_or(Ty::Unknown);
-                if matches!(ty, Ty::Unknown) {
-                    continue;
-                }
-                if !range.touches(body.source_at(binding.source).span.end) {
-                    continue;
-                }
-
-                bindings.push(InferredBindingTy {
-                    file_id: body.source_at(binding.source).file_id,
-                    span: body.source_at(binding.source).span,
-                    ty: IndexedType::new(ty),
-                });
             }
         }
 
@@ -543,30 +534,53 @@ impl<'a, 'db> BodyView<'a, 'db> {
             crate_ref,
             file_id,
             call_span,
-            |span| span == call_span,
-            |function, callee_ty| {
-                if let Some(function) = function {
-                    return Some(CallTarget::Function(function));
-                }
-                // References to callable values can be called directly.
-                let ty = callee_ty?.reference_chain().last()?;
-                // In `let callback = send; callback(...)`, the callee resolves to a binding.
-                // Its inferred function item still identifies the declaration of `send`.
-                if let Ty::FnDef(item) = ty
-                    && let Some(function) = item.def.function()
-                {
-                    return Some(CallTarget::Function(function));
-                }
-                (!matches!(ty, Ty::Unknown))
-                    .then(|| CallTarget::Value(IndexedType::new(ty.clone())))
-            },
+            |source| source.is_written() && source.span == call_span,
+            |_, function, ty| Self::call_target(function, ty),
         )? {
             call.push(candidate);
         }
         Ok(call.into_option())
     }
 
-    /// Return call sites touching the range that resolve to a single known function.
+    /// Return exact copied calls touching the cursor, including copies with unknown targets.
+    /// Signature help can reject an ambiguous inner call while keeping ordinary source routing.
+    pub fn copied_calls_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<ResolvedCall<Option<CallTarget>>>> {
+        self.resolved_calls_matching(
+            crate_ref,
+            file_id,
+            Span {
+                start: offset,
+                end: offset,
+            },
+            |source| {
+                source.location().kind == SourceLocationKind::MacroArgument
+                    && source.span.touches(offset)
+            },
+            |_, function, ty| Some(Self::call_target(function, ty)),
+        )
+    }
+
+    fn call_target(function: Option<FunctionRef>, callee_ty: Option<&Ty>) -> Option<CallTarget> {
+        if let Some(function) = function {
+            return Some(CallTarget::Function(function));
+        }
+        // In `let callback = send; callback(...)`, the callee resolves to a binding.
+        // Its inferred function item still identifies the declaration of `send`.
+        let ty = callee_ty?.reference_chain().last()?;
+        if let Ty::FnDef(item) = ty
+            && let Some(function) = item.def.function()
+        {
+            return Some(CallTarget::Function(function));
+        }
+        (!matches!(ty, Ty::Unknown)).then(|| CallTarget::Value(IndexedType::new(ty.clone())))
+    }
+
+    /// Return calls touching the range with a known function, plus unresolved copied calls.
     ///
     /// This is the body-local view used by features that need to project declaration metadata, such
     /// as parameter names, onto concrete argument expressions without owning call resolution.
@@ -576,13 +590,13 @@ impl<'a, 'db> BodyView<'a, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         range: Span,
-    ) -> anyhow::Result<Vec<ResolvedCall<FunctionRef>>> {
+    ) -> anyhow::Result<Vec<ResolvedCall<Option<FunctionRef>>>> {
         self.resolved_calls_matching(
             crate_ref,
             file_id,
             range,
-            |span| span.touches_span(range),
-            |function, _| function,
+            |source| source.span.touches_span(range),
+            |source, function, _| (function.is_some() || !source.is_written()).then_some(function),
         )
     }
 
@@ -591,8 +605,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         range: Span,
-        matches_span: impl Fn(Span) -> bool,
-        select_target: impl Fn(Option<FunctionRef>, Option<&Ty>) -> Option<T>,
+        matches_source: impl Fn(BodySource) -> bool,
+        select_target: impl Fn(BodySource, Option<FunctionRef>, Option<&Ty>) -> Option<T>,
     ) -> anyhow::Result<Vec<ResolvedCall<T>>> {
         let mut calls = Vec::new();
         for (body_ref, body) in self
@@ -604,7 +618,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 rg_std::check_cancel!(self.db, "resolved function calls");
                 let source = body.source_at(expr.source);
-                if !source.is_written_in_file(file_id) || !matches_span(source.span) {
+                if !source.is_exact_in_file(file_id) || !matches_source(source) {
                     continue;
                 }
 
@@ -626,15 +640,20 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 } else {
                     None
                 };
-                let Some(target) = select_target(function, callee_ty) else {
+                let Some(target) = select_target(source, function, callee_ty) else {
                     continue;
                 };
                 calls.push(ResolvedCall {
-                    file_id,
+                    source,
                     target,
                     expr: ExprRef::new(body_ref, ExprId(expr_idx)),
                     param_offset,
-                    args: Self::resolved_call_args(body, args),
+                    argument_spans: args
+                        .iter()
+                        .filter_map(|arg| {
+                            body.expr(*arg).map(|expr| body.source_at(expr.source).span)
+                        })
+                        .collect(),
                 });
             }
         }
@@ -748,16 +767,5 @@ impl<'a, 'db> BodyView<'a, 'db> {
             return Ok(None);
         };
         Ok(functions.next().is_none().then_some(function))
-    }
-
-    /// Convert expression ids into call argument spans.
-    fn resolved_call_args(body: rg_body_ir::BodyView<'_>, args: &[ExprId]) -> Vec<ResolvedCallArg> {
-        args.iter()
-            .filter_map(|arg| {
-                body.expr(*arg).map(|expr| ResolvedCallArg {
-                    span: body.source_at(expr.source).span,
-                })
-            })
-            .collect()
     }
 }

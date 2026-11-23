@@ -76,6 +76,20 @@ impl MetaTemplate {
         MetaTemplate::parse(edition, template, Mode::Template)
     }
 
+    pub(crate) fn bind_dollar_crate(&mut self, package: u32, target: u32) {
+        for op in &mut self.0 {
+            match op {
+                Op::Ident(ident) if ident.sym == sym::dollar_crate => {
+                    ident.span.bind_dollar_crate(package, target);
+                }
+                Op::Repeat { tokens, .. } | Op::Subtree { tokens, .. } => {
+                    tokens.bind_dollar_crate(package, target);
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Op> {
         self.0.iter()
     }

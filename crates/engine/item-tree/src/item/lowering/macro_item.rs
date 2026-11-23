@@ -4,9 +4,12 @@ use rg_text::Name;
 use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
 
 use super::{FromAst, MaybeFromAst, normalized_syntax};
-use crate::item::{
-    BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallInput, MacroCallItem,
-    MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+use crate::{
+    dollar_crate_from_span,
+    item::{
+        BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallInput, MacroCallItem,
+        MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+    },
 };
 
 pub struct MacroRulesAst;
@@ -80,6 +83,12 @@ impl FromAst for MacroCallItem {
     type Context<'a> = MacroCallContext<'a>;
 
     fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
+        let path_crate = item
+            .path()
+            .and_then(|path| path.first_segment())
+            .and_then(|segment| segment.name_ref())
+            .and_then(|name| name.dollar_crate_token())
+            .and_then(|token| dollar_crate_from_span((ctx.span_for_range)(token.text_range())));
         Self {
             path: item.path().map(|path| normalized_syntax(&path)),
             callee: item
@@ -89,9 +98,11 @@ impl FromAst for MacroCallItem {
                 .map(|name_ref| Name::new(name_ref.text())),
             input: Some(MacroCallInput {
                 call_site: ctx.call_site,
+                path_crate,
                 args: item.token_tree().map(|token_tree| {
                     syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
                 }),
+                forwarded: Vec::new(),
             }),
             builtin: ctx.builtin,
         }

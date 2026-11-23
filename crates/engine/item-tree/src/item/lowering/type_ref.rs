@@ -126,6 +126,12 @@ impl FromAst for TypePath {
         let mut absolute = ast_segments
             .first()
             .is_some_and(|segment| segment.coloncolon_token().is_some());
+        let dollar_crate = ast_segments
+            .first()
+            .and_then(ast::PathSegment::name_ref)
+            .and_then(|name| name.dollar_crate_token())
+            .and_then(|token| source.dollar_crate_at(token.text_range()))
+            .map(Box::new);
 
         // Rust stores `<T>::Assoc` and `<T as Trait>::Assoc` as a leading type path segment.
         // Keep that as a path anchor and let the rest of the path use ordinary named segments.
@@ -145,6 +151,7 @@ impl FromAst for TypePath {
         Self {
             location,
             absolute,
+            dollar_crate,
             anchor,
             segments,
         }

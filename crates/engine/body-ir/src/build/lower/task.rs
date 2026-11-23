@@ -1,18 +1,17 @@
 //! Scheduled body lowering.
 //!
-//! By the time we decide that a body should be lowered, its owner usually comes from an item
-//! store and is identified by source span rather than by a syntax node. This module is the bridge:
-//! it groups those scheduled owners by file, opens each parsed file once, finds the matching AST
-//! item by span, and then delegates the actual expression lowering to `BodyLowering`.
+//! A task opens either a file item or an item from its owning macro expansion. Both sources
+//! supply the same function or initializer syntax to the body lowerer.
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
+use rg_def_map::GeneratedBodySyntax;
 use rg_ir_model::{ConstRef, FileId, FunctionRef, ModuleRef, OuterBodyOwner, Span, StaticRef};
 use rg_parse::SourceReader;
 use rg_semantic_ir::BodyOwnerData;
 use rg_source::QueryContext;
 use rg_std::CancellationToken;
-use rg_syntax::{AstNode as _, SyntaxKind, TextRange, ast};
+use rg_syntax::{AstNode as _, SyntaxKind, SyntaxNode, TextRange, ast};
 use rg_text::RustEdition;
 
 use super::{
@@ -22,7 +21,7 @@ use super::{
 use crate::BodyOwner;
 
 /// A function body or item initializer that should become immutable `BodyData`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub(crate) struct BodyLoweringTask {
     pub(crate) owner: BodyOwner,
     /// Module used for body-local lookup inside this body.
@@ -36,12 +35,11 @@ pub(crate) struct BodyLoweringTask {
     /// semantic items. If we decide to support arbitrary fn-in-fn-in-fn ancestor lookup, this
     /// should become an ordered fallback chain instead of one module.
     pub(crate) fallback_module: ModuleRef,
-    pub(crate) file_id: FileId,
-    pub(crate) span: Span,
+    pub(crate) source: BodyTaskSource,
 }
 
 impl BodyLoweringTask {
-    pub(crate) fn for_owner(root: BodyOwnerData, span: Span) -> Self {
+    pub(crate) fn for_owner(root: BodyOwnerData, source: BodyTaskSource) -> Self {
         let store = root.store_ref();
         let owner = match root.owner {
             OuterBodyOwner::Function { id, .. } => BodyOwner::Function(FunctionRef::new(store, id)),
@@ -52,8 +50,41 @@ impl BodyLoweringTask {
             owner,
             owner_module: root.module,
             fallback_module: root.module,
-            file_id: root.file,
-            span,
+            source,
+        }
+    }
+}
+
+/// Expansion context to restore when a generated function or initializer gets its own body.
+///
+/// A nested body has its own source IDs. Keep its expansion's copy IDs so uses in siblings
+/// still count toward the same macro input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GeneratedBodyTask {
+    pub(super) body: Box<GeneratedBodySyntax>,
+    pub(super) depth: usize,
+}
+
+impl GeneratedBodyTask {
+    pub(crate) fn for_owner(body: GeneratedBodySyntax) -> Self {
+        Self {
+            body: Box::new(body),
+            depth: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum BodyTaskSource {
+    File { file: FileId, span: Span },
+    Generated(GeneratedBodyTask),
+}
+
+impl BodyTaskSource {
+    fn physical_range(&self) -> (FileId, Span) {
+        match self {
+            Self::File { file, span } => (*file, *span),
+            Self::Generated(task) => (task.body.source.file_id, task.body.source.span),
         }
     }
 }
@@ -83,107 +114,141 @@ impl<'a> BodyTaskLowering<'a> {
         }
     }
 
-    /// Lowers scheduled bodies in file-sized batches.
-    ///
-    /// Parsing a file gives us all syntax nodes in that file, so lowering all matching tasks while
-    /// the syntax tree is alive keeps memory use predictable and gives deterministic `BodyId`s.
+    /// File items share the parse for their file. Generated items already carry the syntax
+    /// selected inside an expansion, even when several bodies share the same invocation range.
     pub(crate) fn lower_tasks(
         &mut self,
-        tasks: &[BodyLoweringTask],
+        tasks: &mut [BodyLoweringTask],
         macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<()> {
-        let mut tasks = tasks.to_vec();
-        tasks.sort_by_key(|task| task.file_id);
+        tasks.sort_by_key(|task| {
+            let (file, span) = task.source.physical_range();
+            (file, span.start, span.end)
+        });
 
-        for tasks in tasks.chunk_by(|left, right| left.file_id == right.file_id) {
-            self.lower_file_tasks(tasks[0].file_id, tasks, &mut *macro_expansion)
-                .context("lower file body tasks")?;
+        for tasks in tasks.chunk_by(|left, right| {
+            left.source.physical_range().0 == right.source.physical_range().0
+        }) {
+            self.lower_file_tasks(tasks, macro_expansion)
+                .context("lower body tasks")?;
         }
-
         Ok(())
     }
 
     #[rg_std::cancelable("body lowering task", token = self.cancellation)]
     fn lower_file_tasks(
         &mut self,
-        file_id: FileId,
         tasks: &[BodyLoweringTask],
         macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<()> {
-        let parse = SourceReader::new(self.db).syntax(file_id, self.edition)?;
-        let syntax = parse.tree();
-        // Source readers resolve owner occurrences before scheduling. Every task now carries
-        // a byte range in exactly the syntax snapshot opened above.
+        let file = tasks
+            .first()
+            .expect("file task group is non-empty")
+            .source
+            .physical_range()
+            .0;
+        let source_reader = SourceReader::new(self.db);
+        let has_written_body = tasks
+            .iter()
+            .any(|task| matches!(task.source, BodyTaskSource::File { .. }));
+        let parsed = has_written_body
+            .then(|| {
+                source_reader
+                    .syntax(file, self.edition)
+                    .map(|parse| (parse.syntax_node(), parse))
+            })
+            .transpose()?;
+        // The parsed file already owns the bytes used by source projection. Generated-only
+        // worklists need the caller's text but can skip parsing its file.
+        let syntax_text;
+        let captured_text;
+        let written_text = if let Some((root, _)) = &parsed {
+            syntax_text = root.text();
+            syntax_text.as_str()
+        } else {
+            captured_text = source_reader.text(file)?;
+            &captured_text
+        };
         for task in tasks {
             rg_std::check_cancel!(self.cancellation, "body lowering task");
-            let span = task.span;
-            let range = TextRange::new(span.start.into(), span.end.into());
-            if !syntax.syntax().text_range().contains_range(range) {
-                continue;
-            }
-            let kind = match task.owner {
-                BodyOwner::Function(_) => SyntaxKind::FN,
-                BodyOwner::Const(_) => SyntaxKind::CONST,
-                BodyOwner::Static(_) => SyntaxKind::STATIC,
+            let (node, source, has_errors) = match &task.source {
+                BodyTaskSource::File { file, span } => {
+                    let (root, parse) = parsed.as_ref().expect("written body has a file parse");
+                    let range = TextRange::new(span.start.into(), span.end.into());
+                    if !root.text_range().contains_range(range) {
+                        continue;
+                    }
+                    let kind = match task.owner {
+                        BodyOwner::Function(_) => SyntaxKind::FN,
+                        BodyOwner::Const(_) => SyntaxKind::CONST,
+                        BodyOwner::Static(_) => SyntaxKind::STATIC,
+                    };
+                    let Some(node) = root
+                        .covering_element(range)
+                        .ancestors()
+                        .find(|node| node.kind() == kind && node.text_range() == range)
+                    else {
+                        continue;
+                    };
+                    // Parser recovery can leave meaning outside the lowered nodes. Keep the
+                    // exact text for just the owner that intersects an error.
+                    let has_errors = parse
+                        .parse_errors()
+                        .iter()
+                        .any(|error| range.intersect(error.range()).is_some());
+                    let source = source_for(*file, &node);
+                    (node, source, has_errors)
+                }
+                BodyTaskSource::Generated(task) => (
+                    task.body.syntax.clone(),
+                    task.body.source,
+                    task.body
+                        .expansion
+                        .has_parse_errors_in(task.body.syntax.text_range()),
+                ),
             };
-            let Some(node) = syntax
-                .syntax()
-                .covering_element(range)
-                .ancestors()
-                .find(|node| node.kind() == kind && node.text_range() == range)
-            else {
-                continue;
+            // A macro can emit `fn next() { recurse!(); }` and defer the next call to a new
+            // body task. Resume the enclosing expansion's depth so that call uses the same
+            // recursion budget.
+            let _expansion_scope = match &task.source {
+                BodyTaskSource::Generated(task) => {
+                    Some(macro_expansion.resume_expansion(task.depth))
+                }
+                BodyTaskSource::File { .. } => None,
             };
             let mut lowering = BodyLowering::new(
                 task.owner,
                 task.owner_module,
                 task.fallback_module,
-                source_for(file_id, &node),
+                source,
+                written_text,
                 self.cfg,
-                &mut *macro_expansion,
+                macro_expansion,
+                &mut self.lowered_bodies.argument_copies,
             );
-            // Parser recovery can leave meaning outside the nodes we lower. Keep exact text for
-            // that owner only. parse_errors() reads the shared parser result without validating
-            // the whole file again for every function in a broad hint request.
-            if parse
-                .parse_errors()
-                .iter()
-                .any(|error| range.intersect(error.range()).is_some())
-            {
+            if let BodyTaskSource::Generated(task) = &task.source {
+                lowering.set_expansion(task);
+            }
+            if has_errors {
                 lowering.record_unmodeled_syntax(&node);
             }
-            match task.owner {
-                BodyOwner::Function(_) => {
-                    let ast_fn = ast::Fn::cast(node).expect("body task kind matches syntax");
-                    let Some(body_ast) = ast_fn.body() else {
-                        continue;
-                    };
-
-                    let body = lowering.lower_function(ast_fn, body_ast);
-                    self.lowered_bodies.alloc_body(body);
-                }
-                BodyOwner::Const(_) => {
-                    let ast_const = ast::Const::cast(node).expect("body task kind matches syntax");
-                    let Some(body_ast) = ast_const.body() else {
-                        continue;
-                    };
-
-                    let body = lowering.lower_initializer(body_ast);
-                    self.lowered_bodies.alloc_body(body);
-                }
-                BodyOwner::Static(_) => {
-                    let ast_static =
-                        ast::Static::cast(node).expect("body task kind matches syntax");
-                    let Some(body_ast) = ast_static.body() else {
-                        continue;
-                    };
-
-                    let body = lowering.lower_initializer(body_ast);
-                    self.lowered_bodies.alloc_body(body);
-                }
+            if let Some(body) = Self::lower_node(lowering, node) {
+                self.lowered_bodies.alloc_body(body);
             }
         }
-
         Ok(())
+    }
+
+    fn lower_node(lowering: BodyLowering<'_>, node: SyntaxNode) -> Option<super::LoweredBodyData> {
+        // Acquiring the AST is source-specific. From here on, every body lowers the same way.
+        match ast::Item::cast(node)? {
+            ast::Item::Fn(function) => {
+                let body = function.body()?;
+                Some(lowering.lower_function(function, body))
+            }
+            ast::Item::Const(konst) => Some(lowering.lower_initializer(konst.body()?)),
+            ast::Item::Static(item) => Some(lowering.lower_initializer(item.body()?)),
+            _ => None,
+        }
     }
 }

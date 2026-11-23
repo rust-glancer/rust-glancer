@@ -34,7 +34,7 @@ enum DeclarationLabel {
 ///
 /// `span` covers the declaration's destination; `selection_span` is the part navigation should
 /// focus on, usually its name. Both can fall back to a macro invocation for generated syntax.
-/// `editable_span` is separate: it is present only for a real declaration occurrence, so callers
+/// `exact_name_location` exposes only real declaration occurrences, so callers
 /// cannot turn a navigation fallback into a declaration reference or rename edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declaration {
@@ -44,7 +44,7 @@ pub struct Declaration {
     file_id: FileId,
     span: Span,
     selection_span: Span,
-    editable_span: Option<Span>,
+    name_location: Option<SourceLocation>,
 }
 
 impl Declaration {
@@ -63,9 +63,7 @@ impl Declaration {
             file_id,
             span,
             selection_span: name_location.map_or(span, |location| location.span),
-            editable_span: name_location
-                .filter(|location| location.editable)
-                .map(|location| location.span),
+            name_location,
         }
     }
 
@@ -84,7 +82,7 @@ impl Declaration {
             file_id,
             span,
             selection_span: location.span,
-            editable_span: location.editable.then_some(location.span),
+            name_location: Some(location),
         }
     }
 
@@ -130,10 +128,10 @@ impl Declaration {
         self.selection_span
     }
 
-    /// The source occurrence that can participate in edits and reference searches. A generated
-    /// declaration can navigate to its invocation without declaring its name at that location.
-    pub fn editable_span(&self) -> Option<Span> {
-        self.editable_span
+    /// An exact declaration occurrence for references and edit planning. The origin tells edit
+    /// planners when changing this name also changes macro input.
+    pub fn exact_name_location(&self) -> Option<SourceLocation> {
+        self.name_location.filter(|location| location.is_exact())
     }
 }
 
@@ -360,7 +358,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let mut selection_span = span;
                 // An expansion's invocation is its declaration destination. A copied type
                 // argument inside that invocation does not make the impl itself written there.
-                if location.editable
+                if location.is_exact()
                     && let Some((mut self_ty, _)) = view.impl_header()
                 {
                     // In `&'a Wrapper<T>`, selecting `Wrapper<T>` is enough to focus the type.
@@ -391,7 +389,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                     file_id: local_impl.file_id,
                     span,
                     selection_span,
-                    editable_span: None,
+                    name_location: None,
                 }))
             }
             SemanticItemKind::Function => match item {
@@ -445,11 +443,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 body.source_at(binding.source).span,
                 binding
                     .name_location
-                    .map(|id| body.span(id))
-                    .map(|span| SourceLocation {
-                        span,
-                        editable: body.source_at(binding.source).is_written(),
-                    }),
+                    .and_then(|id| body.sources().location(id)),
             ),
             None => Declaration {
                 crate_ref: binding_ref.body.crate_ref,
@@ -458,7 +452,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 file_id: body.source_at(binding.source).file_id,
                 span: body.source_at(binding.source).span,
                 selection_span,
-                editable_span: None,
+                name_location: None,
             },
         }))
     }

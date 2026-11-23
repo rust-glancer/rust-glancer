@@ -203,10 +203,9 @@ mod tests {
     use rg_syntax::{AstNode as _, ast};
     use rg_tt::{
         TokenOwner, TopSubtree,
+        span::Edition,
         syntax_bridge::{SpanFactory, TokenSourceMap, syntax_node_to_token_tree},
     };
-
-    use crate::Edition;
 
     #[test]
     fn parses_arm_payloads_without_outer_braces() {

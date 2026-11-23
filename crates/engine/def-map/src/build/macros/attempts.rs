@@ -9,8 +9,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use rg_ir_model::{FileId, Path};
 use rg_item_tree::{
-    BuiltinMacroItem, BuiltinMacroKind, CfgSelectArmPayload, IncludePathExpression, ItemTreeId,
-    ItemTrees,
+    BuiltinMacroItem, BuiltinMacroKind, IncludePathExpression, ItemTreeId, ItemTrees,
 };
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
@@ -19,6 +18,7 @@ use rg_macro_runtime::{
 
 use super::{
     MacroCallSite, MacroDirectiveState,
+    cfg_select::SelectedCfgArm,
     generated::{GeneratedOrigin, PendingInclude},
     resolve::ItemMacroResolver,
 };
@@ -109,6 +109,12 @@ pub(crate) fn apply_expansion_attempts(
         // A deferred include hands its remaining work to source loading, which completes the
         // pending operation before the next scan without resolving this call again.
         if let Some(directive) = state.macro_directives.get_mut(attempt.call_id) {
+            // The selected arm is read as written syntax. Calls inside it have their own
+            // provenance and the surrounding builtin does not reinterpret their tokens.
+            directive.has_copy_coverage = matches!(
+                attempt.outcome,
+                MacroExpansionAttemptOutcome::ItemTreeFragment { .. }
+            );
             directive.state = match &attempt.outcome {
                 MacroExpansionAttemptOutcome::WaitingForImports => {
                     MacroDirectiveState::WaitingForImports
@@ -278,44 +284,31 @@ impl MacroExpansionAttempt {
         state: &CrateBuilder,
         path_text: &str,
     ) -> Self {
-        let Some(BuiltinMacroItem::CfgSelect { arms }) = call.builtin.as_ref() else {
-            return Self::new(
-                call_id,
-                call,
-                Some(path_text.to_string()),
-                MacroExpansionAttemptOutcome::Complete,
-                MacroExpansionAttemptRecord::BuiltinFailed,
-            );
-        };
-        let cfg = state.cfg_evaluator();
-        let Some(arm) = arms
-            .iter()
-            .find(|arm| cfg.is_predicate_enabled(&arm.predicate))
-        else {
-            return Self::new(
-                call_id,
-                call,
-                Some(path_text.to_string()),
-                MacroExpansionAttemptOutcome::Complete,
-                MacroExpansionAttemptRecord::BuiltinFailed,
-            );
-        };
-
-        let (outcome, record) = match &arm.payload {
-            CfgSelectArmPayload::Items(items) => (
+        let arm = call.args.as_ref().and_then(|args| {
+            SelectedCfgArm::select(call.builtin.as_ref(), args, state.cfg_evaluator())
+        });
+        let (outcome, record) = match arm {
+            Some(SelectedCfgArm::Lowered(items)) => (
                 MacroExpansionAttemptOutcome::ItemTreeFragment {
                     file_id: call.file_id,
-                    items: items.clone(),
+                    items: items.to_vec(),
                 },
                 MacroExpansionAttemptRecord::BuiltinExpanded,
             ),
-            CfgSelectArmPayload::LoweringFailed => (
+            Some(SelectedCfgArm::Generated(syntax)) => (
+                MacroExpansionAttemptOutcome::Generated(syntax),
+                MacroExpansionAttemptRecord::BuiltinExpanded,
+            ),
+            None => (
                 MacroExpansionAttemptOutcome::Complete,
                 MacroExpansionAttemptRecord::BuiltinFailed,
             ),
         };
 
-        Self::new(call_id, call, Some(path_text.to_string()), outcome, record)
+        let mut attempt = Self::new(call_id, call, Some(path_text.to_string()), outcome, record);
+        // Selecting an arm preserves the enclosing expansion's context.
+        attempt.origin.dollar_crate = call.enclosing_dollar_crate;
+        attempt
     }
 
     /// Record preparation accounting and anchor generated items at the original call site.
@@ -335,6 +328,7 @@ impl MacroExpansionAttempt {
                 source: call.source,
                 file_id: call.file_id,
                 call_site: call.call_site,
+                forwarding: call.forwarding.clone(),
                 order: call.order.clone(),
                 dollar_crate: None,
                 parent_call: call_id,
@@ -363,7 +357,9 @@ impl MacroExpansionAttempt {
         let Some(args) = call.args.as_ref() else {
             return Ok(Self::skipped(call_id, call));
         };
-        let Some(path) = Path::from_text(path_text, call.dollar_crate) else {
+        let Some(path) =
+            Path::from_text(path_text, call.path_crate.or(call.enclosing_dollar_crate))
+        else {
             return Ok(Self::skipped(call_id, call));
         };
 

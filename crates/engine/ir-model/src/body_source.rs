@@ -1,25 +1,14 @@
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{FileId, Span};
-
-/// Whether a body source span belongs to the user's syntax or to lowered macro output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-enum BodySourceKind {
-    /// Syntax written directly in a source file.
-    Written,
-    /// Syntax produced by expanding a macro while lowering a body.
-    MacroGenerated,
-}
+use crate::{FileId, SourceLocation, SourceLocationKind, Span};
 
 /// Source location shared by body lowering and body-macro expansion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodySource {
     pub file_id: FileId,
     pub span: Span,
-    kind: BodySourceKind,
+    kind: SourceLocationKind,
 }
 
 impl BodySource {
@@ -27,7 +16,15 @@ impl BodySource {
         Self {
             file_id,
             span,
-            kind: BodySourceKind::Written,
+            kind: SourceLocationKind::Direct,
+        }
+    }
+
+    pub fn macro_argument(file_id: FileId, span: Span) -> Self {
+        Self {
+            file_id,
+            span,
+            kind: SourceLocationKind::MacroArgument,
         }
     }
 
@@ -35,12 +32,21 @@ impl BodySource {
         Self {
             file_id,
             span,
-            kind: BodySourceKind::MacroGenerated,
+            kind: SourceLocationKind::NavigationFallback,
         }
     }
 
+    pub fn location(self) -> SourceLocation {
+        SourceLocation {
+            span: self.span,
+            kind: self.kind,
+        }
+    }
+
+    /// Tests whether the syntax came directly from the file. Name scans can use
+    /// `location().is_exact()` to accept copied argument tokens as well.
     pub fn is_written(self) -> bool {
-        matches!(self.kind, BodySourceKind::Written)
+        self.kind == SourceLocationKind::Direct
     }
 
     /// Returns true when this span belongs to user-written body syntax in one concrete file.
@@ -48,8 +54,8 @@ impl BodySource {
         self.file_id == file_id && self.is_written()
     }
 
-    /// Returns true when this span is user-written and passes an optional file filter.
-    pub fn is_written_in_selected_file(self, file_id: Option<FileId>) -> bool {
-        file_id.is_none_or(|file_id| self.file_id == file_id) && self.is_written()
+    /// Accept direct syntax and exact copies of macro input in the requested file.
+    pub fn is_exact_in_file(self, file_id: FileId) -> bool {
+        self.file_id == file_id && self.location().is_exact()
     }
 }

@@ -39,23 +39,25 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
             .context("scan enclosing loop labels")
     }
 
-    /// Return the member-access site at a cursor offset, e.g. `items.pu$0`.
-    pub fn member_access_site_at(
+    /// Return the interpretations of a member access at a cursor offset, e.g. `items.pu$0`.
+    pub fn member_access_sites_at(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
-    ) -> anyhow::Result<Option<IndexedMemberAccessSite>> {
+    ) -> anyhow::Result<Vec<IndexedMemberAccessSite>> {
         Ok(
             DotCompletionSiteScanner::new(&self.db.body_ir, crate_ref, file_id, offset)
-                .site_at_dot()
+                .sites_at_dot()
                 .context("scan member access completion site")?
+                .into_iter()
                 .map(|site| IndexedMemberAccessSite {
                     receiver: ExprRef::new(site.body, site.receiver),
                     scope: LexicalScopeRef::new(site.body, site.scope),
                     receiver_span: site.receiver_span,
                     member_prefix_span: site.member_prefix_span,
-                }),
+                })
+                .collect(),
         )
     }
 

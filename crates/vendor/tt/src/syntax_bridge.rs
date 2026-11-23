@@ -30,20 +30,38 @@ use crate::{
 /// origin to a physical source range is a separate step.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExpansionSpanMap {
-    spans: Vec<(TextSize, Span)>,
+    spans: Vec<ExpansionSpan>,
 }
 
 impl ExpansionSpanMap {
-    pub fn entries(&self) -> impl Iterator<Item = (TextSize, Span)> + '_ {
-        self.spans.iter().copied()
+    pub fn map_spans(&mut self, mut map: impl FnMut(Span) -> Span) {
+        for span in &mut self.spans {
+            span.origin = map(span.origin);
+        }
     }
 
-    pub fn span_at(&self, offset: TextSize) -> Option<Span> {
-        let index = self.spans.partition_point(|(end, _)| *end <= offset);
-        self.spans
-            .get(index)
-            .or_else(|| self.spans.last())
-            .map(|(_, span)| *span)
+    pub fn entries(&self) -> impl Iterator<Item = (TextSize, Span)> + '_ {
+        self.spans.iter().map(|span| (span.end, span.origin))
+    }
+
+    /// Find the non-trivia parser tokens overlapping a range, with their full token ranges.
+    /// Looking them up by offset avoids revisiting a large syntax node for each of its names.
+    /// Each start comes from the previous token's end, so skip trivia only after computing
+    /// the ranges. Copy IDs depend on those starts matching the actual syntax tokens.
+    pub fn token_spans(&self, range: TextRange) -> impl Iterator<Item = (TextRange, Span)> + '_ {
+        let first = self.spans.partition_point(|span| span.end <= range.start());
+        let start = first
+            .checked_sub(1)
+            .map_or(TextSize::default(), |previous| self.spans[previous].end);
+        self.spans[first..]
+            .iter()
+            .scan(start, |start, span| {
+                let token = TextRange::new(*start, span.end);
+                *start = span.end;
+                Some((token, span))
+            })
+            .take_while(move |(token, _)| token.start() < range.end())
+            .filter_map(|(token, span)| (!span.is_trivia).then_some((token, span.origin)))
     }
 
     /// Attribute a generated range to one input owner and syntax context. A range such as
@@ -51,12 +69,13 @@ impl ExpansionSpanMap {
     /// even when `$name` alone does. A returned origin can still be synthetic; it does not by
     /// itself prove that the range is an editable occurrence in the invocation.
     pub fn span_for_range(&self, range: TextRange) -> Option<Span> {
-        let first = self.spans.partition_point(|(end, _)| *end <= range.start());
-        let last = self.spans.partition_point(|(end, _)| *end < range.end());
-        let mut origin = self.spans.get(first)?.1;
+        let first = self.spans.partition_point(|span| span.end <= range.start());
+        let last = self.spans.partition_point(|span| span.end < range.end());
+        let mut origin = self.spans.get(first)?.origin;
         // A compound range is attributable only when all of its tokens share an input owner
         // and syntax context. A template prefix cannot borrow a substituted name's location.
-        for &(_, token) in self.spans.get(first..=last.max(first))? {
+        for span in self.spans.get(first..=last.max(first))? {
+            let token = span.origin;
             if token.anchor != origin.anchor || token.ctx != origin.ctx {
                 return None;
             }
@@ -65,22 +84,20 @@ impl ExpansionSpanMap {
         Some(origin)
     }
 
-    /// Returns the mapped span only when it points into the requested source file.
-    pub fn span_for_range_in_file(
-        &self,
-        range: TextRange,
-        origin_package: usize,
-        origin_file_id: u32,
-    ) -> Option<Span> {
-        let span = self.span_for_range(range)?;
-        (span.anchor.package as usize == origin_package
-            && span.anchor.file_id.raw_file_id() == origin_file_id)
-            .then_some(span)
+    fn push(&mut self, end: TextSize, origin: Span, is_trivia: bool) {
+        self.spans.push(ExpansionSpan {
+            end,
+            origin,
+            is_trivia,
+        });
     }
+}
 
-    fn push(&mut self, end: TextSize, span: Span) {
-        self.spans.push((end, span));
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExpansionSpan {
+    end: TextSize,
+    origin: Span,
+    is_trivia: bool,
 }
 
 /// Attaches source ownership and syntax context to occurrence IDs allocated by the caller.
@@ -358,8 +375,7 @@ impl<'a> TtTreeSink<'a> {
             // split. Preserve it as an error and close the nodes the parser expected us to fill.
             self.error("illegal float literal".to_owned());
             self.inner.start_node(SyntaxKind::ERROR);
-            self.inner.token(SyntaxKind::FLOAT_NUMBER, &text);
-            self.token_map.push(self.inner.current_offset(), span);
+            self.push_token(SyntaxKind::FLOAT_NUMBER, &text, span);
             self.inner.finish_node();
             self.inner.finish_node();
             if !has_pseudo_dot {
@@ -371,24 +387,21 @@ impl<'a> TtTreeSink<'a> {
         assert!(!left.is_empty());
 
         self.inner.start_node(SyntaxKind::NAME_REF);
-        self.inner.token(SyntaxKind::INT_NUMBER, left);
-        self.token_map.push(self.inner.current_offset(), span);
+        self.push_token(SyntaxKind::INT_NUMBER, left, span);
         self.inner.finish_node();
 
         // The parser split a single float token into field-access syntax. The original event stream
         // has already accounted for one synthetic node exit, so the sink mirrors that shape here.
         self.inner.finish_node();
 
-        self.inner.token(SyntaxKind::DOT, ".");
-        self.token_map.push(self.inner.current_offset(), span);
+        self.push_token(SyntaxKind::DOT, ".", span);
 
         if has_pseudo_dot {
             assert!(right.is_empty(), "{left}.{right}");
         } else {
             assert!(!right.is_empty(), "{left}.{right}");
             self.inner.start_node(SyntaxKind::NAME_REF);
-            self.inner.token(SyntaxKind::INT_NUMBER, right);
-            self.token_map.push(self.inner.current_offset(), span);
+            self.push_token(SyntaxKind::INT_NUMBER, right, span);
             self.inner.finish_node();
             self.inner.finish_node();
         }
@@ -419,8 +432,7 @@ impl<'a> TtTreeSink<'a> {
         }
 
         let span = combined_span.expect("parser token should consume at least one token tree");
-        self.inner.token(kind, text.as_str());
-        self.token_map.push(self.inner.current_offset(), span);
+        self.push_token(kind, text.as_str(), span);
 
         // The syntax tree stores token text in one contiguous string. Add a small amount of trivia
         // after non-joint tokens so materializing that text does not merge neighboring tokens into a
@@ -428,10 +440,16 @@ impl<'a> TtTreeSink<'a> {
         if let Some([current, next]) = last_two
             && Self::needs_space_after(&current, &next)
         {
-            self.inner.token(SyntaxKind::WHITESPACE, " ");
-            self.token_map
-                .push(self.inner.current_offset(), *current.span());
+            self.push_token(SyntaxKind::WHITESPACE, " ", *current.span());
         }
+    }
+
+    fn push_token(&mut self, kind: SyntaxKind, text: &str, origin: Span) {
+        // Record one span for every token written to the syntax tree, including inserted spaces
+        // and the pieces of a split float. The map reconstructs token starts from these ends.
+        self.inner.token(kind, text);
+        self.token_map
+            .push(self.inner.current_offset(), origin, kind.is_trivia());
     }
 
     fn next_token_text(&mut self) -> (SmolStr, Span) {
@@ -718,35 +736,5 @@ fn push_punct_token(
             span: span_for_range(TextRange::at(offset, len)),
         }));
         offset += len;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use rg_syntax::TextSize;
-
-    use super::*;
-
-    #[test]
-    fn span_for_range_in_file_filters_mapped_origin() {
-        let span = SpanFactory::new(2, 7, TokenOwner::Declaration(0), Edition::CURRENT).span_for(3);
-        let other_package =
-            SpanFactory::new(3, 7, TokenOwner::Declaration(0), Edition::CURRENT).span_for(3);
-        let span_map = ExpansionSpanMap {
-            spans: vec![(TextSize::new(5), span), (TextSize::new(10), other_package)],
-        };
-        let generated_range = TextRange::new(TextSize::new(0), TextSize::new(5));
-
-        assert_eq!(
-            span_map.span_for_range_in_file(generated_range, 2, 7),
-            Some(span),
-        );
-        assert_eq!(span_map.span_for_range_in_file(generated_range, 2, 8), None);
-        let other_range = TextRange::new(TextSize::new(5), TextSize::new(10));
-        assert_eq!(
-            span_map.span_for_range_in_file(other_range, 3, 7),
-            Some(other_package),
-        );
-        assert_eq!(span_map.span_for_range_in_file(other_range, 2, 7), None);
     }
 }

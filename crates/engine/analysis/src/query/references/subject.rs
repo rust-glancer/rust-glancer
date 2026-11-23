@@ -8,24 +8,28 @@
 //! Hints are only used to skip work. The actual reference decision still comes from resolving a
 //! source symbol back to the selected declarations.
 //!
-//! Named items are searched by their declaration spelling. For example, searching `User` after
-//! `use User as Account` finds the import's `User`, but does not follow uses spelled `Account`.
+//! Ordinary paths are searched by their declaration spelling. For example, searching `User`
+//! after `use User as Account` finds the import's `User`. Macro calls can match by identity
+//! through an alias because expansion already resolved the call's definition.
 //! Find References also searches `Self` for nominal types. A type rename only edits its name.
 //! Modules also search `self` and `super`. Crate roots add `crate` and the crate name.
 
 use std::collections::HashSet;
 
 use rg_ir_model::{
-    BodyKey, CrateRef, DefMapRef, FileId, SemanticItemRef, Span, identity::DeclarationRef,
+    BodyKey, CrateRef, DefMapRef, FileId, SemanticItemRef, SourceLocation, identity::DeclarationRef,
 };
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::declaration::{Declaration, DeclarationView},
-    source::{IndexedSourceSurface, ReferenceSourceSelection, SourceOccurrenceView},
+    source::{
+        IndexedSourceSurface, ReferenceMacroTargets, ReferenceSearchLabel,
+        ReferenceSourceSelection, SourceOccurrenceView,
+    },
 };
 use rg_std::UniqueVec;
 
-use super::{ReferenceSearchKind, ReferenceSearchLabel};
+use super::ReferenceSearchKind;
 use crate::{model::SymbolAt, source_symbol::SourceSymbol};
 
 /// Request-local declaration identity for one reference lookup.
@@ -106,16 +110,16 @@ impl ReferenceSubject {
                 }
             }
 
-            // Navigation may lead to a whole macro invocation. Only an actual source occurrence
-            // can be projected back into references, which rename also consumes as editable text.
+            // References need the declaration's written name. Keep its origin along with the
+            // range so rename can check whether changing the declaration edits macro input.
             if let Some(declaration) = declaration
-                && let Some(span) = declaration.editable_span()
+                && let Some(location) = declaration.exact_name_location()
             {
                 declaration_locations.push(ReferenceSourceLocation {
                     declaration: *declaration_ref,
                     crate_ref: declaration.crate_ref(),
                     file_id: declaration.file_id(),
-                    span,
+                    location,
                 });
             }
         }
@@ -125,9 +129,11 @@ impl ReferenceSubject {
         if !exact_labels_supported {
             exact_labels = UniqueVec::new();
         }
-        // A copied macro argument may also name a value. Its uses still need the full body scan.
-        let macro_definitions =
-            (macro_definitions.len() == declarations.len()).then_some(macro_definitions);
+        let macros = match macro_definitions.len() {
+            0 => ReferenceMacroTargets::None,
+            count if count == declarations.len() => ReferenceMacroTargets::Only(macro_definitions),
+            _ => ReferenceMacroTargets::Mixed,
+        };
 
         let subject = Self {
             declarations: declarations.iter().copied().collect(),
@@ -138,7 +144,7 @@ impl ReferenceSubject {
                 labels: exact_labels.into_vec(),
                 modules,
                 types,
-                macro_definitions,
+                macros,
             },
             local_owners: local_owners.map(UniqueVec::into_vec),
         };
@@ -165,8 +171,8 @@ impl ReferenceSearchHints {
         self.local_owners.as_deref()
     }
 
-    /// Skip unrelated spellings before semantic resolution. Imported aliases with another spelling
-    /// are not followed; matching names still have to resolve to the selected declaration.
+    /// Skip unrelated spellings before semantic resolution. A macro occurrence already carries
+    /// its resolved definition, so it can be matched by identity even with a different spelling.
     pub(super) fn rejects_candidate(
         &self,
         db: &IndexedViewDb<'_>,
@@ -226,5 +232,5 @@ pub(super) struct ReferenceSourceLocation {
     pub(super) declaration: DeclarationRef,
     pub(super) crate_ref: CrateRef,
     pub(super) file_id: FileId,
-    pub(super) span: Span,
+    pub(super) location: SourceLocation,
 }

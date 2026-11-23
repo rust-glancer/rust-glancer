@@ -111,8 +111,8 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         body: BodyView<'_>,
         best: &mut NarrowestSourceSite<RecordFieldCompletionSite>,
     ) {
-        let sites = BodyScanSites::new(body);
-        sites.walk_pats(Some(self.file_id), Some(self.offset), false, |site| {
+        let sites = BodyScanSites::written(body);
+        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
             self.scan_pat_data(body_ref, body, site.scope, site.data, best);
         });
     }

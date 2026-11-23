@@ -4,6 +4,7 @@
 //! `$ident => foo`, interpolates variables in the template, to get `fn foo() {}`
 
 use rg_tt::{
+    TokenOrigins,
     span::{Edition, Span},
     tt::{
         self, Delimiter, TopSubtreeBuilder,
@@ -15,7 +16,7 @@ use stdx::itertools::Itertools;
 
 use super::{Binding, Bindings, Fragment, TokensOrigin};
 use crate::mbe::{
-    ExpandError, ExpandErrorKind, ExpandResult, MetaTemplate,
+    ExpandError, ExpandErrorKind, ExpandResult, MetaTemplate, Transcription,
     parser::{ConcatMetaVarExprElem, MetaVarKind, Op, RepeatKind, Separator},
 };
 
@@ -132,14 +133,18 @@ pub(super) fn transcribe(
     bindings: &Bindings<'_>,
     marker: impl Fn(&mut Span) + Copy,
     call_site: Span,
-) -> ExpandResult<tt::TopSubtree> {
+) -> ExpandResult<Transcription> {
     let mut ctx = ExpandCtx {
         bindings,
         nesting: Vec::new(),
         call_site,
+        transformed_inputs: Vec::new(),
     };
     let mut builder = tt::TopSubtreeBuilder::new(tt::Delimiter::invisible_spanned(ctx.call_site));
-    expand_subtree(&mut ctx, template, &mut builder, marker).map(|()| builder.build())
+    expand_subtree(&mut ctx, template, &mut builder, marker).map(|()| Transcription {
+        tokens: builder.build(),
+        transformed_inputs: ctx.transformed_inputs,
+    })
 }
 
 #[derive(Debug)]
@@ -158,6 +163,17 @@ struct ExpandCtx<'a> {
     bindings: &'a Bindings<'a>,
     nesting: Vec<NestingState>,
     call_site: Span,
+    transformed_inputs: Vec<Span>,
+}
+
+impl ExpandCtx<'_> {
+    /// Synthesized output can use the call for diagnostics. It occupies no input token.
+    fn synthetic_call_site(&self) -> Span {
+        Span {
+            origins: TokenOrigins::synthetic(self.call_site.origins.first()),
+            ..self.call_site
+        }
+    }
 }
 
 fn expand_subtree_with_delimiter(
@@ -242,7 +258,7 @@ fn expand_subtree(
                     .map_or(0, |nest| nest.idx);
                 builder.push(tt::Leaf::Literal(tt::Literal {
                     text_and_suffix: Symbol::integer(index),
-                    span: ctx.call_site,
+                    span: ctx.synthetic_call_site(),
                     kind: tt::LitKind::Integer,
                     suffix_len: 0,
                 }));
@@ -257,7 +273,7 @@ fn expand_subtree(
                     });
                 builder.push(tt::Leaf::Literal(tt::Literal {
                     text_and_suffix: Symbol::integer(length),
-                    span: ctx.call_site,
+                    span: ctx.synthetic_call_site(),
                     kind: tt::LitKind::Integer,
                     suffix_len: 0,
                 }));
@@ -301,7 +317,7 @@ fn expand_subtree(
 
                 builder.push(tt::Leaf::Literal(tt::Literal {
                     text_and_suffix: Symbol::integer(res),
-                    span: ctx.call_site,
+                    span: ctx.synthetic_call_site(),
                     suffix_len: 0,
                     kind: tt::LitKind::Integer,
                 }));
@@ -350,11 +366,13 @@ fn expand_subtree(
                                 }
                                 _ => (None, None),
                             };
-                            let value = match &values {
+                            let (value, span) = match &values {
                                 (Some(TtElement::Leaf(tt::Leaf::Ident(ident))), None) => {
-                                    ident.sym.as_str()
+                                    (ident.sym.as_str(), ident.span)
                                 }
-                                (Some(TtElement::Leaf(tt::Leaf::Literal(lit))), None) => lit.text(),
+                                (Some(TtElement::Leaf(tt::Leaf::Literal(lit))), None) => {
+                                    (lit.text(), lit.span)
+                                }
                                 _ => {
                                     if err.is_none() {
                                         err = Some(ExpandError::binding_error(
@@ -365,6 +383,9 @@ fn expand_subtree(
                                     continue;
                                 }
                             };
+                            // The resulting identifier carries the template's span. Preserve
+                            // which inputs affect its spelling for source edits.
+                            ctx.transformed_inputs.push(span);
                             concatenated.push_str(value);
                         }
                     }
@@ -516,8 +537,8 @@ fn expand_repeat(
     let mut counter = 0;
     let mut err = None;
 
-    let initial_restore_point = builder.restore_point();
-    let mut restore_point = builder.restore_point();
+    let initial_restore_point = (builder.restore_point(), ctx.transformed_inputs.len());
+    let mut restore_point = initial_restore_point;
     loop {
         let ExpandResult { value: (), err: e } =
             expand_subtree_with_delimiter(ctx, template, builder, None, marker);
@@ -530,14 +551,14 @@ fn expand_repeat(
 
         builder.remove_last_subtree_if_invisible();
 
-        restore_point = builder.restore_point();
+        restore_point = (builder.restore_point(), ctx.transformed_inputs.len());
 
         counter += 1;
         if counter == limit {
             // FIXME: This is a bug here, we get here when we shouldn't, see https://github.com/rust-lang/rust-analyzer/issues/18910.
             // If we don't restore we emit a lot of nodes which causes a stack overflow down the road. For now just ignore them,
             // there is always an error here anyway.
-            builder.restore(initial_restore_point);
+            restore_point = initial_restore_point;
             err = Some(ExpandError::new(
                 ctx.call_site,
                 ExpandErrorKind::LimitExceeded,
@@ -570,8 +591,10 @@ fn expand_repeat(
             break;
         }
     }
-    // Lose the last separator and last after-the-end round.
-    builder.restore(restore_point);
+    // Drop the trailing separator and the extra iteration, including its input dependencies.
+    // A `${concat(..)}` in a discarded iteration changes no output.
+    builder.restore(restore_point.0);
+    ctx.transformed_inputs.truncate(restore_point.1);
 
     ctx.nesting.pop().unwrap();
 
@@ -595,6 +618,7 @@ fn fix_up_and_push_path_tt(
     builder: &mut tt::TopSubtreeBuilder,
     subtree: tt::TokenTreesView<'_>,
 ) {
+    let span = ctx.synthetic_call_site();
     let mut prev_was_ident = false;
     // Note that we only need to fix up the top-level `TokenTree`s because the
     // context of the paths in the descendant `Subtree`s won't be changed by the
@@ -613,12 +637,12 @@ fn fix_up_and_push_path_tt(
                     tt::Leaf::Punct(tt::Punct {
                         char: ':',
                         spacing: tt::Spacing::Joint,
-                        span: ctx.call_site,
+                        span,
                     }),
                     tt::Leaf::Punct(tt::Punct {
                         char: ':',
                         spacing: tt::Spacing::Alone,
-                        span: ctx.call_site,
+                        span,
                     }),
                 ]);
             }

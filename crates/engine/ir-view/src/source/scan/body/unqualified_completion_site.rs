@@ -226,8 +226,8 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         items: &[SemanticItemView<'_>],
         best: &mut NarrowestSourceSite<UnqualifiedCompletionSite>,
     ) {
-        let sites = BodyScanSites::new(body);
-        sites.walk_type_paths(Some(self.file_id), false, |site| {
+        let sites = BodyScanSites::written(body);
+        sites.walk_type_paths(Some(self.file_id), |site| {
             if let Some(completion_site) = self.site_for_type_path(
                 body_ref,
                 site.scope,
@@ -293,7 +293,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<UnqualifiedCompletionSite>,
     ) {
         let visible_bindings = body.bindings().len();
-        BodyScanSites::new(body).walk_pats(Some(self.file_id), Some(self.offset), false, |site| {
+        BodyScanSites::written(body).walk_pats(Some(self.file_id), Some(self.offset), |site| {
             let (path, kind, expected_type_binding) = match &site.data.kind {
                 PatKind::Record { path, .. } => (
                     path.as_ref(),

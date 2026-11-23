@@ -11,9 +11,17 @@
 
 #[cfg(all(debug_assertions, not(miri)))]
 use std::cell::Cell;
-use std::{assert_matches, collections::hash_map, fmt::Debug, hint::cold_path, mem::transmute};
+use std::{
+    assert_matches, collections::hash_map, fmt::Debug, hint::cold_path, marker::PhantomData,
+    mem::transmute,
+};
 
 use rustc_hash::FxHashMap;
+use wincode::{
+    config::{Config, ConfigCore},
+    int_encoding::VarInt,
+    len::BincodeLen,
+};
 
 use crate::{
     span::{Span, SpanAnchor, SyntaxContext, TokenOrigins},
@@ -1130,6 +1138,24 @@ impl<'a> TokenTreesSlice<'a> {
     }
 }
 
+// Token tags, occurrence IDs and symbol lengths tend to be small. Use wincode's compact
+// encoding for this payload and carry through the enclosing reader's allocation limit.
+struct StoredTokenConfig<C>(PhantomData<C>);
+
+impl<C: ConfigCore> ConfigCore for StoredTokenConfig<C> {
+    const PREALLOCATION_SIZE_LIMIT: Option<usize> = C::PREALLOCATION_SIZE_LIMIT;
+    const ZERO_COPY_ALIGN_CHECK: bool = C::ZERO_COPY_ALIGN_CHECK;
+    const DESERIALIZATION_SIZE_LIMIT: Option<usize> = C::DESERIALIZATION_SIZE_LIMIT;
+
+    type ByteOrder = C::ByteOrder;
+    type IntEncoding = VarInt;
+}
+
+impl<C: ConfigCore> Config for StoredTokenConfig<C> {
+    type LengthEncoding = BincodeLen;
+    type TagEncoding = u8;
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TopSubtree {
     buffer: Box<[u8]>,
@@ -1247,6 +1273,33 @@ impl TopSubtree {
         encode_all(tts.into_iter(), span_frequencies, symbols)
     }
 
+    /// Rebuild the packed tree with new origins, preserving text, jointness, and nesting.
+    pub fn map_spans(&self, mut map: impl FnMut(Span) -> Span) -> Self {
+        Self::from_serialized(
+            self.as_token_trees()
+                .iter_flat_tokens()
+                .map(|mut token| {
+                    match &mut token {
+                        TokenTree::Leaf(leaf) => {
+                            let span = match leaf {
+                                Leaf::Literal(token) => &mut token.span,
+                                Leaf::Punct(token) => &mut token.span,
+                                Leaf::Ident(token) => &mut token.span,
+                            };
+                            *span = map(*span);
+                        }
+                        TokenTree::Subtree(subtree) => {
+                            let delimiter = &mut subtree.delimiter;
+                            delimiter.open = map(delimiter.open);
+                            delimiter.close = map(delimiter.close);
+                        }
+                    }
+                    token
+                })
+                .collect(),
+        )
+    }
+
     pub fn from_subtree(subtree: SubtreeView<'_>) -> Self {
         let mut builder = TopSubtreeBuilder::new(subtree.top_subtree().delimiter);
         builder.extend_with_tt(subtree.token_trees());
@@ -1318,19 +1371,24 @@ unsafe impl<C: wincode::config::Config> wincode::SchemaWrite<C> for TopSubtree {
     const TYPE_META: wincode::TypeMeta = wincode::TypeMeta::Dynamic;
 
     fn size_of(src: &Self) -> wincode::WriteResult<usize> {
-        use wincode::len::SeqLen as _;
-        let mut size = C::LengthEncoding::write_bytes_needed(src.len)?;
+        use wincode::len::SeqLen;
+
+        let mut size = <BincodeLen as SeqLen<StoredTokenConfig<C>>>::write_bytes_needed(src.len)?;
         for token in src.as_token_trees().iter_flat_tokens() {
-            size += <TokenTree as wincode::SchemaWrite<C>>::size_of(&token)?;
+            size += <TokenTree as wincode::SchemaWrite<StoredTokenConfig<C>>>::size_of(&token)?;
         }
         Ok(size)
     }
 
     fn write(mut writer: impl wincode::io::Writer, src: &Self) -> wincode::WriteResult<()> {
-        use wincode::len::SeqLen as _;
-        C::LengthEncoding::write(writer.by_ref(), src.len)?;
+        use wincode::len::SeqLen;
+
+        <BincodeLen as SeqLen<StoredTokenConfig<C>>>::write(writer.by_ref(), src.len)?;
         for token in src.as_token_trees().iter_flat_tokens() {
-            <TokenTree as wincode::SchemaWrite<C>>::write(writer.by_ref(), &token)?;
+            <TokenTree as wincode::SchemaWrite<StoredTokenConfig<C>>>::write(
+                writer.by_ref(),
+                &token,
+            )?;
         }
         Ok(())
     }
@@ -1345,7 +1403,8 @@ unsafe impl<'de, C: wincode::config::Config> wincode::SchemaRead<'de, C> for Top
         dst: &mut std::mem::MaybeUninit<Self>,
     ) -> wincode::ReadResult<()> {
         use wincode::ReadError;
-        let tokens = <Vec<TokenTree> as wincode::SchemaRead<'de, C>>::get(reader)?;
+        let tokens =
+            <Vec<TokenTree> as wincode::SchemaRead<'de, StoredTokenConfig<C>>>::get(reader)?;
         let Some(TokenTree::Subtree(root)) = tokens.first() else {
             return Err(ReadError::InvalidValue("token tree must have a root"));
         };

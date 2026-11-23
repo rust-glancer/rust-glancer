@@ -35,12 +35,9 @@ where
         // fully-qualified `<Self as Trait>::Item`. Lower the prefix first so the trait-owned
         // `Self` parameter supplies both the associated-item identity and the full trait args.
         if path.segments.len() > 1 {
-            let prefix = TypePath {
-                location: path.location,
-                absolute: path.absolute,
-                anchor: None,
-                segments: path.segments[..path.segments.len() - 1].to_vec(),
-            };
+            let prefix = path
+                .prefix(path.segments.len() - 1)
+                .expect("the type path has a preceding segment");
             let prefix_param = prefix
                 .single_name()
                 .map(|name| self.param_by_name(name.as_str()))

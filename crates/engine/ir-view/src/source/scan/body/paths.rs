@@ -11,8 +11,7 @@
 //!               ^^^^ -> `crate::model::User`
 //! ```
 //!
-//! Cursor scans also visit generated syntax, checking each segment against the body's source map.
-//! TODO: Include mapped macro arguments in whole-crate scans with all of their expanded uses.
+//! Both scans visit expanded syntax and only emit segments with an exact written location.
 
 use rg_body_ir::{
     BodyAssociatedPathPrefix, BodyPath, BodyView, ExprKind, PatData, RecordExprField,
@@ -70,8 +69,8 @@ impl<'a> TypePathSourceScanner<'a> {
 
     /// Scans body-local type annotations that can contain navigable type paths.
     pub(super) fn scan(&mut self) {
-        let sites = BodyScanSites::new(self.body);
-        sites.walk_type_paths(self.file_id, self.offset.is_some(), |site| {
+        let sites = BodyScanSites::including_expansions(self.body);
+        sites.walk_type_paths(self.file_id, |site| {
             self.scan_type_path(site.scope, site.path, site.source);
         });
     }
@@ -83,10 +82,13 @@ impl<'a> TypePathSourceScanner<'a> {
         }
 
         for (idx, segment) in path.segments.iter().enumerate() {
-            let Some(span) = self.body.sources().editable_span(segment.location) else {
+            let Some(name) = segment.location else {
                 continue;
             };
-            if self.offset_matches(span) && self.body.contains_source_span(source, span) {
+            let Some(location) = self.body.sources().exact_location(Some(name)) else {
+                continue;
+            };
+            if self.offset_matches(location.span) {
                 let file_id = source.file_id;
                 let Some(def_map_path) = path.as_def_map_path_prefix(idx) else {
                     continue;
@@ -94,17 +96,14 @@ impl<'a> TypePathSourceScanner<'a> {
                 self.candidates.push(BodySourceCandidate::TypePath {
                     body: self.body_ref,
                     scope,
+                    name,
                     path: def_map_path,
-                    type_ref: self.offset.map(|_| {
-                        TypeRef::Path(TypePath {
-                            location: path.location,
-                            absolute: path.absolute,
-                            anchor: path.anchor.clone(),
-                            segments: path.segments[..=idx].to_vec(),
-                        })
-                    }),
+                    type_ref: self
+                        .offset
+                        .and_then(|_| path.prefix(idx + 1))
+                        .map(TypeRef::Path),
                     file_id,
-                    span,
+                    location,
                 });
             }
         }
@@ -135,7 +134,6 @@ pub(super) struct BodyPathSourceScanner<'a> {
     body: BodyView<'a>,
     file_id: Option<FileId>,
     offset: Option<u32>,
-    include_single_segment: bool,
     candidates: &'a mut Vec<BodySourceCandidate>,
 }
 
@@ -152,7 +150,6 @@ impl<'a> BodyPathSourceScanner<'a> {
             body,
             file_id: Some(file_id),
             offset: Some(offset),
-            include_single_segment: false,
             candidates,
         }
     }
@@ -168,7 +165,6 @@ impl<'a> BodyPathSourceScanner<'a> {
             body,
             file_id,
             offset: None,
-            include_single_segment: true,
             candidates,
         }
     }
@@ -179,14 +175,9 @@ impl<'a> BodyPathSourceScanner<'a> {
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
         // different symbols even though they belong to the same lowered expression.
         for (expr_idx, expr_data) in self.body.exprs().iter().enumerate() {
-            if !self
-                .body
-                .source_at(expr_data.source)
-                .is_written_in_selected_file(self.file_id)
-                && !(self.offset.is_some()
-                    && self
-                        .file_id
-                        .is_none_or(|file| self.body.source_at(expr_data.source).file_id == file))
+            if self
+                .file_id
+                .is_some_and(|file| self.body.source_at(expr_data.source).file_id != file)
             {
                 continue;
             }
@@ -196,7 +187,6 @@ impl<'a> BodyPathSourceScanner<'a> {
                     expr_data.scope,
                     path,
                     self.body.source_at(expr_data.source),
-                    false,
                     Some(expr),
                     BodyPathFinalSegment::ValuePath,
                 ),
@@ -206,7 +196,6 @@ impl<'a> BodyPathSourceScanner<'a> {
                     expr_data.scope,
                     path,
                     self.body.source_at(expr_data.source),
-                    false,
                     Some(expr),
                     BodyPathFinalSegment::Expression,
                 ),
@@ -224,8 +213,8 @@ impl<'a> BodyPathSourceScanner<'a> {
         // Pattern paths are not represented as expressions, but they are still editor-visible
         // value paths: `let Some(value) = option` and `Action::Start { .. }` should navigate from
         // both the enum name and the variant name.
-        let sites = BodyScanSites::new(self.body);
-        sites.walk_pats(self.file_id, self.offset, self.offset.is_some(), |site| {
+        let sites = BodyScanSites::including_expansions(self.body);
+        sites.walk_pats(self.file_id, self.offset, |site| {
             self.scan_pat_data(site.scope, site.data);
         });
     }
@@ -237,7 +226,6 @@ impl<'a> BodyPathSourceScanner<'a> {
                 scope,
                 path,
                 self.body.source_at(data.source),
-                self.include_single_segment,
                 None,
                 BodyPathFinalSegment::TypePath,
             );
@@ -246,7 +234,6 @@ impl<'a> BodyPathSourceScanner<'a> {
                 scope,
                 path,
                 self.body.source_at(data.source),
-                self.include_single_segment,
                 None,
                 BodyPathFinalSegment::ValuePath,
             );
@@ -259,23 +246,25 @@ impl<'a> BodyPathSourceScanner<'a> {
         scope: ScopeId,
         path: &BodyPath,
         source: BodySource,
-        include_single_segment: bool,
         expression: Option<ExprId>,
         final_segment: BodyPathFinalSegment,
     ) {
         // Expression paths already have an expression candidate for single-segment names. Segment
         // candidates are only needed for qualified expressions or for pattern paths, which do not
         // have expression ids of their own.
-        if path.segment_count() <= 1 && !include_single_segment {
+        if path.segment_count() <= 1 && expression.is_some() {
             return;
         }
 
         let segment_count = path.segment_count();
         for idx in 0..segment_count {
-            let Some(span) = path.segment_location(idx).map(|id| self.body.span(id)) else {
+            let Some(name) = path.segment_location(idx) else {
                 continue;
             };
-            if self.offset_matches(span) && self.body.contains_source_span(source, span) {
+            let Some(location) = self.body.sources().exact_location(Some(name)) else {
+                continue;
+            };
+            if self.offset_matches(location.span) {
                 let file_id = source.file_id;
                 let type_ref =
                     self.offset
@@ -294,10 +283,11 @@ impl<'a> BodyPathSourceScanner<'a> {
                     self.candidates.push(BodySourceCandidate::TypePath {
                         body: self.body_ref,
                         scope,
+                        name,
                         path: def_map_path,
                         type_ref,
                         file_id,
-                        span,
+                        location,
                     });
                     continue;
                 }
@@ -305,8 +295,9 @@ impl<'a> BodyPathSourceScanner<'a> {
                     self.candidates.push(BodySourceCandidate::ValueReference {
                         body: self.body_ref,
                         scope,
+                        name,
                         file_id,
-                        span,
+                        location,
                         // Body IR already records the chosen declaration for an expression. Point
                         // the final segment at that expression so hover can reuse the exact identity
                         // instead of repeating visibility-wide name lookup. Pattern paths have no
@@ -331,11 +322,10 @@ impl<'a> BodyPathSourceScanner<'a> {
         source: BodySource,
     ) {
         for field in fields {
+            let location = self.body.source_at(field.key_location).location();
             if field.syntax.is_explicit()
-                || !self.offset_matches(self.body.span(field.key_location))
-                || !self
-                    .body
-                    .contains_source_span(source, self.body.span(field.key_location))
+                || !location.is_exact()
+                || !self.offset_matches(location.span)
             {
                 continue;
             }
@@ -345,8 +335,9 @@ impl<'a> BodyPathSourceScanner<'a> {
             self.candidates.push(BodySourceCandidate::ValueReference {
                 body: self.body_ref,
                 scope,
+                name: field.key_location,
                 file_id: source.file_id,
-                span: self.body.span(field.key_location),
+                location,
                 source: match field.value {
                     Some(expr) => ValueReferenceSource::Expr(expr),
                     None => ValueReferenceSource::Path(Path::unqualified_name(name.as_str())),

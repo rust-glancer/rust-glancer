@@ -38,7 +38,7 @@ pub use self::{
             CompletionClientCapabilities, CompletionQuery, CompletionRelevance, CompletionSource,
         },
         references::{
-            ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind, ReferenceSearchLabel,
+            ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind, ReferenceSourceSelection,
         },
     },
 };
@@ -328,16 +328,16 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    /// Returns labels that callers may use for request-local reference prefiltering.
-    pub fn reference_search_labels(
+    /// Returns the source criteria used to plan a reference scan.
+    pub fn reference_source_selection(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
         kind: ReferenceSearchKind,
-    ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
-        self.run_query("reference_search_labels", || {
-            query::references::ReferenceResolver::reference_search_labels(
+    ) -> anyhow::Result<ReferenceSourceSelection> {
+        self.run_query("reference_source_selection", || {
+            query::references::ReferenceResolver::reference_source_selection(
                 self, crate_ref, file_id, offset, kind,
             )
         })

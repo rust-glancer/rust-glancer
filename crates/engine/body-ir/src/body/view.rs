@@ -7,7 +7,7 @@ use rg_ty::Ty;
 
 use super::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
-    BodySourceMap, BodySourceStore, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
+    BodySourceStore, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
     facts::{BodyFacts, BodyResolution, CallFacts},
 };
 
@@ -88,19 +88,6 @@ impl<'a> BodyView<'a> {
         self.body.macro_calls()
     }
 
-    pub fn source_map(self) -> &'a BodySourceMap {
-        self.sources.provenance()
-    }
-
-    pub fn contains_source_span(self, source: BodySource, span: Span) -> bool {
-        self.source_map().is_macro_argument(span)
-            || source.is_written()
-                && !self
-                    .macro_calls()
-                    .iter()
-                    .any(|call| self.source_at(call.source).span.contains_span(span))
-    }
-
     pub fn param_scope(self) -> ScopeId {
         self.body.param_scope()
     }
@@ -165,11 +152,6 @@ impl<'a> BodyView<'a> {
         self.body
             .source_item_source(item)
             .map(|id| self.source_at(id))
-    }
-
-    pub fn source_item_is_written(self, item: ItemTreeId) -> bool {
-        self.source_item_source(item)
-            .is_none_or(|source| source.is_written())
     }
 
     pub fn statement(self, statement: StmtId) -> Option<&'a StmtData> {

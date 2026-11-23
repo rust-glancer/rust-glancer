@@ -1,9 +1,12 @@
 //! Build-only body storage between syntax lowering and binding materialization.
 
+use std::collections::HashMap;
+
 use rg_arena::Arena;
 use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, SourceId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 
+use super::GeneratedBodyTask;
 use crate::body::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
     BodySourceStore, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
@@ -17,6 +20,9 @@ use crate::body::{
 pub(crate) struct LoweredBodyData {
     body: BodyData,
     pub(crate) sources: BodySourceStore,
+    /// Temporary syntax and expansion depth for generated items. The key is the declaration's
+    /// occurrence ID, which is available before the nested item gets a semantic owner.
+    pub(crate) generated_bodies: HashMap<SourceId, GeneratedBodyTask>,
     pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
 }
 
@@ -41,11 +47,12 @@ impl LoweredBodyData {
         self.pending_binding_resolutions.clear();
     }
 
-    pub(crate) fn into_parts(self) -> (BodyData, BodySourceStore) {
+    pub(crate) fn into_parts(mut self) -> (BodyData, BodySourceStore) {
         debug_assert!(
             self.pending_binding_resolutions.is_empty(),
             "pending binding candidates should be materialized before BodyData is frozen",
         );
+        self.sources.finish_recording();
         (self.body, self.sources)
     }
 }
@@ -66,6 +73,7 @@ pub(super) struct BodyBuilder {
     pub(super) source_items: BodySourceItems,
     pub(super) macro_calls: Vec<BodyMacroCallData>,
     pub(super) sources: BodySourceStore,
+    pub(super) generated_bodies: HashMap<SourceId, GeneratedBodyTask>,
     pub(super) scopes: Arena<ScopeId, ScopeData>,
     pub(super) bindings: Arena<BindingId, BindingData>,
     pub(super) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
@@ -92,6 +100,7 @@ impl BodyBuilder {
             source_items,
             macro_calls,
             mut sources,
+            generated_bodies,
             scopes,
             bindings,
             pending_binding_resolutions,
@@ -102,7 +111,6 @@ impl BodyBuilder {
             unmodeled_syntax,
         } = self;
 
-        sources.provenance.finish();
         let source = sources.record(source);
         LoweredBodyData {
             body: BodyData::new(
@@ -124,6 +132,7 @@ impl BodyBuilder {
                 unmodeled_syntax,
             ),
             sources,
+            generated_bodies,
             pending_binding_resolutions,
         }
     }

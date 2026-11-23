@@ -1,30 +1,20 @@
 //! Builtin inputs and implicit references written inside format strings.
 
-use rg_ir_model::{BuiltinMacroExprKind, ExprId, ScopeId};
-use rg_syntax::{
-    AstNode as _,
-    ast::{self, AstToken as _, FormatStringPartKind, HasName as _},
-};
+use rg_ir_model::{ExprId, ScopeId, SourceId};
+use rg_syntax::ast::{self, AstToken as _, FormatStringPartKind, HasName as _};
 use rg_text::Name;
 
 use super::body::BodyLowering;
-use crate::body::{BodyPath, BodySource, ExprKind};
+use crate::body::{BodyPath, ExprKind};
 
 impl BodyLowering<'_> {
     /// Lower written arguments and add variable references for captures such as `{user}`.
     pub(super) fn lower_builtin_macro_args(
         &mut self,
-        kind: BuiltinMacroExprKind,
         syntax: ast::FormatArgsExpr,
+        template: Option<ast::Expr>,
         scope: ScopeId,
     ) -> Vec<ExprId> {
-        // Assertion input starts with the condition; its optional message is the format template.
-        // Other formatting builtins start with the template itself.
-        let template = if kind == BuiltinMacroExprKind::Assert {
-            syntax.args().next().and_then(|arg| arg.expr())
-        } else {
-            syntax.template()
-        };
         let named = syntax
             .args()
             .filter_map(|arg| arg.name())
@@ -47,7 +37,6 @@ impl BodyLowering<'_> {
         let Some(ast::Expr::Literal(template)) = template else {
             return args;
         };
-        let source = self.source(template.syntax());
         let ast::LiteralKind::String(string) = template.kind() else {
             return args;
         };
@@ -61,28 +50,25 @@ impl BodyLowering<'_> {
                 return;
             }
             let range = part.range + string.syntax().text_range().start();
-            let written_span = self.written_source_span(range);
-            let mut source = source;
-            source.span = written_span.unwrap_or(source.span);
-            let expr = self.lower_format_capture(name, source, scope);
+            let location = self.source_location(range);
+            let source = self.builder.sources.source(location);
+            let expr = self.lower_format_capture(name, location, scope);
             args.push(expr);
-            if let Some(span) = written_span {
+            if source.location().is_exact() {
                 self.builder
                     .sources
-                    .provenance
-                    .record_format_capture(expr, span);
+                    .record_format_capture(expr, source.span);
             }
         });
         args
     }
 
-    fn lower_format_capture(&mut self, name: &str, source: BodySource, scope: ScopeId) -> ExprId {
+    fn lower_format_capture(&mut self, name: &str, location: SourceId, scope: ScopeId) -> ExprId {
         let name = Name::new(name);
-        let location = self.builder.sources.record(source);
         let path = BodyPath::unqualified_name(name, location);
         // Treat `{user}` like a `user` expression here. Normal name lookup then finds
         // the right local, and hover and navigation can use the same path.
         // TODO: Require width and precision captures to have type `usize` during inference.
-        self.alloc_expr_with_source(source, scope, ExprKind::Path { path })
+        self.alloc_expr_at(location, scope, ExprKind::Path { path })
     }
 }

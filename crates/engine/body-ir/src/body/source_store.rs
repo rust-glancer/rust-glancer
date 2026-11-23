@@ -2,21 +2,14 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{BodySource, SourceId, SourceLocation, Span};
+use rg_def_map::{MacroCopyRef, SourceOccurrenceLocation};
+use rg_ir_model::{
+    BodySource, CrateRef, ExprId, SourceId, SourceLocation, SourceLocationKind, Span,
+};
 use rg_item_tree::{RecordSource, SourceLocations, SourceRole, TypeSource, initializer_preview};
 use rg_std::{MemorySize, Shrink};
 use rg_syntax::{AstNode as _, TextRange, ast};
 use wincode::{SchemaRead, SchemaWrite};
-
-use super::BodySourceMap;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(crate) struct BodyLocation {
-    pub(crate) source: BodySource,
-    // A copied macro argument is still generated syntax, but its original bytes can be edited.
-    // This is separate from BodySource's direct-written/generated distinction.
-    pub(crate) editable: bool,
-}
 
 /// Source data for a single body's occurrence IDs. Nested bodies have their own store.
 ///
@@ -25,25 +18,20 @@ pub(crate) struct BodyLocation {
 /// recording sequence. Comments and changing byte offsets do not change that sequence.
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodySourceStore {
-    entries: Vec<BodyLocation>,
+    entries: Vec<BodySource>,
     initializer_previews: HashMap<SourceId, String>,
-    pub(crate) provenance: BodySourceMap,
+    // Only tracked macro arguments need a link to the expansion's copy inventory.
+    argument_uses: Vec<MacroArgumentUse>,
+    format_captures: Vec<FormatCaptureSource>,
 }
 
 impl BodySourceStore {
     pub(crate) fn record(&mut self, source: BodySource) -> SourceId {
-        self.record_location(BodyLocation {
-            source,
-            editable: source.is_written(),
-        })
-    }
-
-    fn record_location(&mut self, location: BodyLocation) -> SourceId {
         let id = SourceId {
             owner: 0,
             local: u32::try_from(self.entries.len()).expect("body occurrences fit u32"),
         };
-        self.entries.push(location);
+        self.entries.push(source);
         id
     }
 
@@ -51,15 +39,44 @@ impl BodySourceStore {
     /// relationship, rather than a source occurrence that happens to be uneditable.
     pub fn source(&self, id: SourceId) -> BodySource {
         assert_eq!(id.owner, 0, "body occurrence belongs to this source table");
-        self.entries[id.local as usize].source
+        self.entries[id.local as usize]
+    }
+
+    pub fn occurrence(&self, id: SourceId) -> Option<SourceOccurrenceLocation> {
+        let location = self.location(id)?;
+        let copy = if location.kind == SourceLocationKind::MacroArgument {
+            // Entries were appended in source ID order, independent of written offsets.
+            self.argument_uses
+                .binary_search_by_key(&id.local, |usage| usage.source)
+                .ok()
+                .map(|index| self.argument_uses[index].copy)
+        } else {
+            None
+        };
+        Some(SourceOccurrenceLocation { location, copy })
     }
 
     pub fn span(&self, id: SourceId) -> Span {
         self.source(id).span
     }
 
-    pub fn provenance(&self) -> &BodySourceMap {
-        &self.provenance
+    /// Whether lowering proved this capture's exact range in a written template.
+    pub fn is_format_capture(&self, expr: ExprId, span: Span) -> bool {
+        self.format_captures
+            .binary_search_by_key(&expr.0, |capture| capture.expr.0)
+            .ok()
+            .is_some_and(|index| self.format_captures[index].span == span)
+    }
+
+    pub(crate) fn record_format_capture(&mut self, expr: ExprId, span: Span) {
+        self.format_captures
+            .push(FormatCaptureSource { expr, span });
+    }
+
+    pub(crate) fn finish_recording(&mut self) {
+        // Order captures once so expression scans can look them up individually.
+        self.format_captures
+            .sort_unstable_by_key(|capture| capture.expr.0);
     }
 
     /// Bounded display text for this initializer or a declaration recorded inside this body.
@@ -75,9 +92,14 @@ impl BodySourceStore {
 
     pub(crate) fn recorder<'a>(
         &'a mut self,
-        map: &'a dyn Fn(TextRange, SourceRole) -> BodyLocation,
+        map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<MacroCopyRef>),
+        dollar_crate_at: &'a dyn Fn(TextRange) -> Option<CrateRef>,
     ) -> BodySourceRecorder<'a> {
-        BodySourceRecorder { store: self, map }
+        BodySourceRecorder {
+            store: self,
+            map,
+            dollar_crate_at,
+        }
     }
 }
 
@@ -86,24 +108,41 @@ impl SourceLocations for BodySourceStore {
         if id.owner != 0 {
             return None;
         }
-        let entry = self.entries.get(id.local as usize)?;
-        Some(SourceLocation {
-            span: entry.source.span,
-            editable: entry.editable,
-        })
+        Some(self.entries.get(id.local as usize)?.location())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+struct MacroArgumentUse {
+    source: u32,
+    copy: MacroCopyRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+struct FormatCaptureSource {
+    expr: ExprId,
+    span: Span,
 }
 
 /// A lowering operation fixes its mapper before it records any ranges. Generated syntax can
 /// therefore use the same declaration/type lowerers without changing the meaning of stored IDs.
 pub(crate) struct BodySourceRecorder<'a> {
     store: &'a mut BodySourceStore,
-    map: &'a dyn Fn(TextRange, SourceRole) -> BodyLocation,
+    map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<MacroCopyRef>),
+    dollar_crate_at: &'a dyn Fn(TextRange) -> Option<CrateRef>,
 }
 
 impl RecordSource for BodySourceRecorder<'_> {
     fn record_as(&mut self, range: TextRange, role: SourceRole) -> SourceId {
-        self.store.record_location((self.map)(range, role))
+        let (source, copy) = (self.map)(range, role);
+        let id = self.store.record(source);
+        if let Some(copy) = copy {
+            self.store.argument_uses.push(MacroArgumentUse {
+                source: id.local,
+                copy,
+            });
+        }
+        id
     }
 
     fn record_initializer(&mut self, initializer: &ast::Expr) -> SourceId {
@@ -117,5 +156,9 @@ impl RecordSource for BodySourceRecorder<'_> {
 impl TypeSource for BodySourceRecorder<'_> {
     fn record_type(&mut self, range: TextRange) -> Option<SourceId> {
         Some(self.record(range))
+    }
+
+    fn dollar_crate_at(&self, range: TextRange) -> Option<CrateRef> {
+        (self.dollar_crate_at)(range)
     }
 }

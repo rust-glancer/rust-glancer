@@ -704,7 +704,7 @@ impl BodyLowering<'_> {
     /// Example: the initializer in `let value = make_expr!();` is expanded as an expression. A
     /// standalone `make_stmts!();` statement is handled earlier by statement lowering instead.
     fn lower_macro_expr(&mut self, expr: ast::MacroExpr, scope: ScopeId) -> ExprId {
-        let call_source = self.source(expr.syntax());
+        let call_source = self.expression_source(expr.syntax());
         let Some(call) = expr.macro_call() else {
             return self.lower_unknown_with_direct_children(expr.syntax(), scope);
         };

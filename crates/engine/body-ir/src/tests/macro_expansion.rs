@@ -593,7 +593,7 @@ pub mod local {
             expr e7 block s1 => i32 @ 1:32-14:2
               stmt s0 let v1 @ 2:5-6:7
                 initializer
-                  expr e2 binary + => i32 @ 2:20-6:6
+                  expr e2 binary + => i32 @ 4:24-4:33
                     lhs
                       expr e0 path input -> local v0 => i32 @ 4:24-4:29
                     rhs
@@ -621,14 +621,14 @@ pub mod local {
             expr e7 block s1 => i32 @ 16:32-31:2
               stmt s0 let v1 @ 17:5-28:6
                 initializer
-                  expr e2 binary + => i32 @ 17:5-28:6
+                  expr e2 binary + => i32 @ 22:27-22:40
                     lhs
                       expr e0 path input -> local v0 => i32 @ 22:27-22:32
                     rhs
                       expr e1 path input -> local v0 => i32 @ 22:35-22:40
               stmt s1 let v2 @ 17:5-28:6
                 initializer
-                  expr e5 binary + => i32 @ 17:5-28:6
+                  expr e5 binary + => i32 @ 23:27-23:42
                     lhs
                       expr e3 path doubled -> local v1 => i32 @ 23:27-23:34
                     rhs

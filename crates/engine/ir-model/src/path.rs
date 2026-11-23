@@ -111,9 +111,13 @@ impl Path {
     ///
     /// This is used by source IRs that retain keyword path segments. A keyword after the root is
     /// rejected because it cannot be represented honestly as an ordinary semantic segment.
-    pub fn from_syntax_names(absolute: bool, names: Vec<Name>) -> Option<Self> {
+    pub fn from_syntax_names(
+        absolute: bool,
+        names: Vec<Name>,
+        dollar_crate: Option<CrateRef>,
+    ) -> Option<Self> {
         let labels: Vec<&str> = names.iter().map(Name::as_str).collect();
-        let (root, consumed) = Self::classify_root(absolute, &labels, None)?;
+        let (root, consumed) = Self::classify_root(absolute, &labels, dollar_crate)?;
         let segments = names.into_iter().skip(consumed).collect();
         Some(Self::new(root, segments))
     }
@@ -421,10 +425,10 @@ mod tests {
 
     #[test]
     fn classifies_and_validates_syntax_path_roots() {
-        assert!(Path::from_syntax_names(false, names(&["foo", "super", "Bar"])).is_none());
-        assert!(Path::from_syntax_names(true, names(&["crate", "Bar"])).is_none());
+        assert!(Path::from_syntax_names(false, names(&["foo", "super", "Bar"]), None).is_none());
+        assert!(Path::from_syntax_names(true, names(&["crate", "Bar"]), None).is_none());
         assert_eq!(
-            Path::from_syntax_names(false, names(&["super", "super", "Bar"])),
+            Path::from_syntax_names(false, names(&["super", "super", "Bar"]), None),
             Some(path(PathRoot::Super(2), &["Bar"]))
         );
     }

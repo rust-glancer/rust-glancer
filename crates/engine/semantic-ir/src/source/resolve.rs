@@ -25,6 +25,11 @@ pub enum SourceSelection {
     /// Every interpretation of this physical file, including reused include input. May expand
     /// unrelated owners to discover whether their macros include this file.
     AllInFile(FileId),
+    /// Every interpretation touching a point, including reused include input.
+    AllAt {
+        file: FileId,
+        offset: u32,
+    },
     All,
 }
 
@@ -37,10 +42,14 @@ impl SourceSelection {
         Self::WrittenRange { file, range }
     }
 
+    pub fn all_at(file: FileId, offset: u32) -> Self {
+        Self::AllAt { file, offset }
+    }
+
     /// Cursor and viewport reads use the same owner filtering; a cursor has zero-width bounds.
     pub(crate) fn bounds(self) -> Option<Span> {
         match self {
-            Self::Written { offset, .. } => Some(Span {
+            Self::Written { offset, .. } | Self::AllAt { offset, .. } => Some(Span {
                 start: offset,
                 end: offset,
             }),
@@ -51,7 +60,7 @@ impl SourceSelection {
 
     pub fn offset(self) -> Option<u32> {
         match self {
-            Self::Written { offset, .. } => Some(offset),
+            Self::Written { offset, .. } | Self::AllAt { offset, .. } => Some(offset),
             _ => None,
         }
     }
@@ -60,6 +69,7 @@ impl SourceSelection {
         match self {
             Self::Written { file, .. }
             | Self::WrittenRange { file, .. }
+            | Self::AllAt { file, .. }
             | Self::AllInFile(file) => Some(file),
             Self::All => None,
         }
@@ -93,7 +103,11 @@ impl<'db> DeclarationSourceResolver<'db> {
         };
         let known = target.source_ownership.value_ref(self.db)?;
         let indexed = known.known_owners(file);
-        let owners = if matches!(selection, SourceSelection::AllInFile(_)) || indexed.is_empty() {
+        let owners = if matches!(
+            selection,
+            SourceSelection::AllInFile(_) | SourceSelection::AllAt { .. }
+        ) || indexed.is_empty()
+        {
             complete_source_ownership(self.db, self.krate)?.owners(file)
         } else {
             indexed

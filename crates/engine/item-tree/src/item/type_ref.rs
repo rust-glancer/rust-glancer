@@ -1,6 +1,6 @@
 use std::fmt;
 
-use rg_ir_model::{Mutability, Path, SourceId};
+use rg_ir_model::{CrateRef, Mutability, Path, SourceId};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -182,6 +182,9 @@ pub struct TypePath {
     #[shrink(skip)]
     pub location: Option<SourceId>,
     pub absolute: bool,
+    /// The defining crate for a leading `$crate` segment. Keep the written segment for display
+    /// and source positions. Box the crate so this rarely used root adds only a pointer.
+    pub dollar_crate: Option<Box<CrateRef>>,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<TypePathAnchor>>")]
     pub anchor: Option<TypePathAnchor>,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypePathSegment>>")]
@@ -206,6 +209,7 @@ impl TypePath {
                 .iter()
                 .map(|segment| segment.name.clone())
                 .collect(),
+            self.dollar_crate.as_deref().copied(),
         )
     }
 
@@ -225,12 +229,29 @@ impl TypePath {
                 .take(end_idx.saturating_add(1))
                 .map(|segment| segment.name.clone())
                 .collect(),
+            self.dollar_crate.as_deref().copied(),
         )
+    }
+
+    /// Keep a type-shaped prefix with the same root and any preceding type anchor.
+    pub fn prefix(&self, segment_count: usize) -> Option<Self> {
+        let segments = self.segments.get(..segment_count)?;
+        Some(Self {
+            location: self.location,
+            absolute: self.absolute,
+            dollar_crate: self.dollar_crate.clone(),
+            anchor: self.anchor.clone(),
+            segments: segments.to_vec(),
+        })
     }
 
     /// Returns the name of a single-segment relative path.
     pub fn single_name(&self) -> Option<&Name> {
-        if self.anchor.is_some() || self.absolute || self.segments.len() != 1 {
+        if self.anchor.is_some()
+            || self.absolute
+            || self.dollar_crate.is_some()
+            || self.segments.len() != 1
+        {
             return None;
         }
 
@@ -818,6 +839,7 @@ mod tests {
         let path = TypePath {
             location: location(),
             absolute: false,
+            dollar_crate: None,
             anchor: Some(TypePathAnchor::Type(Box::new(TypeRef::Path(type_path(
                 false,
                 &["T"],
@@ -837,6 +859,7 @@ mod tests {
         TypePath {
             location: location(),
             absolute,
+            dollar_crate: None,
             anchor: None,
             segments: names
                 .iter()

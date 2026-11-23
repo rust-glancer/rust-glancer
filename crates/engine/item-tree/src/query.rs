@@ -1,19 +1,26 @@
+use std::sync::Arc;
+
 use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_source::QueryContext;
 use rg_std::Shrink as _;
 use rg_workspace::PackageInput;
+use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{DeclarationSourceStore, FileTree, lower::FileLowering};
+use crate::{
+    DeclarationSourceStore, ExpandedItemSyntax, FileTree, ItemTreeId, lower::FileLowering,
+};
 
-/// Two outputs from lowering the same saved file: declaration meaning and source data.
+/// Declaration meaning and separate source data from lowering one file.
 ///
 /// Adding a comment before `fn load() -> User` changes its positions, but can leave its lowered
 /// declaration unchanged. Separate outputs let semantic queries depend on `items` without also
-/// depending on `sources`. Positions and initializer previews use the matching source output.
+/// depending on `sources`. A body from a `cfg_select!` arm reads the tokens for its arm,
+/// since that body is inside a token tree in the ordinary file parse.
 #[ajika::output]
 pub struct FileDeclarations {
     pub items: FileTree,
     pub sources: DeclarationSourceStore<Span>,
+    pub cfg_select_bodies: FileExpandedBodies,
 }
 
 /// Lowers one file in its package context. Macro spans retain both the package slot and the
@@ -27,10 +34,43 @@ pub fn file_declarations(
 ) -> ajika::Result<FileDeclarations> {
     let edition = PackageInput::at(package).edition(db)?;
     let syntax = rg_parse::source_syntax(db, file, edition)?;
-    let (mut tree, mut sources) = FileLowering::lower(package, file, edition, &syntax);
+    let (mut tree, mut sources, bodies) = FileLowering::lower(package, file, edition, &syntax);
     sources.shrink_to_fit();
     tree.shrink_to_fit();
-    FileDeclarations::new(db, tree, sources)
+    let cfg_select_bodies = FileExpandedBodies::new(db, bodies)?;
+    FileDeclarations::new(db, tree, sources, cfg_select_bodies)
+}
+
+/// Finds the expansion for a body whose declaration belongs to a file's item tree.
+///
+/// File lowering fills this index for `cfg_select!` arms. An item in an arm has a file-local
+/// `ItemTreeId`, and its body syntax comes from parsing the arm's tokens. The body items in
+/// one arm share a packed-token output that the reader can open on demand.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct FileExpandedBodies {
+    items: Vec<(ItemTreeId, usize)>,
+    expansions: Vec<ajika::Output<ExpandedItemSyntax>>,
+}
+
+impl FileExpandedBodies {
+    fn new(db: &QueryContext<'_>, bodies: Vec<ExpandedItemSyntax>) -> ajika::Result<Self> {
+        let mut items = Vec::new();
+        let mut expansions = Vec::with_capacity(bodies.len());
+        for (index, bodies) in bodies.into_iter().enumerate() {
+            items.extend(bodies.body_items.iter().map(|(item, _)| (*item, index)));
+            expansions.push(db.output(("cfg body tokens", index), Arc::new(bodies))?);
+        }
+        items.sort_unstable_by_key(|(item, _)| item.0);
+        Ok(Self { items, expansions })
+    }
+
+    pub fn get(&self, item: ItemTreeId) -> Option<&ajika::Output<ExpandedItemSyntax>> {
+        let index = self
+            .items
+            .binary_search_by_key(&item.0, |(item, _)| item.0)
+            .ok()?;
+        self.expansions.get(self.items[index].1)
+    }
 }
 
 /// Acquiring source data is an explicit dependency, separate from reading declaration meaning.

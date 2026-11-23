@@ -11,6 +11,7 @@ use rg_ir_model::{CrateRef, FileId, ModuleId};
 use rg_item_tree::{ItemTreeRef, ItemTrees};
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
+use rg_tt::Span as TtSpan;
 
 use super::{ItemOrder, MacroCallOrigin, generated_tree::GeneratedSourceLowering};
 use crate::{
@@ -19,6 +20,7 @@ use crate::{
         MacroSourceFileResolution, MacroSourceFileResolutions, collect::DeclarationCollector,
         crates::CrateBuilder,
     },
+    macro_copies::ForwardedMacroInputs,
     profile::metric,
 };
 
@@ -31,7 +33,8 @@ pub(crate) struct GeneratedOrigin {
     pub(crate) module: ModuleId,
     pub(crate) source: ItemTreeRef,
     pub(crate) file_id: FileId,
-    pub(crate) call_site: rg_tt::Span,
+    pub(crate) call_site: TtSpan,
+    pub(crate) forwarding: Option<ForwardedMacroInputs>,
     pub(crate) order: ItemOrder,
     pub(crate) dollar_crate: Option<CrateRef>,
     pub(crate) parent_call: usize,
@@ -68,9 +71,11 @@ impl GeneratedOrigin {
             self.call_site,
             self.dollar_crate,
             expansion,
+            self.forwarding.as_ref(),
         )
         .context("lower macro expansion declarations")?;
         let source = state.generated_items.alloc_source(source);
+        state.macro_directives[self.parent_call].has_copy_coverage = true;
         let timer = metric::TIMING_COLLECT_GENERATED_ITEMS.start_timer();
         let result = DeclarationCollector::new(
             state,

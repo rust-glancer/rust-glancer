@@ -345,6 +345,29 @@ pub fn demo(input: u64) {
 }
 
 #[test]
+fn copied_binding_hints_require_agreement_about_suppression() {
+    check_inlay_hints(
+        r#"
+//- /src/lib.rs crate:copied_binding_hints
+macro_rules! inferred {
+    ($name:ident) => { let $name = 1_u8; let $name = 2_u8; };
+}
+macro_rules! partly_annotated {
+    ($name:ident) => { let $name = 1_u8; let $name: u8 = 2_u8; };
+}
+pub fn demo() {
+    inferred!(agree);
+    partly_annotated!(mixed);
+}
+"#,
+        InlayHintsQuery::new("copied binding agreement", "/src/lib.rs"),
+        expect![[r#"
+            `: u8` @ 8:15-8:20 // copied binding agreement
+        "#]],
+    );
+}
+
+#[test]
 fn shows_type_hints_for_pattern_bindings_with_known_types() {
     check_inlay_hints(
         r#"

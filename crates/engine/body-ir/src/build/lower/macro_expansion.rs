@@ -11,7 +11,6 @@ use rg_def_map::{
     BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, DefinitionReader,
 };
 use rg_ir_model::ModuleRef;
-use rg_std::CancellationToken;
 use rg_syntax::ast;
 
 use crate::body::BodySource;
@@ -23,6 +22,8 @@ pub(crate) trait BodyMacroExpansionContext {
     /// produces another `recurse!()`, nested lowering asks for another scope until the cap is hit
     /// and the caller keeps the original macro as an unknown expression or statement.
     fn expansion_scope(&self) -> Option<BodyMacroExpansionScope>;
+    fn expansion_depth(&self) -> usize;
+    fn resume_expansion(&self, depth: usize) -> BodyMacroExpansionScope;
 
     /// Expand an expression macro call or classify a known compiler builtin.
     ///
@@ -87,11 +88,10 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
         edition: rg_text::RustEdition,
         def_maps: &'ctx DefinitionReader<'db>,
         cfg: CfgEvaluator<'ctx>,
-        cancellation: CancellationToken,
     ) -> Self {
         Self {
             edition,
-            expander: DefMapBodyMacroExpander::new(def_maps, cancellation),
+            expander: DefMapBodyMacroExpander::new(def_maps),
             cfg,
         }
     }
@@ -109,6 +109,14 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
 impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
     fn expansion_scope(&self) -> Option<BodyMacroExpansionScope> {
         self.expander.expansion_scope()
+    }
+
+    fn expansion_depth(&self) -> usize {
+        self.expander.expansion_depth()
+    }
+
+    fn resume_expansion(&self, depth: usize) -> BodyMacroExpansionScope {
+        self.expander.resume_expansion(depth)
     }
 
     fn expand_expr_call(

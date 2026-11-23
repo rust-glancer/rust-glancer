@@ -4,23 +4,28 @@
 //! source identity to the file tables read through the operation's query context. Generated syntax
 //! takes an extra step: its occurrences identify input tokens, which lead back to those file tables.
 
+mod macro_copies;
 mod ownership;
 mod resolve;
 
 use rg_def_map::{
-    GeneratedExpansionLocations, GeneratedLocations, GeneratedSourceStore, GeneratedSourceStoreId,
-    ItemSource, ItemSourceKind,
+    GeneratedBodySyntax, GeneratedExpansionLocations, GeneratedItemRef, GeneratedLocations,
+    GeneratedSourceStore, GeneratedSourceStoreId, ItemSource, ItemSourceKind, MacroCopyRef,
+    MacroExpansionRef, SourceOccurrenceLocation,
 };
-use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, Span};
+use rg_ir_model::{
+    CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, SourceLocationKind, Span,
+};
 use rg_item_tree::{DeclarationSourceStore, SourceLocations, file_declaration_sources};
 use rg_source::QueryContext;
 
 pub(crate) use self::resolve::DeclarationSourceResolver;
 pub use self::{
+    macro_copies::{ItemMacroCopyIndex, ItemMacroCoverage},
     ownership::{SourceOwnership, SourceOwnershipIndex, complete_source_ownership},
     resolve::SourceSelection,
 };
-use crate::{associated_declarations, target_declarations};
+use crate::{BodyOwnerData, associated_declarations, target_declarations};
 
 /// The source tables needed to read occurrences and previews from one declaration source.
 ///
@@ -33,6 +38,7 @@ use crate::{associated_declarations, target_declarations};
 pub enum ItemSourceView<'db> {
     File(&'db DeclarationSourceStore<Span>),
     Generated {
+        expansion: MacroExpansionRef,
         locations: &'db GeneratedExpansionLocations,
         inputs: Vec<((PackageSlot, FileId), &'db DeclarationSourceStore<Span>)>,
     },
@@ -59,17 +65,7 @@ impl<'db> ItemSourceView<'db> {
                 ItemSourceKind::Generated(generated) | ItemSourceKind::Synthetic(generated) => {
                     // Expansion slots are local to the query that produced them. The source ref
                     // routes directly to module output or one member owner, without searching others.
-                    let sources = match generated.source_store() {
-                        GeneratedSourceStoreId::Target => target_declarations(db, krate)?
-                            .generated_sources
-                            .value_ref(db)?,
-                        GeneratedSourceStoreId::TraitMembers(id) => {
-                            Self::member_sources(db, krate, ItemStoreId::Trait(id))?
-                        }
-                        GeneratedSourceStoreId::ImplMembers(id) => {
-                            Self::member_sources(db, krate, ItemStoreId::Impl(id))?
-                        }
-                    };
+                    let sources = Self::generated_sources(db, krate, generated.source_store())?;
                     let locations = sources
                         .get(generated.source())
                         .ok_or_else(|| ajika::Error::application("generated source is absent"))?;
@@ -85,7 +81,11 @@ impl<'db> ItemSourceView<'db> {
                                     file_declaration_sources(db, package, file)?,
                                 ));
                             }
-                            return Ok(Self::Generated { locations, inputs });
+                            return Ok(Self::Generated {
+                                expansion: generated.expansion(krate),
+                                locations,
+                                inputs,
+                            });
                         }
                     }
                 }
@@ -96,6 +96,63 @@ impl<'db> ItemSourceView<'db> {
                 }
             }
         }
+    }
+
+    /// Open body syntax from its original expansion store, independently of its semantic owner.
+    pub fn generated_body_syntax(
+        db: &'db QueryContext<'db>,
+        krate: CrateRef,
+        item: GeneratedItemRef,
+    ) -> ajika::Result<Option<GeneratedBodySyntax>> {
+        Self::generated_sources(db, krate, item.source_store())?.body_syntax(db, krate, item)
+    }
+
+    /// Return the invocation that bounds a generated body's exact source occurrences in its file.
+    ///
+    /// A generated item's full declaration maps to the invocation used to lower its body.
+    /// For `make!(name)`, exact occurrences in the generated body must be copied from that
+    /// invocation. Read the declaration's origin without reopening the expanded tokens.
+    pub fn generated_body_invocation(
+        db: &'db QueryContext<'db>,
+        owner: &BodyOwnerData,
+    ) -> ajika::Result<Option<Span>> {
+        let ItemSourceKind::Generated(item) = owner.source.kind else {
+            return Ok(None);
+        };
+        let sources =
+            Self::generated_sources(db, owner.module.origin.origin_crate(), item.source_store())?;
+        let Some(GeneratedLocations::Expansion(locations)) = sources.get(item.source()) else {
+            return Ok(None);
+        };
+        let Some(location) = locations
+            .get(owner.location)
+            .filter(|location| !location.editable)
+        else {
+            return Ok(None);
+        };
+        let (package, file) = location.input_file();
+        if file != owner.file {
+            return Ok(None);
+        }
+        let inputs = file_declaration_sources(db, package, file)?;
+        Ok(inputs.token_span(location.origin))
+    }
+
+    fn generated_sources(
+        db: &'db QueryContext<'db>,
+        krate: CrateRef,
+        store: GeneratedSourceStoreId,
+    ) -> ajika::Result<&'db GeneratedSourceStore> {
+        let owner = match store {
+            GeneratedSourceStoreId::Target => {
+                return target_declarations(db, krate)?
+                    .generated_sources
+                    .value_ref(db);
+            }
+            GeneratedSourceStoreId::TraitMembers(id) => ItemStoreId::Trait(id),
+            GeneratedSourceStoreId::ImplMembers(id) => ItemStoreId::Impl(id),
+        };
+        Self::member_sources(db, krate, owner)
     }
 
     fn member_sources(
@@ -116,23 +173,43 @@ impl<'db> ItemSourceView<'db> {
             Self::Generated { locations, .. } => locations.initializer_preview(occurrence),
         }
     }
-}
 
-impl SourceLocations for ItemSourceView<'_> {
-    fn location(&self, occurrence: SourceId) -> Option<SourceLocation> {
+    pub fn occurrence(&self, id: SourceId) -> Option<SourceOccurrenceLocation> {
         match self {
-            Self::File(locations) => locations.location(occurrence),
-            Self::Generated { locations, inputs } => {
-                // The first lookup finds an input token reference. Only the input file's table
-                // can turn that reference into byte offsets for this operation's snapshot.
-                let location = locations.get(occurrence)?;
-                let input = location.input_file();
+            Self::File(locations) => Some(SourceOccurrenceLocation {
+                location: locations.location(id)?,
+                copy: None,
+            }),
+            Self::Generated {
+                expansion,
+                locations,
+                inputs,
+            } => {
+                // Resolve the token origin and copy ID from the same generated occurrence.
+                let source = locations.get(id)?;
+                let input = source.input_file();
                 let sources = inputs.iter().find(|(key, _)| *key == input)?.1;
-                Some(SourceLocation {
-                    span: sources.token_span(location.origin)?,
-                    editable: location.editable,
+                Some(SourceOccurrenceLocation {
+                    location: SourceLocation {
+                        span: sources.token_span(source.origin)?,
+                        kind: if source.editable {
+                            SourceLocationKind::MacroArgument
+                        } else {
+                            SourceLocationKind::NavigationFallback
+                        },
+                    },
+                    copy: source.copy.map(|token| MacroCopyRef {
+                        expansion: *expansion,
+                        token,
+                    }),
                 })
             }
         }
+    }
+}
+
+impl SourceLocations for ItemSourceView<'_> {
+    fn location(&self, id: SourceId) -> Option<SourceLocation> {
+        self.occurrence(id).map(|source| source.location)
     }
 }

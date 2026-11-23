@@ -5,16 +5,14 @@ use rg_ir_model::{BodySource, CrateRef, FileId, LocalDefRef, ModuleRef, PackageS
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest};
 use rg_parse::syntax_edition;
-use rg_syntax::{TextRange, ast, utils::normalized_syntax_text};
+use rg_syntax::{AstNode as _, SyntaxNode, TextRange, ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
 use rg_tt::{
-    Span as TtSpan, TokenOwner, TopSubtree,
-    syntax_bridge::{
-        ExpansionSpanMap, SpanFactory, TokenSourceMap, syntax_node_to_token_tree_with_span,
-    },
+    Span as TtSpan, TokenOrigins, TokenOwner, TopSubtree,
+    syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree_with_span},
 };
 
-use super::ExpandedBodyMacro;
+use super::{BodyMacroInputSources, ExpandedBodyMacro, expanded::BodyMacroInputMap};
 use crate::MacroDefinitionView;
 
 /// Source context carried from one body macro invocation to the next.
@@ -30,16 +28,31 @@ pub enum BodyMacroCallOrigin {
         dollar_crate: CrateRef,
         /// Maps offsets in the parent expansion's text back to original token spans.
         source_map: Arc<ExpansionSpanMap>,
-        input_sources: Arc<TokenSourceMap>,
+        input_sources: BodyMacroInputSources,
         call_site: TtSpan,
     },
 }
 
 impl BodyMacroCallOrigin {
-    fn dollar_crate_for_path(&self) -> Option<CrateRef> {
+    fn dollar_crate_for_path(&self, call: &ast::MacroCall) -> Option<CrateRef> {
         match self {
             Self::Source => None,
-            Self::Generated { dollar_crate, .. } => Some(*dollar_crate),
+            Self::Generated {
+                dollar_crate,
+                source_map,
+                ..
+            } => call
+                .path()
+                .and_then(|path| path.first_segment())
+                .and_then(|segment| segment.name_ref())
+                .and_then(|name| name.dollar_crate_token())
+                .and_then(|token| {
+                    ExpandedBodyMacro::<SyntaxNode>::mapped_dollar_crate(
+                        source_map,
+                        token.text_range(),
+                    )
+                })
+                .or(Some(*dollar_crate)),
         }
     }
 
@@ -103,24 +116,36 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
     /// Keep the original written call's file and range. The nested syntax has generated offsets,
     /// so its tokens need this expansion's map to recover original argument positions.
     /// Its `$crate` paths belong to the macro definition that produced the output.
-    pub(super) fn in_expansion<T>(&self, expanded: &ExpandedBodyMacro<T>) -> Self {
+    pub fn in_expansion<T>(&self, expanded: &ExpandedBodyMacro<T>) -> Self {
         Self {
-            origin: BodyMacroCallOrigin::Generated {
-                dollar_crate: expanded.dollar_crate(),
-                source_map: expanded.source_map(),
-                input_sources: expanded.input_sources(),
-                call_site: expanded.call_site(),
-            },
+            origin: expanded.call_origin(),
             ..self.clone()
         }
     }
 
-    pub(super) fn source(&self) -> BodySource {
+    pub fn source(&self) -> BodySource {
         self.source
     }
 
     pub(super) fn path_text(&self, call: &ast::MacroCall) -> Option<String> {
         call.path().map(|path| normalized_syntax_text(&path))
+    }
+
+    /// A call such as `assert!(ok, "{user}")` can capture names under Rust 2021 panic rules.
+    /// Require a modern caller and a modern macro path in generated code. Some standard
+    /// wrappers use the caller's edition for panic behavior.
+    pub(super) fn assert_formats_single_message(&self, call: &ast::MacroCall) -> bool {
+        if !syntax_edition(self.edition).at_least_2021() {
+            return false;
+        }
+        match &self.origin {
+            BodyMacroCallOrigin::Source => true,
+            BodyMacroCallOrigin::Generated { source_map, .. } => call
+                .path()
+                .and_then(|path| path.syntax().first_token())
+                .and_then(|token| source_map.span_for_range(token.text_range()))
+                .is_some_and(|span| span.ctx.edition().at_least_2021()),
+        }
     }
 
     pub(super) fn invocation(
@@ -139,8 +164,8 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         )
     }
 
-    pub(super) fn dollar_crate_for_path(&self) -> Option<CrateRef> {
-        self.origin.dollar_crate_for_path()
+    pub(super) fn dollar_crate_for_path(&self, call: &ast::MacroCall) -> Option<CrateRef> {
+        self.origin.dollar_crate_for_path(call)
     }
 
     pub(super) fn dollar_crate_for_expansion(&self) -> Option<CrateRef> {
@@ -198,9 +223,8 @@ impl BodyMacroCallee<'_> {
 pub(super) struct BodyMacroInvocation {
     path_text: String,
     args: TopSubtree,
-    call_package: PackageSlot,
     call_site: TtSpan,
-    input_sources: Arc<TokenSourceMap>,
+    input_sources: BodyMacroInputSources,
 }
 
 impl BodyMacroInvocation {
@@ -221,35 +245,53 @@ impl BodyMacroInvocation {
             TokenOwner::Body,
             syntax_edition(edition),
         );
-        let (args, input_sources, call_site) = match origin {
+        let mut sources = BodyMacroInputMap::default();
+        let call_site = sources.record(
+            span_factory,
+            TextRange::new(span.start.into(), span.end.into()),
+            None,
+        );
+        let args = match origin {
             BodyMacroCallOrigin::Source => {
-                let mut sources = TokenSourceMap::default();
-                let call_site = sources.record(
-                    span_factory,
-                    TextRange::new(span.start.into(), span.end.into()),
-                );
-                let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
-                    sources.record(span_factory, range)
-                });
-                (args, Arc::new(sources), call_site)
+                syntax_node_to_token_tree_with_span(&args, &mut |range| {
+                    sources.record(span_factory, range, None)
+                })
             }
             BodyMacroCallOrigin::Generated {
                 source_map,
                 input_sources,
-                call_site,
+                call_site: parent_call_site,
                 ..
-            } => {
-                let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
-                    source_map.span_for_range(range).unwrap_or(*call_site)
-                });
-                (args, Arc::clone(input_sources), *call_site)
-            }
+            } => syntax_node_to_token_tree_with_span(&args, &mut |range| {
+                let mut token = source_map
+                    .span_for_range(range)
+                    .unwrap_or(*parent_call_site);
+                if token.anchor == parent_call_site.anchor
+                    && let Some(source) = input_sources.span(token)
+                    && source != span
+                    && span.contains_span(source)
+                {
+                    // If `outer!(x)` emits `inner!(x, x)`, give each copy its own input ID
+                    // even though both point to the same written x. Preserve its hygiene.
+                    let source = TextRange::new(source.start.into(), source.end.into());
+                    let forwarded = sources.record(span_factory, source, Some(range));
+                    return TtSpan {
+                        ctx: token.ctx,
+                        ..forwarded
+                    };
+                }
+                if token.anchor == call_site.anchor {
+                    // An unmapped token must never address the new table using an old ID.
+                    token.origins = TokenOrigins::synthetic(call_site.origins.first());
+                }
+                token
+            }),
         };
+        let input_sources = BodyMacroInputSources::Body(Arc::new(sources));
 
         Some(Self {
             path_text,
             args,
-            call_package: package,
             call_site,
             input_sources,
         })
@@ -263,12 +305,8 @@ impl BodyMacroInvocation {
         &self.args
     }
 
-    pub(super) fn input_sources(&self) -> Arc<TokenSourceMap> {
-        Arc::clone(&self.input_sources)
-    }
-
-    pub(super) fn call_package(&self) -> PackageSlot {
-        self.call_package
+    pub(super) fn input_sources(&self) -> BodyMacroInputSources {
+        self.input_sources.clone()
     }
 
     pub(super) fn expansion_request<'a>(

@@ -1,25 +1,17 @@
 //! Lowering for function parameters, blocks, statements, and body-local items.
 
 use rg_ir_model::{ExprId, Mutability, ScopeId, StmtId};
-use rg_item_tree::{
-    Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst as _, ImplItem, InnerDocs,
-    ItemKind, ItemNode, ItemTreeId, MacroCallItem, MacroUseAttr, MaybeFromAst, ModuleItem,
-    ModuleSource, OuterDocs, SelfParamKind, SourceRole, StructItem, TraitItem, UnionItem, UseItem,
-    VisibilityLevel,
-};
+use rg_item_tree::{ItemLowering, ItemNode, LoweredItem, SelfParamKind};
 use rg_syntax::{
     AstNode as _,
-    ast::{self, HasModuleItem as _, HasName as _},
+    ast::{self, HasName as _},
 };
 use rg_text::Name;
 
 use super::body::BodyLowering;
-use crate::{
-    body::{
-        BindingData, BindingKind, BodySource, ExprBlockKind, ExprKind, FunctionParamData, StmtData,
-        StmtKind,
-    },
-    build::local_items::LocalItemLowering,
+use crate::body::{
+    BindingData, BindingKind, BodySource, ExprBlockKind, ExprKind, FunctionParamData, StmtData,
+    StmtKind,
 };
 
 impl BodyLowering<'_> {
@@ -393,173 +385,24 @@ impl BodyLowering<'_> {
         })
     }
 
-    pub(super) fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
-        // Descendants get independent occurrence owners. Finish their lowering before borrowing
-        // the recorder for this declaration's header.
-        let children = match item {
-            ast::Item::Impl(item) => self.lower_source_assoc_items(item.assoc_item_list()),
-            ast::Item::Trait(item) => self.lower_source_assoc_items(item.assoc_item_list()),
-            ast::Item::ExternBlock(item) => item
-                .extern_item_list()
-                .map(|list| {
-                    self.lower_source_child_items(
-                        list.extern_items()
-                            .filter_map(|item| ast::Item::cast(item.syntax().clone())),
-                    )
-                })
-                .unwrap_or_default(),
-            _ => Vec::new(),
+    fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
+        let children = ItemLowering::lower_children(item, |child| {
+            let child = self.cfg.enabled_syntax(child)?;
+            let node = self.lower_source_item(&child)?;
+            let location = node.location;
+            Some(self.builder.alloc_scopeless_source_item(node, location))
+        });
+        let lowering = ItemLowering {
+            file_id: self.source(item.syntax()).file_id,
+            dollar_crate: self.dollar_crate(),
+            // TODO: Retain body-local macro definitions when local macro lookup can use them.
+            macro_spans: None,
         };
-        let module = match item {
-            ast::Item::Module(item) => Some(self.lower_source_module_item(item)),
-            _ => None,
-        };
-        let dollar_crate = self.dollar_crate();
-        let source = self.source(item.syntax());
-        self.with_sources(|locations| {
-            if let Some(node) = LocalItemLowering::declaration(item, source, locations) {
-                return Some(node);
-            }
-            let kind = match item {
-                ast::Item::AsmExpr(_) => ItemKind::AsmExpr,
-                ast::Item::Enum(item) => {
-                    ItemKind::Enum(EnumItem::from_ast(item, (dollar_crate, &mut *locations)))
-                }
-                ast::Item::ExternBlock(item) => {
-                    ItemKind::ExternBlock(ExternBlockItem::from_ast(item, children))
-                }
-                ast::Item::ExternCrate(item) => {
-                    ItemKind::ExternCrate(ExternCrateItem::from_ast(item, &mut *locations))
-                }
-                ast::Item::Impl(item) => {
-                    ItemKind::Impl(ImplItem::from_ast(item, (children, &mut *locations)))
-                }
-                ast::Item::Module(_) => {
-                    ItemKind::Module(module.expect("module syntax was lowered above"))
-                }
-                ast::Item::Struct(item) => {
-                    ItemKind::Struct(StructItem::from_ast(item, (dollar_crate, &mut *locations)))
-                }
-                ast::Item::Trait(item) => {
-                    ItemKind::Trait(TraitItem::from_ast(item, (children, &mut *locations)))
-                }
-                ast::Item::Union(item) => {
-                    ItemKind::Union(UnionItem::from_ast(item, &mut *locations))
-                }
-                ast::Item::Use(item) => ItemKind::Use(UseItem::from_ast(item, &mut *locations)),
-                ast::Item::MacroCall(item)
-                    if item
-                        .syntax()
-                        .parent()
-                        .is_some_and(|parent| ast::ExternItemList::can_cast(parent.kind())) =>
-                {
-                    // Foreign macros remain visible, but this path does not schedule expansion.
-                    ItemKind::MacroCall(MacroCallItem {
-                        path: item.path().map(|path| path.syntax().text().to_string()),
-                        callee: item
-                            .path()
-                            .and_then(|path| path.segment())
-                            .and_then(|segment| segment.name_ref())
-                            .map(|name| Name::new(name.text())),
-                        input: None,
-                        builtin: None,
-                    })
-                }
-                // TODO: Collect body-local macro definitions with the same expansion support as
-                // file declarations. Expression and statement invocations expand separately.
-                _ => return None,
-            };
-            let (name, name_location) = match item {
-                ast::Item::ExternCrate(item) => item
-                    .name_ref()
-                    .map(|name| {
-                        (
-                            Some(Name::new(name.text())),
-                            Some(locations.record(name.syntax().text_range())),
-                        )
-                    })
-                    .unwrap_or_default(),
-                _ => LocalItemLowering::name_syntax(item)
-                    .map(|name| {
-                        (
-                            Some(Name::new(name.text())),
-                            Some(locations.record(name.syntax().text_range())),
-                        )
-                    })
-                    .unwrap_or_default(),
-            };
-            let visibility = item.syntax().children().find_map(ast::Visibility::cast);
-            Some(ItemNode::new(
-                kind,
-                name,
-                name_location,
-                VisibilityLevel::from_ast(&visibility, ()),
-                <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
-                locations.record_as(item.syntax().text_range(), SourceRole::Declaration),
-                source.file_id,
-            ))
-        })
-    }
-
-    fn lower_source_module_item(&mut self, item: &ast::Module) -> ModuleItem {
-        let source = match item.item_list() {
-            Some(item_list) => ModuleSource::Inline {
-                items: self.lower_source_child_items(item_list.items()),
-            },
-            // TODO: Resolve out-of-line body-local modules once this lowering pass knows the
-            // module file context that normal item-tree lowering receives.
-            None => ModuleSource::OutOfLine,
-        };
-
-        ModuleItem {
-            inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
-            macro_use: MacroUseAttr::maybe_from_ast(item, ()),
-            path_override: rg_parse::module_path_override(item),
-            source,
+        let LoweredItem { node, body_range } =
+            self.with_sources(|source| lowering.lower(item, children, source))?;
+        if body_range.is_some() {
+            self.defer_generated_body(node.location, item.syntax());
         }
-    }
-
-    fn lower_source_child_items(
-        &mut self,
-        items: impl IntoIterator<Item = ast::Item>,
-    ) -> Vec<ItemTreeId> {
-        let mut item_ids = Vec::new();
-        for item in items {
-            let Some(item) = self.cfg.enabled_syntax(item) else {
-                continue;
-            };
-            if let Some(node) = self.lower_source_item(&item) {
-                let location = node.location;
-                item_ids.push(self.builder.alloc_scopeless_source_item(node, location));
-            }
-        }
-        item_ids
-    }
-
-    fn lower_source_assoc_items(
-        &mut self,
-        item_list: Option<ast::AssocItemList>,
-    ) -> Vec<ItemTreeId> {
-        let Some(item_list) = item_list else {
-            return Vec::new();
-        };
-
-        let mut item_ids = Vec::new();
-        for item in item_list.assoc_items() {
-            let Some(item) = self.cfg.enabled_syntax(item) else {
-                continue;
-            };
-            if let Some(node) = self.lower_source_assoc_item(item) {
-                let location = node.location;
-                item_ids.push(self.builder.alloc_scopeless_source_item(node, location));
-            }
-        }
-        item_ids
-    }
-
-    pub(super) fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
-        let item = LocalItemLowering::associated(item)?;
-        let source = self.source(item.syntax());
-        self.with_sources(|locations| LocalItemLowering::declaration(&item, source, locations))
+        Some(node)
     }
 }

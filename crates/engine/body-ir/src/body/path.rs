@@ -94,7 +94,7 @@ impl BodyPath {
             return None;
         }
 
-        let (anchor, first_name_idx) = match self.segments.first()?.kind() {
+        let (anchor, first_name_idx, dollar_crate) = match self.segments.first()?.kind() {
             BodyPathSegmentKind::TypeAnchor {
                 ty: Some(self_ty),
                 trait_ref,
@@ -112,15 +112,15 @@ impl BodyPath {
                     },
                     None => TypePathAnchor::Type(Box::new(self_ty.clone())),
                 };
-                (Some(anchor), 1)
+                (Some(anchor), 1, None)
             }
             BodyPathSegmentKind::TypeAnchor { ty: None, .. } => return None,
+            BodyPathSegmentKind::DollarCrate(krate) => (None, 0, Some(Box::new(*krate))),
             BodyPathSegmentKind::Name(_)
-            | BodyPathSegmentKind::DollarCrate(_)
             | BodyPathSegmentKind::SelfType
             | BodyPathSegmentKind::SelfKw
             | BodyPathSegmentKind::SuperKw
-            | BodyPathSegmentKind::CrateKw => (None, 0),
+            | BodyPathSegmentKind::CrateKw => (None, 0, None),
         };
 
         let segments = self.segments[first_name_idx..=segment_idx]
@@ -131,6 +131,7 @@ impl BodyPath {
             BodyAssociatedPathPrefix::Type(TypeRef::Path(TypePath {
                 location: None,
                 absolute: self.absolute,
+                dollar_crate,
                 anchor,
                 segments,
             }))
@@ -277,7 +278,7 @@ impl BodyPathSegment {
     fn as_type_path_segment(&self) -> Option<TypePathSegment> {
         let name = match &self.kind {
             BodyPathSegmentKind::Name(name) => name.clone(),
-            BodyPathSegmentKind::DollarCrate(_) => return None,
+            BodyPathSegmentKind::DollarCrate(_) => Name::new("$crate"),
             BodyPathSegmentKind::SelfType => Name::new("Self"),
             BodyPathSegmentKind::SelfKw => Name::new("self"),
             BodyPathSegmentKind::SuperKw => Name::new("super"),
@@ -471,6 +472,7 @@ mod tests {
         TypeRef::Path(TypePath {
             location: None,
             absolute: false,
+            dollar_crate: None,
             anchor: None,
             segments: vec![TypePathSegment {
                 name: Name::new(name),

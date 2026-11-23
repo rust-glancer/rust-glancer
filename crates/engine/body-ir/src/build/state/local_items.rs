@@ -2,10 +2,12 @@
 //!
 //! Every worklist entry receives its local DefMap and item store before semantic resolution starts.
 
+use std::collections::HashMap;
+
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
-use rg_ir_model::{BodyId, BodyRef, DefMapRef, ItemOwner, ModuleRef, StaticRef};
+use rg_ir_model::{BodyId, BodyRef, DefMapRef, FileId, ItemOwner, ModuleRef, SourceId, StaticRef};
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{ItemReader, ItemStore};
 use rg_std::CancellationToken;
@@ -15,7 +17,10 @@ use crate::{
     BodyData, BodyLocalItems, BodyOwner, BodySourceStore,
     build::{
         local_items::LocalItemSource,
-        lower::{BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering},
+        lower::{
+            BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
+            GeneratedBodyTask,
+        },
         query_source::BodyBuildQuerySource,
     },
 };
@@ -34,8 +39,7 @@ impl BodyStoreBuilder<'_> {
         // `body_local_items` is the cursor into `lowered_bodies`: each collected slot means that
         // body has its local DefMap/item store ready. Nested lowering may extend `lowered_bodies`,
         // so the loop stops only once every appended body has been collected too.
-        let mut macro_expansion =
-            BodyMacroExpansion::new(self.edition, def_map, cfg, self.cancellation.clone());
+        let mut macro_expansion = BodyMacroExpansion::new(self.edition, def_map, cfg);
         while self.body_local_items.len() < self.lowered_bodies.bodies().len() {
             self.db.check_cancelled()?;
             let body = self.body_local_items.next_id();
@@ -43,11 +47,13 @@ impl BodyStoreBuilder<'_> {
             let items = self
                 .collect_body_local_items(body, def_map, semantic_ir)
                 .context("collect body-local declarations")?;
-            let body_data = self.lowered_bodies.bodies()[body].body();
-            let nested_tasks = Self::nested_body_tasks(
+            let lowered = &mut self.lowered_bodies.bodies_mut()[body];
+            let generated = std::mem::take(&mut lowered.generated_bodies);
+            let mut nested_tasks = Self::nested_body_tasks(
                 body_ref,
-                body_data,
-                &self.lowered_bodies.bodies()[body].sources,
+                lowered.body(),
+                &lowered.sources,
+                generated,
                 &items,
                 &self.cancellation,
             )
@@ -63,7 +69,7 @@ impl BodyStoreBuilder<'_> {
                     cfg,
                     &self.cancellation,
                 )
-                .lower_tasks(&nested_tasks, &mut macro_expansion)?;
+                .lower_tasks(&mut nested_tasks, &mut macro_expansion)?;
             }
         }
 
@@ -95,6 +101,7 @@ impl BodyStoreBuilder<'_> {
         body_ref: BodyRef,
         body: &BodyData,
         sources: &BodySourceStore,
+        mut generated: HashMap<SourceId, GeneratedBodyTask>,
         items: &BodyLocalItems,
         cancellation: &CancellationToken,
     ) -> anyhow::Result<Vec<BodyLoweringTask>> {
@@ -104,6 +111,20 @@ impl BodyStoreBuilder<'_> {
         let fallback_module = body.fallback_module();
         let origin = DefMapRef::Body(body_ref);
         let mut tasks = Vec::new();
+        // Item collection has assigned the nested owners. Use each owner's declaration
+        // occurrence to pick up the syntax saved during the parent's expansion.
+        let mut source_for = |file: FileId, id: SourceId| -> anyhow::Result<BodyTaskSource> {
+            if let Some(task) = generated.remove(&id) {
+                return Ok(BodyTaskSource::Generated(task));
+            }
+            let location = sources
+                .location(id)
+                .context("body declaration occurrence is absent")?;
+            Ok(BodyTaskSource::File {
+                file,
+                span: location.span,
+            })
+        };
 
         // Visit scope declarations and each owner arena. Member identity includes the trait or
         // impl, while type lookup still starts from its lexical module.
@@ -115,10 +136,6 @@ impl BodyStoreBuilder<'_> {
             if body_owner == BodyOwner::Function(function_ref) {
                 continue;
             }
-            let span = sources
-                .location(function_data.location)
-                .context("body declaration occurrence is absent")?
-                .span;
             // Required trait methods and foreign functions live in the item store but do not own
             // a body that can become a nested lowering task.
             if !function_data.signature.has_body() {
@@ -133,8 +150,7 @@ impl BodyStoreBuilder<'_> {
                 owner: BodyOwner::Function(function_ref),
                 owner_module,
                 fallback_module,
-                file_id: function_data.source.file_id,
-                span,
+                source: source_for(function_data.source.file_id, function_data.location)?,
             });
         }
 
@@ -143,10 +159,6 @@ impl BodyStoreBuilder<'_> {
             if body_owner == BodyOwner::Const(const_ref) {
                 continue;
             }
-            let span = sources
-                .location(const_data.location)
-                .context("body declaration occurrence is absent")?
-                .span;
             let Some(owner_module) =
                 Self::owner_module_for_body_item_owner(item_store, const_data.owner)
             else {
@@ -156,8 +168,7 @@ impl BodyStoreBuilder<'_> {
                 owner: BodyOwner::Const(const_ref),
                 owner_module,
                 fallback_module,
-                file_id: const_data.source.file_id,
-                span,
+                source: source_for(const_data.source.file_id, const_data.location)?,
             });
         }
 
@@ -169,10 +180,6 @@ impl BodyStoreBuilder<'_> {
             if body_owner == BodyOwner::Static(static_ref) {
                 continue;
             }
-            let span = sources
-                .location(static_data.location)
-                .context("body declaration occurrence is absent")?
-                .span;
             if def_map
                 .foreign_block(static_data.local_def.local_def)
                 .is_some()
@@ -183,15 +190,10 @@ impl BodyStoreBuilder<'_> {
                 owner: BodyOwner::Static(static_ref),
                 owner_module: static_data.owner,
                 fallback_module,
-                file_id: static_data.source.file_id,
-                span,
+                source: source_for(static_data.source.file_id, static_data.location)?,
             });
         }
 
-        tasks.sort_by_key(|task| {
-            let span = task.span;
-            (task.file_id, span.start, span.end)
-        });
         Ok(tasks)
     }
 

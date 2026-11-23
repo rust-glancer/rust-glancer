@@ -15,13 +15,17 @@
 //! Bounded initializer previews also live on this side: changing `2 + 2` to `4` changes display
 //! text and body meaning, but leaves the const's declaration and its occurrence IDs unchanged.
 
+mod expanded_syntax;
+
 use std::collections::HashMap;
 
-use rg_ir_model::{SourceId, SourceLocation, Span};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot, SourceId, SourceLocation, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_tt::{Span as TtSpan, TokenOwner};
 use wincode::{SchemaRead, SchemaWrite};
+
+pub use self::expanded_syntax::ExpandedItemSyntax;
 
 /// Source data indexed by the owner/local pair in [`SourceId`].
 ///
@@ -58,6 +62,7 @@ impl<T> DeclarationSourceStore<T> {
     pub fn start_owner<'a>(
         &mut self,
         map: &'a mut dyn FnMut(TextRange, SourceRole) -> T,
+        dollar_crate_at: Option<&'a dyn Fn(TextRange) -> Option<CrateRef>>,
     ) -> DeclarationSourceBuilder<'a, T> {
         let owner = u32::try_from(self.owners.len()).expect("source owners fit u32");
         self.owners.push(Vec::new());
@@ -66,6 +71,7 @@ impl<T> DeclarationSourceStore<T> {
             entries: Vec::new(),
             initializer_previews: Vec::new(),
             map,
+            dollar_crate_at,
         }
     }
 
@@ -117,10 +123,7 @@ impl DeclarationSourceStore<Span> {
 
 impl SourceLocations for DeclarationSourceStore<Span> {
     fn location(&self, occurrence: SourceId) -> Option<SourceLocation> {
-        self.get(occurrence).map(|span| SourceLocation {
-            span: *span,
-            editable: true,
-        })
+        self.get(occurrence).copied().map(SourceLocation::direct)
     }
 }
 
@@ -174,6 +177,7 @@ pub struct DeclarationSourceBuilder<'a, T> {
     entries: Vec<T>,
     initializer_previews: Vec<(SourceId, String)>,
     map: &'a mut dyn FnMut(TextRange, SourceRole) -> T,
+    dollar_crate_at: Option<&'a dyn Fn(TextRange) -> Option<CrateRef>>,
 }
 
 impl<T> RecordSource for DeclarationSourceBuilder<'_, T> {
@@ -199,6 +203,10 @@ impl<T> TypeSource for DeclarationSourceBuilder<'_, T> {
     fn record_type(&mut self, range: TextRange) -> Option<SourceId> {
         Some(self.record(range))
     }
+
+    fn dollar_crate_at(&self, range: TextRange) -> Option<CrateRef> {
+        self.dollar_crate_at?(range)
+    }
 }
 
 /// Reads occurrences after the caller has selected their source table and snapshot.
@@ -207,8 +215,8 @@ impl<T> TypeSource for DeclarationSourceBuilder<'_, T> {
 /// provide the surrounding source context; the ID alone cannot choose it. Opening a source view
 /// handles query reads before this interface is used to walk its occurrences.
 ///
-/// Use [`Self::span`] for navigation, including fallbacks. Use [`Self::editable_span`] when a
-/// scanner needs a real source occurrence, such as an identifier to include in references.
+/// Use [`Self::span`] for navigation, including fallbacks. Use [`Self::exact_location`] to
+/// find a written name for references and keep track of whether it came through an expansion.
 pub trait SourceLocations {
     /// `None` means there is no mapping for this occurrence in the selected source. Callers that
     /// require a declaration location should report that absence rather than invent a range.
@@ -219,10 +227,16 @@ pub trait SourceLocations {
         self.location(occurrence).map(|location| location.span)
     }
 
-    /// Also accepts source-free type syntax (`None`), and excludes navigation-only mappings.
-    fn editable_span(&self, occurrence: Option<SourceId>) -> Option<Span> {
+    /// Finds the exact location of a written occurrence. Types parsed for lookup, such as a
+    /// rustdoc link, can pass `None` because they have no occurrence ID in this table.
+    fn exact_location(&self, occurrence: Option<SourceId>) -> Option<SourceLocation> {
         self.location(occurrence?)
-            .filter(|location| location.editable)
+            .filter(|location| location.is_exact())
+    }
+
+    /// Gets the written range alone. Editing copied input needs a separate safety check.
+    fn editable_span(&self, occurrence: Option<SourceId>) -> Option<Span> {
+        self.exact_location(occurrence)
             .map(|location| location.span)
     }
 }
@@ -235,6 +249,21 @@ pub trait SourceLocations {
 /// second uses [`NoSource`] and leaves its optional occurrence IDs absent.
 pub trait TypeSource {
     fn record_type(&mut self, range: TextRange) -> Option<SourceId>;
+
+    /// Resolve the defining crate from a `$crate` token in the syntax being lowered.
+    /// The range belongs to that parse, so read the origin before projecting to file positions.
+    fn dollar_crate_at(&self, _range: TextRange) -> Option<CrateRef> {
+        None
+    }
+}
+
+/// Read the crate bound to a `$crate` token. A forwarded token keeps this identity across macros.
+pub fn dollar_crate_from_span(span: TtSpan) -> Option<CrateRef> {
+    let (package, target) = span.dollar_crate()?;
+    Some(CrateRef {
+        package: PackageSlot(package as usize),
+        crate_id: CrateId(target as usize),
+    })
 }
 
 /// Lower type meaning without creating source occurrences or placeholder IDs.

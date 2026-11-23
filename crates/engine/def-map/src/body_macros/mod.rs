@@ -11,7 +11,6 @@ use anyhow::Context as _;
 use rg_ir_model::{BuiltinMacroExprKind, CrateRef, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
-use rg_std::CancellationToken;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_text::Name;
 
@@ -19,34 +18,33 @@ use crate::{DefMapQuery, DefinitionReader, MacroDefinitionView, NameResolutionEn
 
 mod call;
 mod expanded;
-mod format;
+mod fragments;
 
 use self::call::{BodyMacroCallee, BodyMacroInvocation, ResolvedBodyMacroCall};
 pub use self::{
     call::{BodyMacroCallOrigin, BodyMacroCallSite},
     expanded::{
         BodyMacroExpansionOutcome, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
-        BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
-        ExpandedBodyMacro,
+        BodyMacroInputSources, BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome,
+        BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
     },
+    fragments::CopiedArgumentFragments,
 };
 
 const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
 
-/// Counts one level of nested macro expansion.
+/// Keeps a nested expansion's depth active while its generated syntax is lowered.
 ///
 /// Keep this guard alive while visiting the generated syntax: it may contain another macro call.
 /// Dropping the guard restores the previous depth, including when visiting stops early.
-pub struct BodyMacroExpansionScope(Rc<Cell<usize>>);
+pub struct BodyMacroExpansionScope {
+    depth: Rc<Cell<usize>>,
+    previous: usize,
+}
 
 impl Drop for BodyMacroExpansionScope {
     fn drop(&mut self) {
-        self.0.set(
-            self.0
-                .get()
-                .checked_sub(1)
-                .expect("balanced macro expansion depth"),
-        );
+        self.depth.set(self.previous);
     }
 }
 
@@ -58,16 +56,14 @@ pub struct BodyMacroExpander<'db, 'txn> {
     def_maps: &'txn DefinitionReader<'db>,
     runtime: MacroExpansionRuntime,
     depth: Rc<Cell<usize>>,
-    cancellation: CancellationToken,
 }
 
 impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
-    pub fn new(def_maps: &'txn DefinitionReader<'db>, cancellation: CancellationToken) -> Self {
+    pub fn new(def_maps: &'txn DefinitionReader<'db>) -> Self {
         Self {
             def_maps,
             runtime: MacroExpansionRuntime::default(),
             depth: Rc::new(Cell::new(0)),
-            cancellation,
         }
     }
 
@@ -78,8 +74,20 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         if depth >= BODY_MACRO_EXPANSION_DEPTH_LIMIT {
             return None;
         }
-        self.depth.set(depth + 1);
-        Some(BodyMacroExpansionScope(Rc::clone(&self.depth)))
+        Some(self.resume_expansion(depth + 1))
+    }
+
+    pub fn expansion_depth(&self) -> usize {
+        self.depth.get()
+    }
+
+    /// Restore the depth of a deferred body until its lowering finishes.
+    pub fn resume_expansion(&self, depth: usize) -> BodyMacroExpansionScope {
+        let previous = self.depth.replace(depth);
+        BodyMacroExpansionScope {
+            depth: Rc::clone(&self.depth),
+            previous,
+        }
     }
 
     /// Resolves one expression-position macro call to generated syntax or a builtin marker.
@@ -118,24 +126,24 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                     | BuiltinMacroExprKind::FormatArgsNl => resolved_call
                         .invocation(&site, ast_call)
                         .and_then(|invocation| {
-                            let ExpansionSyntax { parse, span_map } =
+                            let expansion =
                                 ExpansionSyntax::from_builtin_arguments(invocation.args());
-                            ExpandedBodyMacro::new(
-                                parse,
-                                span_map,
+                            ExpandedBodyMacro::from_expansion(
+                                expansion,
                                 invocation.input_sources(),
                                 invocation.call_site(),
-                                invocation.call_package(),
                                 site.dollar_crate_for_expansion()?,
                             )
                             .cast_root_or_child::<ast::FormatArgsExpr>()
                         }),
                     _ => None,
                 };
-                Some(BodyMacroExprExpansion::Builtin {
-                    kind: *kind,
+                Some(BodyMacroExprExpansion::builtin(
+                    *kind,
                     arguments,
-                })
+                    *kind == BuiltinMacroExprKind::Assert
+                        && site.assert_formats_single_message(ast_call),
+                ))
             }
             BodyMacroCallee::Builtin {
                 kind: BuiltinMacroKind::CfgSelect,
@@ -272,13 +280,9 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             Some(path_text) => path_text,
             None => return Ok(None),
         };
-        // `$crate` in a generated macro call belongs to the macro definition that produced this
-        // syntax. Source calls do not have such a definition context, so `$crate` remains invalid
-        // for them here.
-        // TODO: soft hack, we are not inside of macro resolution context here, so we use this
-        // Macro calls retain textual paths. Lower them here, where the origin needed for
-        // a leading `$crate` is available.
-        let Some(path) = Path::from_text(&path_text, site.dollar_crate_for_path()) else {
+        // A leading `$crate` can have come through several expansions. Resolve its defining
+        // crate from the token map before converting the textual path.
+        let Some(path) = Path::from_text(&path_text, site.dollar_crate_for_path(call)) else {
             return Ok(None);
         };
         let resolved = Self::resolve_macro_definition(query, site.module(), &path)
@@ -309,15 +313,12 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             .arms()
             .iter()
             .find(|arm| cfg.is_predicate_enabled(&arm.predicate))?;
-        let ExpansionSyntax { parse, span_map } =
-            ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
+        let expansion = ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
 
-        Some(ExpandedBodyMacro::new(
-            parse,
-            span_map,
+        Some(ExpandedBodyMacro::from_expansion(
+            expansion,
             invocation.input_sources(),
             invocation.call_site(),
-            invocation.call_package(),
             site.dollar_crate_for_expansion()?,
         ))
     }
@@ -333,14 +334,12 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             resolved.declarative_definition()?,
             parse_kind,
         );
-        let ExpansionSyntax { parse, span_map } = self.runtime.expand_now(request)?;
+        let expansion = self.runtime.expand_now(request)?;
 
-        Some(ExpandedBodyMacro::new(
-            parse,
-            span_map,
+        Some(ExpandedBodyMacro::from_expansion(
+            expansion,
             invocation.input_sources(),
             invocation.call_site(),
-            invocation.call_package(),
             resolved.data.dollar_crate,
         ))
     }

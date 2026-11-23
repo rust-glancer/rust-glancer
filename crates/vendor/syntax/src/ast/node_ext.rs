@@ -36,6 +36,13 @@ impl ast::NameRef {
         TokenText::owned(text_of_first_token(self.syntax()))
     }
 
+    /// The macro expander emits `$crate` as one identifier token.
+    pub fn dollar_crate_token(&self) -> Option<SyntaxToken> {
+        self.syntax()
+            .first_token()
+            .filter(|token| token.text() == "$crate")
+    }
+
     pub fn as_tuple_field(&self) -> Option<usize> {
         self.text().parse().ok()
     }

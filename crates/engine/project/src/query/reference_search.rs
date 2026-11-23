@@ -2,8 +2,8 @@
 //!
 //! Reference queries do not need to scan every source file. If a declaration comes from crate
 //! `model`, only `model` and crates that depend on it can contain normal references to it, so
-//! unrelated workspace crates can be skipped. Within each target we only select files that
-//! contain a possible spelling, when analysis can supply those spellings.
+//! unrelated workspace crates can be skipped. Within each target, source text can narrow the
+//! search to files with possible spellings or macro calls.
 //!
 //! These choices only reduce the amount of source sent to semantic matching. The analysis layer
 //! still resolves every surviving candidate before it is returned as a reference.
@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use memchr::memmem::Finder;
-use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
+use rg_analysis::{ReferenceSearchFile, ReferenceSourceSelection};
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_parse::SourceReader;
 use rg_semantic_ir::complete_source_ownership;
@@ -53,20 +53,20 @@ impl<'a> ReferenceSearchPlanner<'a> {
         Ok(crates.into_vec())
     }
 
-    /// Returns crate/file pairs whose source text contains one of the safe reference labels.
+    /// Returns crate/file pairs whose source text passes the reference selection.
     ///
     /// This is a request-local text prefilter. It narrows expensive semantic scans without storing
     /// a persistent text index or changing the declaration matcher that proves each result.
     /// It searches written bytes, so a format capture that escapes part of the name cannot select
     /// a file on its own.
-    pub(super) fn files_matching_labels(
+    pub(super) fn files(
         &self,
         db: &QueryContext<'_>,
         search_crates: &[CrateRef],
-        labels: &[ReferenceSearchLabel],
+        selection: &ReferenceSourceSelection,
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
-        if labels.is_empty() {
+        if selection.labels.is_empty() {
             return Ok(None);
         }
 
@@ -76,13 +76,10 @@ impl<'a> ReferenceSearchPlanner<'a> {
         for &crate_ref in search_crates {
             // A shared file can pass on `super` in the defining target but need the written name
             // in a dependent. Reuse a file's answer across targets that search the same spellings.
-            let spellings: Vec<_> = labels
-                .iter()
-                .filter_map(|label| label.spelling_in(crate_ref))
-                .collect();
-            let filter = filters
-                .entry(spellings)
-                .or_insert_with_key(|words| ReferenceTextPrefilter::new(words));
+            let spellings: Vec<_> = selection.spellings_in(crate_ref).collect();
+            let filter = filters.entry(spellings).or_insert_with_key(|words| {
+                ReferenceTextPrefilter::new(words, selection.macro_call_marker())
+            });
             let ownership = complete_source_ownership(db, crate_ref)?;
             for file_id in ownership.files() {
                 rg_std::check_cancel!(cancellation, "reference source prefilter");
@@ -156,16 +153,18 @@ impl<'a> ReferenceSearchPlanner<'a> {
 
 struct ReferenceTextPrefilter<'label> {
     finders: Vec<Finder<'label>>,
+    macro_call_marker: Option<&'static str>,
     files: HashMap<FileId, bool>,
 }
 
 impl<'label> ReferenceTextPrefilter<'label> {
-    fn new(spellings: &[&'label str]) -> Self {
+    fn new(spellings: &[&'label str], macro_call_marker: Option<&'static str>) -> Self {
         Self {
             finders: spellings
                 .iter()
                 .map(|word| Finder::new(word.as_bytes()))
                 .collect(),
+            macro_call_marker,
             files: HashMap::new(),
         }
     }
@@ -175,7 +174,10 @@ impl<'label> ReferenceTextPrefilter<'label> {
             return Ok(matched);
         }
         let source = sources.text(file)?;
-        let matched = self.matches(source.as_bytes());
+        let matched = self
+            .macro_call_marker
+            .is_some_and(|marker| source.contains(marker))
+            || self.matches(source.as_bytes());
         self.files.insert(file, matched);
         Ok(matched)
     }

@@ -3,12 +3,11 @@ use std::{collections::HashSet, rc::Rc};
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{CrateRef, FileId, Path};
 use rg_item_tree::{
-    BuiltinMacroItem, BuiltinMacroKind, CfgSelectArmPayload, IncludePathExpression, ItemKind,
-    ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem, file_declarations,
+    BuiltinMacroItem, BuiltinMacroKind, IncludePathExpression, ItemKind, ItemNode, ItemTreeId,
+    ItemTreeRef, MacroCallItem, file_declarations,
 };
 use rg_macro_runtime::{
-    CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRequest,
-    SharedMacroExpansionRuntime,
+    ExpansionParseKind, ExpansionSyntax, MacroExpansionRequest, SharedMacroExpansionRuntime,
 };
 use rg_source::{QueryContext, SourceInput};
 use rg_text::RustEdition;
@@ -18,11 +17,12 @@ use rg_workspace::{CrateConfig, PackageInput};
 use super::{AssociatedItemInput, AssociatedItemSource};
 use crate::{
     CrateResolutionEnv, GeneratedItemStore, GeneratedSourceStore, GeneratedSourceStoreId,
-    ItemSource, MacroDefinitionEnv,
+    ItemSource, ItemSourceKind, MacroDefinitionEnv,
     build::macros::{
-        ItemOrder, MAX_MACRO_EXPANSION_DEPTH, MacroScopeData,
+        ItemOrder, MAX_MACRO_EXPANSION_DEPTH, MacroScopeData, cfg_select::SelectedCfgArm,
         generated_tree::GeneratedSourceLowering, resolve::ItemMacroResolver,
     },
+    macro_copies::ForwardedMacroInputs,
 };
 
 /// One owner's declarations after replacing member macro calls with their output.
@@ -183,8 +183,21 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                     self.items.push((member.source, member.item));
                 }
                 ItemKind::MacroCall(call) => {
-                    if let Some(expansion) = self.expand_macro(&member, call)? {
-                        self.enqueue_expansion(&member, expansion)?;
+                    let expansion = self.expand_macro(&member, call)?;
+                    if matches!(member.source.kind, ItemSourceKind::ItemTree(_))
+                        && !matches!(
+                            expansion,
+                            Some(
+                                MemberExpansion::Generated { .. }
+                                    | MemberExpansion::SelectedItems(_)
+                            )
+                        )
+                        && let Some(input) = &call.input
+                    {
+                        self.generated.record_unverified_call(input.call_site);
+                    }
+                    if let Some(expansion) = expansion {
+                        self.enqueue_expansion(&member, call, expansion)?;
                     }
                 }
                 _ => {}
@@ -195,7 +208,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
         files.sort_unstable();
         Ok(ExpandedAssociatedItems {
             items: self.items,
-            sources: self.generated.into_sources(),
+            sources: self.generated.publish_sources(self.db)?,
             files,
         })
     }
@@ -216,7 +229,8 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
         let Some(args) = input.args.as_ref() else {
             return Ok(None);
         };
-        let Some(path) = Path::from_text(path_text, member.dollar_crate) else {
+        let Some(path) = Path::from_text(path_text, input.path_crate.or(member.dollar_crate))
+        else {
             return Ok(None);
         };
         // Ordinary written members do not observe macro scopes. Acquire them only after
@@ -240,9 +254,17 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
             Some(BuiltinMacroKind::Include) => Ok(self
                 .include_file(member.source.file_id, call, args)?
                 .map(MemberExpansion::IncludedFile)),
-            Some(BuiltinMacroKind::CfgSelect) => {
-                Ok(self.cfg_selection(call, args, input.call_site, member.dollar_crate))
-            }
+            Some(BuiltinMacroKind::CfgSelect) => Ok(SelectedCfgArm::select(
+                call.builtin.as_ref(),
+                args,
+                self.cfg,
+            )
+            .and_then(|arm| match arm {
+                SelectedCfgArm::Lowered(items) => Some(MemberExpansion::SelectedItems(items)),
+                SelectedCfgArm::Generated(syntax) => {
+                    MemberExpansion::from_syntax(syntax, input.call_site, member.dollar_crate)
+                }
+            })),
             Some(_) => Ok(None),
             None => {
                 let Some(definition) = resolved.definition.declarative_definition() else {
@@ -292,41 +314,12 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
         Ok(SourceInput::is_readable(self.db, file)?.then_some(file))
     }
 
-    /// Prefer already-lowered cfg arms so their declarations keep their original source IDs.
-    /// Calls without a prelowered arm list parse the selected payload as new item syntax.
-    fn cfg_selection<'call>(
-        &self,
-        call: &'call MacroCallItem,
-        args: &TopSubtree,
-        call_site: TtSpan,
-        dollar_crate: Option<CrateRef>,
-    ) -> Option<MemberExpansion<'call>> {
-        if let Some(BuiltinMacroItem::CfgSelect { arms }) = &call.builtin {
-            let arm = arms
-                .iter()
-                .find(|arm| self.cfg.is_predicate_enabled(&arm.predicate))?;
-            return match &arm.payload {
-                CfgSelectArmPayload::Items(ids) => Some(MemberExpansion::SelectedItems(ids)),
-                CfgSelectArmPayload::LoweringFailed => None,
-            };
-        }
-        let selection = CfgSelect::parse(args)?;
-        let arm = selection
-            .arms()
-            .iter()
-            .find(|arm| self.cfg.is_predicate_enabled(&arm.predicate))?;
-        MemberExpansion::from_syntax(
-            ExpansionSyntax::from_token_tree(arm.payload.clone(), ExpansionParseKind::Items),
-            call_site,
-            dollar_crate,
-        )
-    }
-
     /// Splice children ahead of the next sibling. Includes start their own written provenance;
     /// selected cfg items keep their arena, while generated syntax gets an owner-local source map.
     fn enqueue_expansion(
         &mut self,
         parent: &PendingMember,
+        call: &MacroCallItem,
         expansion: MemberExpansion<'_>,
     ) -> anyhow::Result<()> {
         match expansion {
@@ -383,12 +376,16 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                 call_site,
                 dollar_crate,
             } => {
+                let forwarding = call.input.as_ref().and_then(|input| {
+                    ForwardedMacroInputs::new(parent.source, self.krate, &input.forwarded)
+                });
                 let data = GeneratedSourceLowering::lower(
                     parent.origin_source,
                     parent.source.file_id,
                     call_site,
                     dollar_crate,
                     syntax,
+                    forwarding.as_ref(),
                 )?;
                 let source_id = self.generated.alloc_source(data);
                 let data = self

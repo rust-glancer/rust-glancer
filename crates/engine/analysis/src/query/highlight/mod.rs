@@ -5,7 +5,7 @@
 //! ordinary string text and escapes keep their syntax highlighting.
 
 use rg_ir_model::{CrateRef, FileId, Span};
-use rg_ir_view::source::SourceOccurrenceView;
+use rg_ir_view::source::FormatStringSourceView;
 use rg_syntax::{
     AstNode as _, AstToken as _,
     ast::{self, FormatStringPartKind},
@@ -29,8 +29,8 @@ impl<'a, 'db> FormatStringHighlighter<'a, 'db> {
     ) -> anyhow::Result<Vec<Highlight>> {
         let syntax = self.0.source_syntax(crate_ref, file)?;
         let mut highlights = Vec::new();
-        for span in SourceOccurrenceView::new(self.0.view_db())
-            .format_string_spans(crate_ref, file, &syntax, range)?
+        for span in
+            FormatStringSourceView::new(self.0.view_db()).spans(crate_ref, file, &syntax, range)?
         {
             rg_std::check_cancel!(self.0, "format string highlighting");
             if span.intersection(range.unwrap_or(span)).is_none() {

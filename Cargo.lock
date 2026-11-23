@@ -2077,9 +2077,6 @@ dependencies = [
  "rayon",
  "rg_ir_model",
  "rg_macro_expand",
- "rg_parse",
- "rg_syntax",
- "rg_text",
  "rg_tt",
 ]
 

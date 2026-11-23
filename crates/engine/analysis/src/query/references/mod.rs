@@ -18,7 +18,7 @@ use crate::{
 mod search;
 mod subject;
 
-pub use rg_ir_view::source::ReferenceSearchLabel;
+pub use rg_ir_view::source::ReferenceSourceSelection;
 
 pub use self::search::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchKind};
 use self::{
@@ -36,14 +36,14 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Self { analysis, query }
     }
 
-    /// Returns declaration spellings used to narrow the request's source scan.
-    pub(crate) fn reference_search_labels(
+    /// Returns the selection used to narrow the request's source scan.
+    pub(crate) fn reference_source_selection(
         analysis: &Analysis<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
         kind: ReferenceSearchKind,
-    ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
+    ) -> anyhow::Result<ReferenceSourceSelection> {
         let mut declarations = UniqueVec::new();
         for symbol in analysis.source_symbols_at_for_query(crate_ref, file_id, offset)? {
             for declaration in
@@ -53,11 +53,12 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             }
         }
         let declarations = declarations.into_vec();
-        let (_, hints) = ReferenceSubject::resolve(analysis.view_db(), &declarations, kind)?;
+        let (_, mut hints) = ReferenceSubject::resolve(analysis.view_db(), &declarations, kind)?;
         if hints.local_owners().is_some() {
-            return Ok(Vec::new());
+            // A local search enters its owning worklist directly, which can include other files.
+            hints.selection.labels.clear();
         }
-        Ok(hints.selection.labels)
+        Ok(hints.selection)
     }
 
     /// Finds references for the symbol under `offset` by scanning the requested use-site surface.
@@ -179,7 +180,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     symbol.role() == SourceSymbolRole::Declaration
                         && symbol.crate_ref() == location.crate_ref
                         && symbol.file_id() == location.file_id
-                        && symbol.span() == location.span
+                        && symbol.span() == location.location.span
                 }) {
                     continue;
                 }
@@ -187,7 +188,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     location.declaration,
                     location.crate_ref,
                     location.file_id,
-                    location.span,
+                    location.location,
                 ));
             }
         }

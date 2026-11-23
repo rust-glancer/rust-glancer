@@ -128,13 +128,13 @@ fn escaped() { let _ = format!("{$escaped$\u{56}ALUE}"); }
 }
 
 #[test]
-fn rename_requires_format_literals_to_be_forwarded_without_duplication() {
+fn rename_requires_every_copy_of_a_format_literal_to_capture_the_same_name() {
     for (case, expansion, renameable) in [
         ("single use", "format_args!($template);", true),
         (
             "same target",
             "format_args!($template); format_args!($template);",
-            false,
+            true,
         ),
         (
             "shadowed target",
@@ -220,4 +220,54 @@ fn show() { repeat!("{$capture$VALUE}"); }
             }
         });
     }
+}
+
+#[test]
+fn rename_keeps_legacy_assertion_messages_as_literal_data() {
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "legacy_assert_rename"
+version = "0.1.0"
+edition = "2018"
+
+//- /src/lib.rs
+macro_rules! capture_and_assert {
+    ($template:literal) => {{ std::format_args!($template); std::assert!(false, $template); }};
+}
+fn demo() { let $declaration$value = 1; capture_and_assert!("{$argument$value}"); }
+"#,
+    );
+    let project = fixture.build_project();
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route source")
+            .expect("source target");
+        let crates = [context.crate_ref];
+        let query = ReferenceQuery::find_references(&crates, true);
+        let analysis = snapshot.analysis();
+        let declaration = fixture.markers().position("declaration").offset;
+        let argument = fixture.markers().position("argument").offset;
+        assert!(
+            analysis
+                .references(context.crate_ref, context.file, declaration, query)
+                .expect("find copied format capture")
+                .iter()
+                .any(|usage| usage.span.start == argument)
+        );
+        assert!(
+            analysis
+                .rename(
+                    context.crate_ref,
+                    context.file,
+                    declaration,
+                    "renamed",
+                    query
+                )
+                .expect("rename")
+                .is_none()
+        );
+    });
 }

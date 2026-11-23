@@ -905,7 +905,7 @@ impl SyntaxText {
         f(self.as_str());
     }
 
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.tree.source[self.range]
     }
 }

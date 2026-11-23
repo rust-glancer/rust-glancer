@@ -7,9 +7,7 @@
 use std::{sync::Mutex, time::Duration};
 
 use anyhow::Context as _;
-use rg_ir_model::LocalDefRef;
-use rg_parse::syntax_edition;
-use rg_text::RustEdition;
+use rg_ir_model::{CrateRef, LocalDefRef};
 use rg_tt::TopSubtree;
 
 use super::{
@@ -41,11 +39,7 @@ impl MacroExpansionRuntime {
         &mut self,
         request: MacroExpansionRequest<'_>,
     ) -> PreparedMacroExpansionResult {
-        let compile_result = self.cache.compile(
-            request.def_ref,
-            request.definition,
-            syntax_edition(request.definition.edition()),
-        );
+        let compile_result = self.cache.compile(request.def_ref, request.definition);
         let Some(macro_) = compile_result.macro_ else {
             return PreparedMacroExpansionResult {
                 expansion: PreparedMacroExpansion::Failed,
@@ -214,25 +208,27 @@ impl PartialEq for SharedMacroExpansionRuntime {
 
 /// Borrowed declarative-macro syntax needed by the expansion runtime.
 ///
-/// Name resolution and retained definition metadata belong to the caller. The runtime only needs
-/// the definition edition and token trees required by the low-level macro compiler.
+/// The runtime needs the token trees and the crate for template `$crate`. The tokens already
+/// carry the editions used by the macro compiler.
 #[derive(Clone, Copy)]
 pub enum DeclarativeMacroDefinition<'a> {
     MacroRules {
-        edition: RustEdition,
+        dollar_crate: CrateRef,
         body: Option<&'a TopSubtree>,
     },
     MacroDef {
-        edition: RustEdition,
+        dollar_crate: CrateRef,
         args: Option<&'a TopSubtree>,
         body: Option<&'a TopSubtree>,
     },
 }
 
 impl DeclarativeMacroDefinition<'_> {
-    fn edition(self) -> RustEdition {
+    pub(crate) fn dollar_crate(self) -> CrateRef {
         match self {
-            Self::MacroRules { edition, .. } | Self::MacroDef { edition, .. } => edition,
+            Self::MacroRules { dollar_crate, .. } | Self::MacroDef { dollar_crate, .. } => {
+                dollar_crate
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 use rg_cfg_eval::{CfgEvaluator, CfgPredicate};
+use rg_ir_model::CrateRef;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use rg_tt::{Span as TtSpan, TopSubtree};
@@ -123,6 +124,13 @@ pub struct MacroCallInput {
     #[memsize(skip)]
     #[shrink(skip)]
     pub call_site: TtSpan,
+    /// Defining crate of a forwarded `$crate` in the callee path.
+    pub path_crate: Option<CrateRef>,
     #[shrink(skip)]
     pub args: Option<TopSubtree>,
+    /// Tagged nested arguments use a parent copy ID until the child's output is
+    /// collected. This table recovers their original input origins.
+    #[memsize(skip)]
+    #[shrink(skip)]
+    pub forwarded: Vec<(u32, TtSpan)>,
 }

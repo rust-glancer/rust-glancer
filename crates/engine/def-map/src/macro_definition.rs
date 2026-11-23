@@ -1,14 +1,13 @@
 //! Macro definitions retained for lookup and expansion before and after freezing.
 //!
 //! A local definition gives a macro its name, module, visibility, and source identity. The payload
-//! here adds its token trees or proc-macro implementation, edition, and `$crate` origin. The view
+//! here adds its token trees or proc-macro implementation and `$crate` origin. The view
 //! combines those records for both construction-time item expansion and frozen body expansion.
 
 use rg_ir_model::{CrateRef, LocalDefId, LocalDefRef};
 use rg_item_tree::{BuiltinMacroKind, Documentation, MacroDefinitionItem, ProcMacroKind};
 use rg_macro_runtime::DeclarativeMacroDefinition;
 use rg_std::{MemorySize, Shrink};
-use rg_text::RustEdition;
 use rg_tt::TopSubtree;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -17,7 +16,6 @@ use crate::{LocalDefData, LocalDefKind};
 /// Macro definition facts retained after def-map freezing.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct MacroDefinitionData {
-    pub edition: RustEdition,
     /// Crate that `$crate` inside this macro body should resolve to when expanded.
     pub dollar_crate: CrateRef,
     /// User-facing documentation attached to the macro definition item.
@@ -34,12 +32,10 @@ impl MacroDefinitionData {
     pub fn from_item(
         item: &MacroDefinitionItem,
         docs: Option<Documentation>,
-        edition: RustEdition,
         dollar_crate: CrateRef,
     ) -> Self {
         let builtin = Self::builtin_from_item(item);
         Self {
-            edition,
             dollar_crate,
             docs,
             builtin,
@@ -58,11 +54,9 @@ impl MacroDefinitionData {
         kind: ProcMacroKind,
         implementation: LocalDefId,
         docs: Option<Documentation>,
-        edition: RustEdition,
         dollar_crate: CrateRef,
     ) -> Self {
         Self {
-            edition,
             dollar_crate,
             docs,
             builtin: None,
@@ -211,12 +205,12 @@ impl<'a> MacroDefinitionView<'a> {
 
         Some(match &self.data.payload {
             MacroDefinitionPayload::MacroRules { body } => DeclarativeMacroDefinition::MacroRules {
-                edition: self.data.edition,
+                dollar_crate: self.data.dollar_crate,
                 body: body.as_ref(),
             },
             MacroDefinitionPayload::MacroDef { args, body } => {
                 DeclarativeMacroDefinition::MacroDef {
-                    edition: self.data.edition,
+                    dollar_crate: self.data.dollar_crate,
                     args: args.as_ref(),
                     body: body.as_ref(),
                 }

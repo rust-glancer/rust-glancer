@@ -40,6 +40,7 @@ use crate::{
             MacroCallSite, MacroDefinitionRecord, MacroUseImport, PendingGeneratedModule,
         },
     },
+    macro_copies::ForwardedMacroInputs,
     profile::metric,
 };
 
@@ -329,7 +330,8 @@ impl<'a> DeclarationCollector<'a> {
         let Some(input) = &call.input else {
             return;
         };
-        let (source, dollar_crate) = match source.kind {
+        let forwarding = ForwardedMacroInputs::new(source, self.state.crate_ref, &input.forwarded);
+        let (source, enclosing_dollar_crate) = match source.kind {
             ItemSourceKind::Generated(generated) => (
                 self.state
                     .generated_items
@@ -349,9 +351,11 @@ impl<'a> DeclarationCollector<'a> {
                 callee: call.callee.clone(),
                 args: input.args.clone(),
                 builtin: call.builtin.clone(),
-                dollar_crate,
+                path_crate: input.path_crate,
+                enclosing_dollar_crate,
                 file_id: item.file_id,
                 call_site: input.call_site,
+                forwarding,
                 order,
                 module_file_context: context,
             },
@@ -687,7 +691,6 @@ impl<'a> DeclarationCollector<'a> {
             MacroDefinitionData::from_item(
                 macro_definition,
                 item.docs.clone(),
-                self.state.edition,
                 if matches!(source.kind, ItemSourceKind::Generated(_)) {
                     self.dollar_crate.unwrap_or(self.state.crate_ref)
                 } else {
@@ -973,7 +976,6 @@ impl<'a> DeclarationCollector<'a> {
                 proc_macro.kind,
                 implementation,
                 item.docs.clone(),
-                self.state.edition,
                 self.state.crate_ref,
             ),
         );

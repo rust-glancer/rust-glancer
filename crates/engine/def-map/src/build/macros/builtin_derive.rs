@@ -228,6 +228,7 @@ impl BuiltinDeriveExpansion {
             source: GeneratedSourceData {
                 origin_file_id: file_id,
                 locations: GeneratedLocations::Inherited(source),
+                expansion: None,
                 origin_source,
                 top_level: vec![impl_id],
                 items,
@@ -400,6 +401,7 @@ impl BuiltinDeriveExpansion {
         TypePath {
             location: None,
             absolute: false,
+            dollar_crate: None,
             anchor: None,
             segments: names
                 .into_iter()

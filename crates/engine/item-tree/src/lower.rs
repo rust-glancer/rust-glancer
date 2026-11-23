@@ -1,28 +1,26 @@
 //! File-local AST lowering. Source discovery interprets module and include paths separately.
 
+use std::{cell::RefCell, sync::Arc};
+
 use rg_arena::Arena;
 use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_macro_expand::CfgSelect;
 use rg_parse::syntax_edition;
 use rg_syntax::{
     AstNode as _, Parse, TextRange, TextSize,
-    ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasModuleItem as _},
 };
-use rg_text::{Name, RustEdition};
+use rg_text::RustEdition;
 use rg_tt::{
     Span as TtSpan, TokenOwner,
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
 };
 
-use super::{
-    BuiltinMacroItem, CfgExpr, CfgSelectArmItem, ConstItem, Documentation, EnumItem,
-    ExternBlockItem, ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem,
-    IncludePathExpression, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,
-    MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst,
-    MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, StaticItem,
-    StructItem, TraitItem, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
+use crate::{
+    BuiltinMacroItem, CfgSelectArmItem, DeclarationSourceStore, Documentation, ExpandedItemSyntax,
+    FileTree, IncludePathExpression, InnerDocs, ItemKind, ItemLowering, ItemMacroSpans, ItemNode,
+    ItemTreeId, LoweredItem, MaybeFromAst, RecordSource, UserFacingAttrs,
 };
-use crate::{DeclarationSourceStore, RecordSource, SourceRole};
 
 /// Build declaration meaning and its source table in the same traversal.
 ///
@@ -40,7 +38,11 @@ impl FileLowering<'_> {
         file: FileId,
         edition: RustEdition,
         syntax: &Parse<ast::SourceFile>,
-    ) -> (FileTree, DeclarationSourceStore<Span>) {
+    ) -> (
+        FileTree,
+        DeclarationSourceStore<Span>,
+        Vec<ExpandedItemSyntax>,
+    ) {
         let package = u32::try_from(package.0).expect("package slot should fit macro span storage");
         let mut builder = FileTreeBuilder::new(package, file);
         let source_file = syntax.tree();
@@ -63,6 +65,7 @@ impl FileLowering<'_> {
                     || Self::has_declaration_parse_errors(syntax),
             },
             builder.sources,
+            builder.cfg_select_bodies,
         )
     }
 
@@ -135,277 +138,57 @@ impl FileLowering<'_> {
         .span_for(source.local)
     }
 
-    fn name_from_ast(name: Option<ast::Name>) -> Option<Name> {
-        name.map(|name| Name::new(name.text()))
-    }
-
-    fn name_ref_from_ast(name: Option<ast::NameRef>) -> Option<Name> {
-        name.map(|name| Name::new(name.text()))
-    }
-
-    /// Lowers all top-level items from one file into item-tree nodes.
     fn collect_items(
         &self,
         builder: &mut FileTreeBuilder,
         items: impl Iterator<Item = ast::Item>,
     ) -> Vec<ItemTreeId> {
-        items
-            .filter_map(|item| self.lower_item(builder, item))
-            .collect()
+        items.map(|item| self.lower_item(builder, item)).collect()
     }
 
-    /// Lowers one syntax item into the corresponding item-tree node, when this item kind matters
-    /// to later phases.
-    fn lower_item(&self, builder: &mut FileTreeBuilder, item: ast::Item) -> Option<ItemTreeId> {
-        let edition = self.edition;
-        let macro_edition = syntax_edition(edition);
-
+    fn lower_item(&self, builder: &mut FileTreeBuilder, item: ast::Item) -> ItemTreeId {
         let mut map = |range: TextRange, _role| match self.expansion {
             Some(expansion) => expansion.span(range),
             None => Span::from_text_range(range),
         };
-        let mut recorder = builder.sources.start_owner(&mut map);
-        let source: &mut dyn RecordSource = &mut recorder;
-        let macro_call = if let ast::Item::MacroCall(call) = &item {
-            Some(call.clone())
-        } else {
-            None
-        };
-        let result = match item {
-            ast::Item::AsmExpr(item) => {
-                // Keep an exact-text dependency because this item omits the assembly payload.
-                builder.source_sensitive = true;
-                Some(builder.alloc_item(
-                    ItemKind::AsmExpr,
-                    None,
-                    None,
-                    VisibilityLevel::Private,
-                    item.syntax().text_range(),
-                    source,
-                ))
-            }
-            ast::Item::Const(item) => Some(builder.alloc_documented_item(
-                ItemKind::Const(ConstItem::from_ast(&item, source)),
-                Self::name_from_ast(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-            ast::Item::Enum(item) => Some(builder.alloc_documented_item(
-                ItemKind::Enum(EnumItem::from_ast(&item, (None, source))),
-                Self::name_from_ast(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-            ast::Item::ExternBlock(item) => {
-                let extern_block = self.lower_extern_block(builder, &item);
-                Some(builder.alloc_documented_item(
-                    ItemKind::ExternBlock(extern_block),
-                    None,
-                    None,
-                    VisibilityLevel::Private,
-                    &item,
-                    source,
-                ))
-            }
-            ast::Item::ExternCrate(item) => Some(
-                builder.alloc_documented_item(
-                    ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, source)),
-                    Self::name_ref_from_ast(item.name_ref()),
-                    item.name_ref()
-                        .map(|name_ref| name_ref.syntax().text_range()),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    &item,
-                    source,
-                ),
-            ),
-            ast::Item::Fn(item) => Some(builder.alloc_documented_item(
-                ItemKind::Function(FunctionItem::from_ast(&item, source)),
-                Self::name_from_ast(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-            ast::Item::Impl(item) => {
-                let impl_item = self.lower_impl_item(builder, &item, source);
-                Some(builder.alloc_documented_item(
-                    ItemKind::Impl(impl_item),
-                    None,
-                    None,
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    &item,
-                    source,
-                ))
-            }
-            ast::Item::MacroCall(item) => {
-                let call_site = self.tt_span_for_range(
-                    builder,
-                    item.syntax().text_range(),
-                    macro_edition,
-                    source,
-                );
-                let mut span_for_range =
-                    |range| self.tt_span_for_range(builder, range, macro_edition, source);
-                Some(builder.alloc_documented_item(
-                    ItemKind::MacroCall(MacroCallItem::from_ast(
-                        &item,
-                        MacroCallContext {
-                            builtin: None,
-                            call_site,
-                            span_for_range: &mut span_for_range,
-                        },
-                    )),
-                    None,
-                    None,
-                    VisibilityLevel::Private,
-                    &item,
-                    source,
-                ))
-            }
-            ast::Item::MacroDef(item) => {
-                let mut span_for_range =
-                    |range| self.tt_span_for_range(builder, range, macro_edition, source);
-                Some(builder.alloc_documented_item(
-                    ItemKind::MacroDefinition(
-                        <MacroDefinitionItem as FromAst<MacroDefAst>>::from_ast(
-                            &item,
-                            MacroDefContext {
-                                span_for_range: &mut span_for_range,
-                            },
-                        ),
-                    ),
-                    Self::name_from_ast(item.name()),
-                    item.name().map(|name| name.syntax().text_range()),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    &item,
-                    source,
-                ))
-            }
-            ast::Item::MacroRules(item) => {
-                let mut span_for_range =
-                    |range| self.tt_span_for_range(builder, range, macro_edition, source);
-                Some(builder.alloc_documented_item(
-                    ItemKind::MacroDefinition(
-                        <MacroDefinitionItem as FromAst<MacroRulesAst>>::from_ast(
-                            &item,
-                            MacroRulesContext {
-                                span_for_range: &mut span_for_range,
-                            },
-                        ),
-                    ),
-                    Self::name_from_ast(item.name()),
-                    item.name().map(|name| name.syntax().text_range()),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    &item,
-                    source,
-                ))
-            }
-            ast::Item::Module(item) => {
-                let module_name = Self::name_from_ast(item.name());
-                let module_name_range = item.name().map(|name| name.syntax().text_range());
-                let module_item = self.collect_module(builder, &item);
-                Some(builder.alloc_documented_item(
-                    ItemKind::Module(module_item),
-                    module_name,
-                    module_name_range,
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    &item,
-                    source,
-                ))
-            }
-            ast::Item::Static(item) => Some(builder.alloc_documented_item(
-                ItemKind::Static(StaticItem::from_ast(&item, source)),
-                Self::name_from_ast(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-            ast::Item::Struct(item) => Some(builder.alloc_documented_item(
-                ItemKind::Struct(StructItem::from_ast(&item, (None, source))),
-                Self::name_from_ast(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-            ast::Item::Trait(item) => {
-                let trait_item = self.lower_trait_item(builder, &item, source);
-                Some(builder.alloc_documented_item(
-                    ItemKind::Trait(trait_item),
-                    Self::name_from_ast(item.name()),
-                    item.name().map(|name| name.syntax().text_range()),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    &item,
-                    source,
-                ))
-            }
-            ast::Item::TypeAlias(item) => Some(builder.alloc_documented_item(
-                ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, source)),
-                Self::name_from_ast(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-            ast::Item::Union(item) => Some(builder.alloc_documented_item(
-                ItemKind::Union(UnionItem::from_ast(&item, source)),
-                Self::name_from_ast(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-            ast::Item::Use(item) => Some(builder.alloc_documented_item(
-                ItemKind::Use(UseItem::from_ast(&item, source)),
-                None,
-                None,
-                VisibilityLevel::from_ast(&item.visibility(), ()),
-                &item,
-                source,
-            )),
-        };
-        builder.sources.finish_owner(recorder);
-        // The call's input table is complete before cfg_select arms refer back to it.
-        if let (Some(call), Some(id)) = (macro_call, result) {
-            let builtin = self.lower_builtin_macro(builder, id, &call);
-            if let ItemKind::MacroCall(call) = &mut builder.items[id].kind {
-                call.builtin = builtin;
-            }
+        let mut recorder = builder.sources.start_owner(&mut map, None);
+        let children =
+            ItemLowering::lower_children(&item, |child| Some(self.lower_item(builder, child)));
+        let macro_edition = syntax_edition(self.edition);
+        let LoweredItem { node, body_range } = ItemLowering {
+            file_id: builder.current_file_id,
+            dollar_crate: None,
+            macro_spans: Some(ItemMacroSpans {
+                token: &|range, source| {
+                    self.tt_span_for_range(builder, range, macro_edition, source)
+                },
+                call_site: None,
+            }),
         }
-        result
-    }
+        .lower(&item, children, &mut recorder)
+        .expect("file lowering retains every item kind");
+        builder.sources.finish_owner(recorder);
+        let id = builder.items.alloc(node);
 
-    /// Lowers direct declarations while keeping the extern block as their stable owner.
-    ///
-    /// Nested macro calls remain as children so source scans can still see them. DefMap does not
-    /// enqueue those calls: expanding inside a foreign block needs declaration-only handling,
-    /// rather than ordinary item-position macro collection.
-    fn lower_extern_block(
-        &self,
-        builder: &mut FileTreeBuilder,
-        block: &ast::ExternBlock,
-    ) -> ExternBlockItem {
-        let mut items = Vec::new();
-        if let Some(item_list) = block.extern_item_list() {
-            for item in item_list.extern_items() {
-                let item = match item {
-                    ast::ExternItem::Fn(item) => ast::Item::Fn(item),
-                    ast::ExternItem::Static(item) => ast::Item::Static(item),
-                    ast::ExternItem::TypeAlias(item) => ast::Item::TypeAlias(item),
-                    ast::ExternItem::MacroCall(item) => ast::Item::MacroCall(item),
-                };
-                if let Some(item) = self.lower_item(builder, item) {
-                    items.push(item);
+        if let (Some(expansion), Some(range)) = (self.expansion, body_range) {
+            expansion
+                .body_items
+                .borrow_mut()
+                .push((id, Span::from_text_range(range)));
+        }
+        match item {
+            // Keep an exact-text dependency because the node omits the assembly payload.
+            ast::Item::AsmExpr(_) => builder.source_sensitive = true,
+            ast::Item::MacroCall(call) => {
+                // The call's input table is complete before cfg_select arms refer back to it.
+                let builtin = self.lower_builtin_macro(builder, id, &call);
+                if let ItemKind::MacroCall(call) = &mut builder.items[id].kind {
+                    call.builtin = builtin;
                 }
             }
+            _ => {}
         }
-
-        ExternBlockItem::from_ast(block, items)
+        id
     }
 
     /// Retains enough syntax for DefMap to interpret source-like builtins after name resolution.
@@ -425,7 +208,9 @@ impl FileLowering<'_> {
         let ItemKind::MacroCall(call) = &builder.items[id].kind else {
             return None;
         };
-        let select = CfgSelect::parse(call.input.as_ref()?.args.as_ref()?)?;
+        let input = call.input.as_ref()?;
+        let select = CfgSelect::parse(input.args.as_ref()?)?;
+        let call_site = input.call_site;
         let arms = select
             .arms()
             .iter()
@@ -449,87 +234,28 @@ impl FileLowering<'_> {
                     tokens: span_map,
                     positions,
                     invocation,
+                    body_items: RefCell::default(),
                 };
                 let lowering = FileLowering {
                     edition: self.edition,
                     expansion: Some(&expansion),
                 };
                 let items = lowering.collect_items(builder, file.items());
+                // Keep this arm's tokens with the ranges recorded in its parse. A nested
+                // `cfg_select!` saves its own arm separately because it has a different parse.
+                let body_items = expansion.body_items.into_inner();
+                if !body_items.is_empty() {
+                    builder.cfg_select_bodies.push(ExpandedItemSyntax {
+                        tokens: Arc::new(arm.payload.clone()),
+                        call_site,
+                        dollar_crate: None,
+                        body_items,
+                    });
+                }
                 CfgSelectArmItem::lowered(arm.predicate.clone(), items)
             })
             .collect();
         Some(BuiltinMacroItem::CfgSelect { arms })
-    }
-
-    fn collect_module(&self, builder: &mut FileTreeBuilder, item: &ast::Module) -> ModuleItem {
-        let source = match item.item_list() {
-            Some(items) => ModuleSource::Inline {
-                items: self.collect_items(builder, items.items()),
-            },
-            None => ModuleSource::OutOfLine,
-        };
-        ModuleItem {
-            inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
-            macro_use: MacroUseAttr::maybe_from_ast(item, ()),
-            path_override: rg_parse::module_path_override(item),
-            source,
-        }
-    }
-
-    fn lower_trait_item(
-        &self,
-        builder: &mut FileTreeBuilder,
-        item: &ast::Trait,
-        source: &mut dyn RecordSource,
-    ) -> TraitItem {
-        let assoc_items = item
-            .assoc_item_list()
-            .map(|item_list| item_list.assoc_items().collect::<Vec<_>>())
-            .unwrap_or_default();
-        let items = self.collect_assoc_items(builder, assoc_items);
-
-        TraitItem::from_ast(item, (items, source))
-    }
-
-    fn lower_impl_item(
-        &self,
-        builder: &mut FileTreeBuilder,
-        item: &ast::Impl,
-        source: &mut dyn RecordSource,
-    ) -> ImplItem {
-        let assoc_items = item
-            .assoc_item_list()
-            .map(|item_list| item_list.assoc_items().collect::<Vec<_>>())
-            .unwrap_or_default();
-        let items = self.collect_assoc_items(builder, assoc_items);
-        ImplItem::from_ast(item, (items, source))
-    }
-
-    fn collect_assoc_items(
-        &self,
-        builder: &mut FileTreeBuilder,
-        items: Vec<ast::AssocItem>,
-    ) -> Vec<ItemTreeId> {
-        items
-            .into_iter()
-            .filter_map(|item| self.lower_assoc_item(builder, item))
-            .collect()
-    }
-
-    fn lower_assoc_item(
-        &self,
-        builder: &mut FileTreeBuilder,
-        item: ast::AssocItem,
-    ) -> Option<ItemTreeId> {
-        self.lower_item(
-            builder,
-            match item {
-                ast::AssocItem::Const(item) => ast::Item::Const(item),
-                ast::AssocItem::Fn(item) => ast::Item::Fn(item),
-                ast::AssocItem::MacroCall(item) => ast::Item::MacroCall(item),
-                ast::AssocItem::TypeAlias(item) => ast::Item::TypeAlias(item),
-            },
-        )
     }
 }
 
@@ -541,6 +267,7 @@ struct FileExpansionSource {
     tokens: ExpansionSpanMap,
     positions: Vec<(TextSize, Span)>,
     invocation: Span,
+    body_items: RefCell<Vec<(ItemTreeId, Span)>>,
 }
 
 impl FileExpansionSource {
@@ -565,6 +292,7 @@ struct FileTreeBuilder {
     items: Arena<ItemTreeId, ItemNode>,
     sources: DeclarationSourceStore<Span>,
     source_sensitive: bool,
+    cfg_select_bodies: Vec<ExpandedItemSyntax>,
 }
 
 impl FileTreeBuilder {
@@ -575,70 +303,7 @@ impl FileTreeBuilder {
             items: Arena::new(),
             sources: DeclarationSourceStore::default(),
             source_sensitive: false,
+            cfg_select_bodies: Vec::new(),
         }
-    }
-
-    fn alloc_item(
-        &mut self,
-        kind: ItemKind,
-        name: Option<Name>,
-        name_range: Option<TextRange>,
-        visibility: VisibilityLevel,
-        text_range: TextRange,
-        source: &mut dyn RecordSource,
-    ) -> ItemTreeId {
-        self.alloc_item_with_docs(kind, name, name_range, visibility, None, text_range, source)
-    }
-
-    fn alloc_documented_item<T>(
-        &mut self,
-        kind: ItemKind,
-        name: Option<Name>,
-        name_range: Option<TextRange>,
-        visibility: VisibilityLevel,
-        item: &T,
-        source: &mut dyn RecordSource,
-    ) -> ItemTreeId
-    where
-        T: HasAttrs + 'static,
-    {
-        let item_id = self.alloc_item_with_docs(
-            kind,
-            name,
-            name_range,
-            visibility,
-            <Documentation as MaybeFromAst<super::OuterDocs>>::maybe_from_ast(
-                item,
-                super::OuterDocs,
-            ),
-            item.syntax().text_range(),
-            source,
-        );
-        self.items[item_id].cfg = CfgExpr::from_attrs(item);
-        self.items[item_id].lang_item = LangItem::maybe_from_ast(item, ());
-        self.items[item_id].user_facing_attrs = UserFacingAttrs::from_ast(item);
-        item_id
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn alloc_item_with_docs(
-        &mut self,
-        kind: ItemKind,
-        name: Option<Name>,
-        name_range: Option<TextRange>,
-        visibility: VisibilityLevel,
-        docs: Option<Documentation>,
-        text_range: TextRange,
-        source: &mut dyn RecordSource,
-    ) -> ItemTreeId {
-        self.items.alloc(ItemNode::new(
-            kind,
-            name,
-            name_range.map(|range| source.record(range)),
-            visibility,
-            docs,
-            source.record_as(text_range, SourceRole::Declaration),
-            self.current_file_id,
-        ))
     }
 }

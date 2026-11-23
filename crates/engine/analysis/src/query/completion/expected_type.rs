@@ -13,6 +13,7 @@ use rg_ir_view::{
     source::{IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
     ty::{ExpectedCallResult, IndexedCallArguments, IndexedType, TyView, locals::CallTarget},
 };
+use rg_syntax::{AstNode as _, TextSize};
 
 use super::{
     CompletionContext,
@@ -69,7 +70,9 @@ impl ExpectedTypeRanking {
                 };
                 (scope, site.source().associated_qualifier())
             }
-            CompletionSite::Dot(site) => (site.source().scope(), None),
+            // Copied sites can have different expected types. Rank a dot site only when
+            // there is one scope to query.
+            CompletionSite::Dot(sites) if sites.len() == 1 => (sites[0].source().scope(), None),
             _ => return Ok(None),
         };
 
@@ -80,9 +83,14 @@ impl ExpectedTypeRanking {
             ExpectedTypeSite::Argument { call_start } => {
                 // The marker parse and the original source both need to point to the
                 // same call. Recovery in either tree can change which list owns the cursor.
+                let source = analysis.source_syntax(query.crate_ref, query.file_id)?;
+                let offset = TextSize::from(query.offset);
+                let Some(token) = ActiveCall::token_at(source.syntax(), offset) else {
+                    return Ok(None);
+                };
                 let Some(active) =
-                    ActiveCall::at(analysis, query.crate_ref, query.file_id, query.offset)?
-                        .filter(|active| active.span().start == call_start)
+                    ActiveCall::at(analysis, query.crate_ref, query.file_id, &token, offset)?
+                        .filter(|active| active.call().source().span.start == call_start)
                 else {
                     return Ok(None);
                 };

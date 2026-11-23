@@ -22,6 +22,7 @@ mod build;
 mod import;
 mod item_scope;
 mod local;
+mod macro_copies;
 mod macro_definition;
 mod map;
 mod module;
@@ -40,7 +41,7 @@ pub use self::{
         BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
         BodyMacroExpansionScope, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
         BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
-        ExpandedBodyMacro,
+        CopiedArgumentFragments, ExpandedBodyMacro,
     },
     build::{
         AssociatedItemInput, AssociatedItemOwner, CrateBuildOutput, CrateDependencies,
@@ -52,6 +53,7 @@ pub use self::{
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     },
+    macro_copies::{MacroCopyCoverage, MacroCopyRef, MacroExpansionRef},
     macro_definition::{
         MacroDefinitionData, MacroDefinitionKind, MacroDefinitionPayload, MacroDefinitionView,
     },
@@ -68,9 +70,10 @@ pub use self::{
         ResolvePathResult,
     },
     source::{
-        BodyItemSourceRef, GeneratedExpansionLocations, GeneratedItemRef, GeneratedItemStore,
-        GeneratedLocation, GeneratedLocations, GeneratedSourceId, GeneratedSourceStore,
-        GeneratedSourceStoreId, ItemSource, ItemSourceKind,
+        BodyItemSourceRef, GeneratedBodySyntax, GeneratedExpansionLocations, GeneratedItemRef,
+        GeneratedItemStore, GeneratedLocation, GeneratedLocations, GeneratedSourceId,
+        GeneratedSourceStore, GeneratedSourceStoreId, ItemMacroCopySource, ItemSource,
+        ItemSourceKind, SourceOccurrenceLocation,
     },
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };

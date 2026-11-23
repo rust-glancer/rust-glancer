@@ -9,6 +9,8 @@ mod format_captures;
 mod generated_modules;
 mod initializers;
 mod lazy_members;
+mod macro_queries;
+mod macro_rename;
 mod member_identity;
 mod utils;
 
@@ -521,18 +523,18 @@ pub fn demo(user: User) -> usize {
                     &rg_std::CancellationToken::new(),
                 )
                 .expect("plan reference crates");
-            let labels = analysis
-                .reference_search_labels(
+            let selection = analysis
+                .reference_source_selection(
                     target,
                     lib_context.file,
                     subject.offset,
                     ReferenceSearchKind::FindReferences,
                 )
-                .expect("reference labels should resolve");
+                .expect("reference selection should resolve");
             let files = snapshot
-                .reference_search_files_matching_labels(
+                .reference_search_files(
                     &search_targets,
-                    &labels,
+                    &selection,
                     &rg_std::CancellationToken::new(),
                 )
                 .expect("reference text prefilter should resolve")
@@ -712,8 +714,8 @@ pub fn visit(_: se$relative$lf::Marker) {}
         let shared = ProjectFixture::file_id_for_path_in(snapshot, &fixture.path("src/shared.rs"));
         let analysis = snapshot.analysis();
         let subject = fixture.markers().position("subject").offset;
-        let labels = analysis
-            .reference_search_labels(
+        let selection = analysis
+            .reference_source_selection(
                 bin.crate_ref,
                 bin.file,
                 subject,
@@ -721,9 +723,9 @@ pub fn visit(_: se$relative$lf::Marker) {}
             )
             .expect("resolve module from its dependent");
         let files = snapshot
-            .reference_search_files_matching_labels(
+            .reference_search_files(
                 &[bin.crate_ref, lib.crate_ref],
-                &labels,
+                &selection,
                 &rg_std::CancellationToken::new(),
             )
             .expect("select files")

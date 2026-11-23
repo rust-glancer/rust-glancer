@@ -16,14 +16,12 @@ mod path;
 mod record;
 mod scope;
 mod source_items;
-mod source_map;
 mod source_store;
 mod stmt;
 mod view;
 
 pub use rg_ir_model::{BodySource, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LiteralKind};
 
-pub(crate) use self::source_store::BodyLocation;
 pub use self::{
     binding::{BindingData, BindingKind},
     data::{BodyData, FunctionParamData},
@@ -43,7 +41,6 @@ pub use self::{
     record::RecordFieldSyntax,
     scope::ScopeData,
     source_items::{BodySourceItem, BodySourceItems},
-    source_map::BodySourceMap,
     source_store::BodySourceStore,
     stmt::{StmtData, StmtKind},
     view::BodyView,

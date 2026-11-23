@@ -125,16 +125,9 @@ impl TypePathCompletionSite {
                 }
             };
         }
-        if prefix_segment_count > path.segments.len() {
-            return None;
-        }
-
-        Some(AssociatedPathQualifier::Type(TypeRef::Path(TypePath {
-            location: path.location,
-            absolute: path.absolute,
-            anchor: path.anchor.clone(),
-            segments: path.segments[..prefix_segment_count].to_vec(),
-        })))
+        Some(AssociatedPathQualifier::Type(TypeRef::Path(
+            path.prefix(prefix_segment_count)?,
+        )))
     }
 }
 
@@ -204,17 +197,12 @@ impl AssociatedTypeBindingSyntax {
             // Associated bindings constrain the selected trait but are not part of resolving its
             // identity. Removing all of them also keeps an incomplete binding from feeding an
             // unknown right-hand side back into trait lowering.
-            let mut segments = path.segments[..=segment_idx].to_vec();
-            segments[segment_idx]
+            let mut trait_path = path.prefix(segment_idx + 1)?;
+            trait_path.segments[segment_idx]
                 .args
                 .retain(|arg| !matches!(arg, GenericArg::AssocType { .. }));
             return Some(Self {
-                trait_ref: TypeRef::Path(TypePath {
-                    location: path.location,
-                    absolute: path.absolute,
-                    anchor: path.anchor.clone(),
-                    segments,
-                }),
+                trait_ref: TypeRef::Path(trait_path),
                 member_prefix_span,
                 existing_bindings,
             });
@@ -267,8 +255,8 @@ impl AssociatedTypeBindingSyntax {
 
                 // Resolve the surrounding trait without treating the unfinished binding name as
                 // one of its positional generic arguments.
-                let mut segments = path.segments[..=segment_idx].to_vec();
-                segments[segment_idx].args = segments[segment_idx]
+                let mut trait_path = path.prefix(segment_idx + 1)?;
+                trait_path.segments[segment_idx].args = trait_path.segments[segment_idx]
                     .args
                     .iter()
                     .enumerate()
@@ -279,12 +267,7 @@ impl AssociatedTypeBindingSyntax {
                     .map(|(_, candidate)| candidate.clone())
                     .collect();
                 return Some(Self {
-                    trait_ref: TypeRef::Path(TypePath {
-                        location: path.location,
-                        absolute: path.absolute,
-                        anchor: path.anchor.clone(),
-                        segments,
-                    }),
+                    trait_ref: TypeRef::Path(trait_path),
                     member_prefix_span,
                     existing_bindings,
                 });
