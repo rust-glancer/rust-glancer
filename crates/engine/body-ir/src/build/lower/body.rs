@@ -205,19 +205,15 @@ impl BodyLowering<'_> {
                 None,
             ),
         };
-        lower(&mut self.builder.sources.recorder(&map))
+        let dollar_crate_at =
+            |range| context.map(|context| context.expanded.dollar_crate_at(range));
+        lower(&mut self.builder.sources.recorder(&map, &dollar_crate_at))
     }
 
     pub(super) fn dollar_crate(&self) -> Option<CrateRef> {
         self.generated_context
             .as_ref()
             .map(|context| context.expanded.dollar_crate())
-    }
-
-    pub(super) fn dollar_crate_at(&self, token: TextRange) -> Option<CrateRef> {
-        self.generated_context
-            .as_ref()
-            .map(|context| context.expanded.dollar_crate_at(token))
     }
 
     /// Classify the macro call syntax that is about to be expanded.

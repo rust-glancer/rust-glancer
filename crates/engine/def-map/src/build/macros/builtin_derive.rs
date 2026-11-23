@@ -401,6 +401,7 @@ impl BuiltinDeriveExpansion {
         TypePath {
             location: None,
             absolute: false,
+            dollar_crate: None,
             anchor: None,
             segments: names
                 .into_iter()

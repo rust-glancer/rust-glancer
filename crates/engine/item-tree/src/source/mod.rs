@@ -19,7 +19,7 @@ mod expanded_syntax;
 
 use std::collections::HashMap;
 
-use rg_ir_model::{SourceId, SourceLocation, Span};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot, SourceId, SourceLocation, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_tt::{Span as TtSpan, TokenOwner};
@@ -62,6 +62,7 @@ impl<T> DeclarationSourceStore<T> {
     pub fn start_owner<'a>(
         &mut self,
         map: &'a mut dyn FnMut(TextRange, SourceRole) -> T,
+        dollar_crate_at: Option<&'a dyn Fn(TextRange) -> Option<CrateRef>>,
     ) -> DeclarationSourceBuilder<'a, T> {
         let owner = u32::try_from(self.owners.len()).expect("source owners fit u32");
         self.owners.push(Vec::new());
@@ -70,6 +71,7 @@ impl<T> DeclarationSourceStore<T> {
             entries: Vec::new(),
             initializer_previews: Vec::new(),
             map,
+            dollar_crate_at,
         }
     }
 
@@ -175,6 +177,7 @@ pub struct DeclarationSourceBuilder<'a, T> {
     entries: Vec<T>,
     initializer_previews: Vec<(SourceId, String)>,
     map: &'a mut dyn FnMut(TextRange, SourceRole) -> T,
+    dollar_crate_at: Option<&'a dyn Fn(TextRange) -> Option<CrateRef>>,
 }
 
 impl<T> RecordSource for DeclarationSourceBuilder<'_, T> {
@@ -199,6 +202,10 @@ impl<T> RecordSource for DeclarationSourceBuilder<'_, T> {
 impl<T> TypeSource for DeclarationSourceBuilder<'_, T> {
     fn record_type(&mut self, range: TextRange) -> Option<SourceId> {
         Some(self.record(range))
+    }
+
+    fn dollar_crate_at(&self, range: TextRange) -> Option<CrateRef> {
+        self.dollar_crate_at?(range)
     }
 }
 
@@ -242,6 +249,21 @@ pub trait SourceLocations {
 /// second uses [`NoSource`] and leaves its optional occurrence IDs absent.
 pub trait TypeSource {
     fn record_type(&mut self, range: TextRange) -> Option<SourceId>;
+
+    /// Resolve the defining crate from a `$crate` token in the syntax being lowered.
+    /// The range belongs to that parse, so read the origin before projecting to file positions.
+    fn dollar_crate_at(&self, _range: TextRange) -> Option<CrateRef> {
+        None
+    }
+}
+
+/// Read the crate bound to a `$crate` token. A forwarded token keeps this identity across macros.
+pub fn dollar_crate_from_span(span: TtSpan) -> Option<CrateRef> {
+    let (package, target) = span.dollar_crate()?;
+    Some(CrateRef {
+        package: PackageSlot(package as usize),
+        crate_id: CrateId(target as usize),
+    })
 }
 
 /// Lower type meaning without creating source occurrences or placeholder IDs.

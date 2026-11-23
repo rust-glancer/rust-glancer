@@ -98,14 +98,10 @@ impl<'a> TypePathSourceScanner<'a> {
                     scope,
                     name,
                     path: def_map_path,
-                    type_ref: self.offset.map(|_| {
-                        TypeRef::Path(TypePath {
-                            location: path.location,
-                            absolute: path.absolute,
-                            anchor: path.anchor.clone(),
-                            segments: path.segments[..=idx].to_vec(),
-                        })
-                    }),
+                    type_ref: self
+                        .offset
+                        .and_then(|_| path.prefix(idx + 1))
+                        .map(TypeRef::Path),
                     file_id,
                     location,
                 });

@@ -11,7 +11,7 @@ use rg_arena::Arena;
 use rg_ir_model::{CrateRef, FileId, Span};
 use rg_item_tree::{
     DeclarationSourceStore, ExpandedItemSyntax, ItemKind, ItemLowering, ItemMacroSpans, ItemNode,
-    ItemTreeId, ItemTreeRef, LoweredItem, SourceRole,
+    ItemTreeId, ItemTreeRef, LoweredItem, SourceRole, dollar_crate_from_span,
 };
 use rg_macro_runtime::ExpansionSyntax;
 use rg_syntax::{
@@ -137,7 +137,14 @@ impl GeneratedSourceLowering<'_> {
                 copy: None,
             },
         };
-        let mut recorder = self.locations.start_owner(&mut map);
+        let default_crate = self.dollar_crate;
+        let dollar_crate_at = |range| {
+            raw_spans
+                .span_for_range(range)
+                .and_then(dollar_crate_from_span)
+                .or(default_crate)
+        };
+        let mut recorder = self.locations.start_owner(&mut map, Some(&dollar_crate_at));
         let children = ItemLowering::lower_children(&item, |child| Some(self.lower_item(child)));
         let call_input = match &item {
             ast::Item::MacroCall(call) => call.token_tree().map(|tree| tree.syntax().text_range()),

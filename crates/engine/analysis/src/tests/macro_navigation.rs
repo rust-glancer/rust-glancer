@@ -513,6 +513,57 @@ forwarding_defs::forward!(va$item$lue);
 }
 
 #[test]
+fn dollar_crate_in_generated_types_keeps_its_defining_crate() {
+    check_analysis_queries(
+        r#"
+//- /macros/src/lib.rs crate:widget_macros root:macros
+pub struct Widget<T>(pub T);
+impl<T> Widget<T> {
+    pub fn new() -> Self { loop {} }
+}
+#[macro_export]
+macro_rules! make {
+    () => { fn direct() -> $crate::Widget<u8> { loop {} } };
+}
+#[macro_export]
+macro_rules! forward {
+    () => { emit_type!($crate::Widget<u8>); };
+}
+#[macro_export]
+macro_rules! widget_type { () => { $crate::Widget<u8> }; }
+#[macro_export]
+macro_rules! construct { () => { $crate::Widget::<u8>::new() }; }
+
+//- /app/src/lib.rs crate:widget_app root:app deps:widget_macros
+struct Widget;
+macro_rules! emit_type {
+    ($ty:ty) => { fn forwarded() -> $ty { loop {} } };
+}
+widget_macros::make!();
+widget_macros::forward!();
+fn observe() {
+    let di$direct$rect_result = direct();
+    let fo$forwarded$rwarded_result = forwarded();
+    let an$annotation$notated: widget_macros::widget_type!() = loop {};
+    let fr$associated$om_method = widget_macros::construct!();
+}
+"#,
+        &[
+            AnalysisQuery::ty("generated signature", "direct").in_lib("widget_app"),
+            AnalysisQuery::ty("forwarded signature", "forwarded").in_lib("widget_app"),
+            AnalysisQuery::ty("expanded annotation", "annotation").in_lib("widget_app"),
+            AnalysisQuery::ty("associated call", "associated").in_lib("widget_app"),
+        ],
+        expect![[r#"
+            nominal struct widget_macros[lib]::crate::Widget<u8> // generated signature
+            nominal struct widget_macros[lib]::crate::Widget<u8> // forwarded signature
+            nominal struct widget_macros[lib]::crate::Widget<u8> // expanded annotation
+            nominal struct widget_macros[lib]::crate::Widget<u8> // associated call
+        "#]],
+    );
+}
+
+#[test]
 fn selected_cfg_arm_bodies_use_the_written_token_ranges() {
     check_analysis_queries_with_fake_sysroot(
         r#"

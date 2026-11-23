@@ -45,8 +45,7 @@ impl BodyMacroCallOrigin {
                 .path()
                 .and_then(|path| path.first_segment())
                 .and_then(|segment| segment.name_ref())
-                .filter(|name| name.text() == "$crate")
-                .and_then(|name| name.syntax().first_token())
+                .and_then(|name| name.dollar_crate_token())
                 .and_then(|token| {
                     ExpandedBodyMacro::<SyntaxNode>::mapped_dollar_crate(
                         source_map,

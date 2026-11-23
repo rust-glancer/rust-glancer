@@ -1,13 +1,15 @@
 use rg_cfg_eval::CfgPredicate;
-use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_text::Name;
 use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
 
 use super::{FromAst, MaybeFromAst, normalized_syntax};
-use crate::item::{
-    BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallInput, MacroCallItem,
-    MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+use crate::{
+    dollar_crate_from_span,
+    item::{
+        BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallInput, MacroCallItem,
+        MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+    },
 };
 
 pub struct MacroRulesAst;
@@ -85,13 +87,8 @@ impl FromAst for MacroCallItem {
             .path()
             .and_then(|path| path.first_segment())
             .and_then(|segment| segment.name_ref())
-            .filter(|name| name.text() == "$crate")
-            .and_then(|name| name.syntax().first_token())
-            .and_then(|token| (ctx.span_for_range)(token.text_range()).dollar_crate())
-            .map(|(package, target)| CrateRef {
-                package: PackageSlot(package as usize),
-                crate_id: CrateId(target as usize),
-            });
+            .and_then(|name| name.dollar_crate_token())
+            .and_then(|token| dollar_crate_from_span((ctx.span_for_range)(token.text_range())));
         Self {
             path: item.path().map(|path| normalized_syntax(&path)),
             callee: item

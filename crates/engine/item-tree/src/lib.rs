@@ -40,6 +40,7 @@ pub use self::{
     query::{FileDeclarations, file_declaration_sources, file_declarations},
     source::{
         DeclarationSourceBuilder, DeclarationSourceStore, ExpandedItemSyntax, NoSource,
-        RecordSource, SourceLocations, SourceRole, TypeSource, initializer_preview,
+        RecordSource, SourceLocations, SourceRole, TypeSource, dollar_crate_from_span,
+        initializer_preview,
     },
 };

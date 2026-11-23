@@ -100,14 +100,10 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
             self.push_candidate(SignatureSourceCandidate::TypePath {
                 scope,
                 path: def_map_path,
-                type_ref: self.offset.map(|_| {
-                    Box::new(TypeRef::Path(TypePath {
-                        location: path.location,
-                        absolute: path.absolute,
-                        anchor: path.anchor.clone(),
-                        segments: path.segments[..=idx].to_vec(),
-                    }))
-                }),
+                type_ref: self
+                    .offset
+                    .and_then(|_| path.prefix(idx + 1))
+                    .map(|prefix| Box::new(TypeRef::Path(prefix))),
                 file_id,
                 location,
             });

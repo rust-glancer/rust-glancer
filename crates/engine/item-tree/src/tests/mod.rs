@@ -23,7 +23,7 @@ fn nested_imports_keep_their_written_path_ranges() {
         .expect("fixture has an import");
     let mut locations = DeclarationSourceStore::default();
     let mut map = |range, _| Span::from_text_range(range);
-    let mut sources = locations.start_owner(&mut map);
+    let mut sources = locations.start_owner(&mut map, None);
     let item = UseItem::from_ast(&syntax, &mut sources);
     locations.finish_owner(sources);
     let expected = [
@@ -75,7 +75,7 @@ fn preserves_relaxed_trait_bound_modifier() {
         .expect("fixture should contain a struct");
     let mut map = |range, _| Span::from_text_range(range);
     let mut locations = DeclarationSourceStore::default();
-    let mut sources = locations.start_owner(&mut map);
+    let mut sources = locations.start_owner(&mut map, None);
     let generics = GenericParams::from_ast(&item, &mut sources);
     locations.finish_owner(sources);
     let param = generics

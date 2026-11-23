@@ -150,7 +150,7 @@ impl FileLowering<'_> {
             Some(expansion) => expansion.span(range),
             None => Span::from_text_range(range),
         };
-        let mut recorder = builder.sources.start_owner(&mut map);
+        let mut recorder = builder.sources.start_owner(&mut map, None);
         let children =
             ItemLowering::lower_children(&item, |child| Some(self.lower_item(builder, child)));
         let macro_edition = syntax_edition(self.edition);

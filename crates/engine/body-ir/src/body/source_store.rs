@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use rg_def_map::{MacroCopyRef, SourceOccurrenceLocation};
-use rg_ir_model::{BodySource, ExprId, SourceId, SourceLocation, SourceLocationKind, Span};
+use rg_ir_model::{
+    BodySource, CrateRef, ExprId, SourceId, SourceLocation, SourceLocationKind, Span,
+};
 use rg_item_tree::{RecordSource, SourceLocations, SourceRole, TypeSource, initializer_preview};
 use rg_std::{MemorySize, Shrink};
 use rg_syntax::{AstNode as _, TextRange, ast};
@@ -91,8 +93,13 @@ impl BodySourceStore {
     pub(crate) fn recorder<'a>(
         &'a mut self,
         map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<MacroCopyRef>),
+        dollar_crate_at: &'a dyn Fn(TextRange) -> Option<CrateRef>,
     ) -> BodySourceRecorder<'a> {
-        BodySourceRecorder { store: self, map }
+        BodySourceRecorder {
+            store: self,
+            map,
+            dollar_crate_at,
+        }
     }
 }
 
@@ -122,6 +129,7 @@ struct FormatCaptureSource {
 pub(crate) struct BodySourceRecorder<'a> {
     store: &'a mut BodySourceStore,
     map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<MacroCopyRef>),
+    dollar_crate_at: &'a dyn Fn(TextRange) -> Option<CrateRef>,
 }
 
 impl RecordSource for BodySourceRecorder<'_> {
@@ -148,5 +156,9 @@ impl RecordSource for BodySourceRecorder<'_> {
 impl TypeSource for BodySourceRecorder<'_> {
     fn record_type(&mut self, range: TextRange) -> Option<SourceId> {
         Some(self.record(range))
+    }
+
+    fn dollar_crate_at(&self, range: TextRange) -> Option<CrateRef> {
+        (self.dollar_crate_at)(range)
     }
 }

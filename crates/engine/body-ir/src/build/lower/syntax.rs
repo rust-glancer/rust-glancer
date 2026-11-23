@@ -129,20 +129,15 @@ impl BodyLowering<'_> {
 
     fn lower_path_segment(&mut self, segment: ast::PathSegment) -> Option<BodyPathSegment> {
         let (kind, location) = match segment.kind()? {
-            PathSegmentKind::Name(name_ref) => {
-                let location = self.source_location(name_ref.syntax().text_range());
-                let name = Name::new(name_ref.text());
-                // A forwarded `$crate` can refer to the macro that supplied the token. Look at
-                // the token's own origin before using the crate of the surrounding expansion.
-                let kind = if name.as_str() == "$crate" {
-                    BodyPathSegmentKind::DollarCrate(
-                        self.dollar_crate_at(name_ref.syntax().first_token()?.text_range())?,
-                    )
+            PathSegmentKind::Name(name_ref) => self.with_sources(|source| {
+                let location = source.record(name_ref.syntax().text_range());
+                let kind = if let Some(token) = name_ref.dollar_crate_token() {
+                    BodyPathSegmentKind::DollarCrate(source.dollar_crate_at(token.text_range())?)
                 } else {
-                    BodyPathSegmentKind::Name(name)
+                    BodyPathSegmentKind::Name(Name::new(name_ref.text()))
                 };
-                (kind, location)
-            }
+                Some((kind, location))
+            })?,
             // `Self` needs to stay distinguishable in the rich path, but its DefMap projection
             // follows DefMap's type-path convention and behaves like a normal type name.
             PathSegmentKind::SelfTypeKw => {

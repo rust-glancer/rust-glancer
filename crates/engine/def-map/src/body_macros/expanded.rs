@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use rg_ir_model::{
-    BodySource, BuiltinMacroExprKind, CrateId, CrateRef, LocalDefRef, PackageSlot, Span,
-};
-use rg_item_tree::DeclarationSourceStore;
+use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef, Span};
+use rg_item_tree::{DeclarationSourceStore, dollar_crate_from_span};
 use rg_macro_runtime::ExpansionSyntax;
 use rg_syntax::{AstNode, Parse, SyntaxError, SyntaxNode, TextRange, ast};
 use rg_tt::{
@@ -137,11 +135,7 @@ impl<T> ExpandedBodyMacro<T> {
         map: &ExpansionSpanMap,
         range: TextRange,
     ) -> Option<CrateRef> {
-        let (package, target) = map.span_for_range(range)?.dollar_crate()?;
-        Some(CrateRef {
-            package: PackageSlot(package as usize),
-            crate_id: CrateId(target as usize),
-        })
+        dollar_crate_from_span(map.span_for_range(range)?)
     }
 }
 
