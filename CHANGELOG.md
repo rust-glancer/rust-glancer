@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.5.0](https://github.com/rust-glancer/rust-glancer/compare/v0.4.0...v0.5.0) (2026-11-23)
+
+
+### Features
+
+* **Ajika:** Application cutover ([#296](https://github.com/rust-glancer/rust-glancer/issues/296)) ([41aeb7a](https://github.com/rust-glancer/rust-glancer/commit/41aeb7af16ee0e5045e7de8fe5134a46c72c7b3e))
+* **Ajika:** Detach body contents from spans ([#300](https://github.com/rust-glancer/rust-glancer/issues/300)) ([5d89bad](https://github.com/rust-glancer/rust-glancer/commit/5d89badb3d1739a4a643da9ffe71a68fe19527cb))
+* **Ajika:** Introduce Ajika and migrate item tree ([#295](https://github.com/rust-glancer/rust-glancer/issues/295)) ([ad447f2](https://github.com/rust-glancer/rust-glancer/commit/ad447f27f716c64b6177b260caedf387d9fac31e))
+* **Ajika:** Lazy associated member evaluation ([#305](https://github.com/rust-glancer/rust-glancer/issues/305)) ([f85de5b](https://github.com/rust-glancer/rust-glancer/commit/f85de5bb057ba300f2b9cfddeff67c41e8008315))
+* **Ajika:** Lazy bodies ([#297](https://github.com/rust-glancer/rust-glancer/issues/297)) ([a8fce21](https://github.com/rust-glancer/rust-glancer/commit/a8fce2186701d854e96e30ceb748bebea8839455))
+* **Ajika:** LSP integration ([#308](https://github.com/rust-glancer/rust-glancer/issues/308)) ([50dd51a](https://github.com/rust-glancer/rust-glancer/commit/50dd51a5c13b5e2c6486e3a5baace55c3b578711))
+* **Ajika:** Remove batched and deferred indexing ([#291](https://github.com/rust-glancer/rust-glancer/issues/291)) ([f627c35](https://github.com/rust-glancer/rust-glancer/commit/f627c353ed01fab817f2005ab9e4d1bb7a08a934))
+* **Ajika:** Separate associated items from the impl blocks ([#303](https://github.com/rust-glancer/rust-glancer/issues/303)) ([d67423d](https://github.com/rust-glancer/rust-glancer/commit/d67423d8a621b71b3babd2e36c82fc86ef0498b5))
+* **Ajika:** Treat const/static initializers as body computations ([#301](https://github.com/rust-glancer/rust-glancer/issues/301)) ([bf4cf7c](https://github.com/rust-glancer/rust-glancer/commit/bf4cf7c1f6e9347afddea76197f31539fefe1465))
+* Better coercions ([#318](https://github.com/rust-glancer/rust-glancer/issues/318)) ([ea158f9](https://github.com/rust-glancer/rust-glancer/commit/ea158f99e5b0bc99107a882c6b29f0618b4ed5c4))
+* Better completions ([#319](https://github.com/rust-glancer/rust-glancer/issues/319)) ([65757a5](https://github.com/rust-glancer/rust-glancer/commit/65757a5b3b1a0c452ea7f57133e888f1c9dd1c16))
+* Improve macro model ([#321](https://github.com/rust-glancer/rust-glancer/issues/321)) ([d2b895a](https://github.com/rust-glancer/rust-glancer/commit/d2b895aa995661836ff2c35a22f9db70dea1f342))
+* Low-hanging analysis improvements ([#314](https://github.com/rust-glancer/rust-glancer/issues/314)) ([f0260c8](https://github.com/rust-glancer/rust-glancer/commit/f0260c8acae2a10c798a850d4bb341cf2ce699a4))
+* Make all-offloadable the only supported policy for users ([#276](https://github.com/rust-glancer/rust-glancer/issues/276)) ([7bfe14e](https://github.com/rust-glancer/rust-glancer/commit/7bfe14eac1916f5883d670bfc0d519ca51246846))
+* Minimal support for opening from subdirs ([#284](https://github.com/rust-glancer/rust-glancer/issues/284)) ([86dc5de](https://github.com/rust-glancer/rust-glancer/commit/86dc5dee760b4ab9aa8a4a5a234f4bc48d922d8f))
+* Model async properly ([#312](https://github.com/rust-glancer/rust-glancer/issues/312)) ([120a989](https://github.com/rust-glancer/rust-glancer/commit/120a989661fe7a8c7cd95ccca4c11649c162fa99))
+* Re-enable auto-imports in completions ([#313](https://github.com/rust-glancer/rust-glancer/issues/313)) ([1f892e7](https://github.com/rust-glancer/rust-glancer/commit/1f892e7971eb6c918ed5ac40b09ee401348b197d))
+* Rework defmap 2 ([#283](https://github.com/rust-glancer/rust-glancer/issues/283)) ([b5ec01f](https://github.com/rust-glancer/rust-glancer/commit/b5ec01f086bea021ed828004ba318929d30d0714))
+* Signature help ([#317](https://github.com/rust-glancer/rust-glancer/issues/317)) ([8ea9adb](https://github.com/rust-glancer/rust-glancer/commit/8ea9adb992067eb0da6e9d6caf4391c577175286))
+* Simplify defmap ([#281](https://github.com/rust-glancer/rust-glancer/issues/281)) ([dbc7ca5](https://github.com/rust-glancer/rust-glancer/commit/dbc7ca59f2f70d26da09f9bc99904dcfb8bbbee8))
+* Support rust 1.100 build dir layout ([#311](https://github.com/rust-glancer/rust-glancer/issues/311)) ([0140a90](https://github.com/rust-glancer/rust-glancer/commit/0140a904e97b9b33cda0c4ca5b8529c218225ea3))
+* Use callable evidence ([#315](https://github.com/rust-glancer/rust-glancer/issues/315)) ([eb036d0](https://github.com/rust-glancer/rust-glancer/commit/eb036d0842e22198adbf7686c30f294e351ebd47))
+* Use string_cache for interning ([#292](https://github.com/rust-glancer/rust-glancer/issues/292)) ([d321fb5](https://github.com/rust-glancer/rust-glancer/commit/d321fb51283d7147ae0e5387726a7ff0ddb4165c))
+
+
+### Bug Fixes
+
+* **Ajika:** Detour ([#299](https://github.com/rust-glancer/rust-glancer/issues/299)) ([255619c](https://github.com/rust-glancer/rust-glancer/commit/255619c35e2b6aa74b8f6497d4eb9debb5f735d5))
+* Do not follow symlinked directories in the workspace watcher ([#272](https://github.com/rust-glancer/rust-glancer/issues/272)) ([aac870a](https://github.com/rust-glancer/rust-glancer/commit/aac870a118288ddb307f84d47b3cb9e78f96006f))
+* Keep release asset filenames stable ([#316](https://github.com/rust-glancer/rust-glancer/issues/316)) ([fc0eb47](https://github.com/rust-glancer/rust-glancer/commit/fc0eb47f8b69d521a63ff0a7e28a6558df3fc6af))
+* Stack overflow on cyclic dyn impl candidate ([#287](https://github.com/rust-glancer/rust-glancer/issues/287)) ([1a3faf4](https://github.com/rust-glancer/rust-glancer/commit/1a3faf41b29591bb2ed6cdbc7b2a9f093c16ad7d))
+
+
+### Performance Improvements
+
+* MOAR PERF ([#310](https://github.com/rust-glancer/rust-glancer/issues/310)) ([5061adc](https://github.com/rust-glancer/rust-glancer/commit/5061adc328464839d5d461d8d4f21134fd2f8e4a))
+* Use name-based search for resolving hover links ([#309](https://github.com/rust-glancer/rust-glancer/issues/309)) ([f98c88c](https://github.com/rust-glancer/rust-glancer/commit/f98c88c58b65e90c4f9d12bf38771d2c7a2641c4))
+
+
+### Miscellaneous Chores
+
+* release 0.5.0 ([00341df](https://github.com/rust-glancer/rust-glancer/commit/00341df40a53e5310a25955647a259ff7e4d9044))
+
 ## [0.4.0](https://github.com/rust-glancer/rust-glancer/compare/v0.3.0...v0.4.0) (2026-10-21)
 
 
