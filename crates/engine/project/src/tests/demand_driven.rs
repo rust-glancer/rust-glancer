@@ -1,6 +1,6 @@
 use std::{fmt::Write as _, fs};
 
-use rg_analysis::{ReferenceLocation, ReferenceQuery};
+use rg_analysis::{ReferenceLocation, ReferenceQuery, ReferenceSearchFile};
 use rg_ir_model::{DefMapRef, PrimitiveTy, Span, UnsignedIntTy};
 use rg_item_tree::{target_sources, testonly::fixture_database};
 use rg_profile::test_support::ProfileTest;
@@ -180,12 +180,17 @@ pub fn wanted() -> u8 { 1u8 }
 }
 
 #[test]
-fn finds_nested_macro_calls_without_inferring_their_bodies() {
+fn finds_nested_and_aliased_macro_calls_without_inferring_their_bodies() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /src/lib.rs crate:macro_references
 #[macro_export]
 macro_rules! $definition$make { () => { 1u8 }; }
+use crate::$import$make as alias;
+macro_rules! generate {
+    ($name:ident) => { fn generated() -> u8 { $name!() } };
+}
+generate!($aliased_call$alias);
 fn outer() {
     fn nested() -> u8 { crate::$call$make!() }
 }
@@ -207,21 +212,28 @@ fn outer() {
                 ReferenceQuery::find_references(&[context.crate_ref], false),
             )
             .expect("macro references");
-        let start = fixture.markers().position("call").offset;
         assert_eq!(
             locations,
-            [ReferenceLocation {
-                crate_ref: context.crate_ref,
-                file_id: context.file,
-                span: Span {
-                    start,
-                    end: start + 4
-                },
-            }]
+            [
+                ("import", "make"),
+                ("aliased_call", "alias"),
+                ("call", "make")
+            ]
+            .map(|(marker, name)| {
+                let start = fixture.markers().position(marker).offset;
+                ReferenceLocation {
+                    crate_ref: context.crate_ref,
+                    file_id: context.file,
+                    span: Span {
+                        start,
+                        end: start + name.len() as u32,
+                    },
+                }
+            })
         );
     });
     let report = profile.finish();
-    report.assert_counter_path("body_ir.owner.owners", 1);
+    report.assert_counter_path("body_ir.owner.owners", 2);
     assert_eq!(
         report
             .inner()
@@ -229,6 +241,72 @@ fn outer() {
             .unwrap_or_default(),
         0
     );
+}
+
+#[test]
+fn reference_search_filters_generated_bodies_by_invocation() {
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:generated_references
+macro_rules! generate {
+    ($name:ident, $template:literal) => {
+        fn $name() { let _ = format_args!($template); }
+    };
+}
+mod generated;
+pub struct $declaration$Value;
+//- /src/generated.rs
+use crate::$import$Value;
+macro_rules! forward {
+    ($name:ident, $template:literal) => { generate!($name, $template); };
+}
+forward!(referencing, "{$capture$\u{56}alue}");
+generate!(unrelated, "plain text");
+"#,
+    );
+    let project = fixture.build_project();
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
+    project.inspect(|snapshot| {
+        let declaration = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route declaration file")
+            .expect("declaration target");
+        let generated = snapshot
+            .file_context_for_path(fixture.path("src/generated.rs"))
+            .expect("route generated owners")
+            .expect("generated owners' target");
+        let files = [ReferenceSearchFile {
+            crate_ref: generated.crate_ref,
+            file_id: generated.file,
+        }];
+        let locations = snapshot
+            .analysis()
+            .references(
+                declaration.crate_ref,
+                declaration.file,
+                fixture.markers().position("declaration").offset,
+                ReferenceQuery::find_references_in_files(&files, false),
+            )
+            .expect("references from the selected file");
+        assert_eq!(
+            locations,
+            [("import", "Value"), ("capture", r"\u{56}alue")].map(|(marker, text)| {
+                let start = fixture.markers().position(marker).offset;
+                ReferenceLocation {
+                    crate_ref: generated.crate_ref,
+                    file_id: generated.file,
+                    span: Span {
+                        start,
+                        end: start + text.len() as u32,
+                    },
+                }
+            })
+        );
+    });
+    // Only the invocation with the decoded capture should demand a body.
+    profile
+        .finish()
+        .assert_counter_path("body_ir.owner.owners", 1);
 }
 
 #[test]

@@ -126,8 +126,7 @@ impl ReferenceSubject {
             exact_labels = UniqueVec::new();
         }
         // A copied macro argument may also name a value. Its uses still need the full body scan.
-        let macro_definitions =
-            (macro_definitions.len() == declarations.len()).then_some(macro_definitions);
+        let scan_macro_calls_only = macro_definitions.len() == declarations.len();
 
         let subject = Self {
             declarations: declarations.iter().copied().collect(),
@@ -139,6 +138,7 @@ impl ReferenceSubject {
                 modules,
                 types,
                 macro_definitions,
+                scan_macro_calls_only,
             },
             local_owners: local_owners.map(UniqueVec::into_vec),
         };

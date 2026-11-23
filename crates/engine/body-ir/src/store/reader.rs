@@ -3,7 +3,7 @@ use std::{collections::HashSet, fmt, sync::Arc, vec::IntoIter};
 use rg_def_map::{DefMap, ItemSource, ItemSourceKind};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId,
-    ItemStoreRef, LocalDefRef, SemanticItemRef, SourceId, SourceLocation,
+    ItemStoreRef, LocalDefRef, SemanticItemRef, SourceId, SourceLocation, Span,
 };
 use rg_item_tree::SourceLocations;
 use rg_profile::ProfileThreadContext;
@@ -143,6 +143,13 @@ impl<'db> BodyReader<'db> {
         let mut owners = body_owners(self.db, krate, selection)?;
         owners.retain(PreparedBody::can_prepare);
         Ok(owners.into_iter())
+    }
+
+    pub fn generated_body_invocation(
+        &self,
+        owner: &BodyOwnerData,
+    ) -> Result<Option<Span>, ReadError> {
+        ItemSourceView::generated_body_invocation(self.db, owner).map_err(ReadError::Query)
     }
 
     pub fn bodies(

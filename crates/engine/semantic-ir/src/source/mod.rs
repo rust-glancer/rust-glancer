@@ -22,7 +22,7 @@ pub use self::{
     ownership::{SourceOwnership, SourceOwnershipIndex, complete_source_ownership},
     resolve::SourceSelection,
 };
-use crate::{associated_declarations, target_declarations};
+use crate::{BodyOwnerData, associated_declarations, target_declarations};
 
 /// The source tables needed to read occurrences and previews from one declaration source.
 ///
@@ -97,6 +97,37 @@ impl<'db> ItemSourceView<'db> {
         item: GeneratedItemRef,
     ) -> ajika::Result<Option<GeneratedBodySyntax>> {
         Self::generated_sources(db, krate, item.source_store())?.body_syntax(db, krate, item)
+    }
+
+    /// Return the invocation that bounds a generated body's exact source occurrences in its file.
+    ///
+    /// A generated item's full declaration maps to the invocation used to lower its body.
+    /// For `make!(name)`, exact occurrences in the generated body must be copied from that
+    /// invocation. Read the declaration's origin without reopening the expanded tokens.
+    pub fn generated_body_invocation(
+        db: &'db QueryContext<'db>,
+        owner: &BodyOwnerData,
+    ) -> ajika::Result<Option<Span>> {
+        let ItemSourceKind::Generated(item) = owner.source.kind else {
+            return Ok(None);
+        };
+        let sources =
+            Self::generated_sources(db, owner.module.origin.origin_crate(), item.source_store())?;
+        let Some(GeneratedLocations::Expansion(locations)) = sources.get(item.source()) else {
+            return Ok(None);
+        };
+        let Some(location) = locations
+            .get(owner.location)
+            .filter(|location| !location.editable)
+        else {
+            return Ok(None);
+        };
+        let (package, file) = location.input_file();
+        if file != owner.file {
+            return Ok(None);
+        }
+        let inputs = file_declaration_sources(db, package, file)?;
+        Ok(inputs.token_span(location.origin))
     }
 
     fn generated_sources(

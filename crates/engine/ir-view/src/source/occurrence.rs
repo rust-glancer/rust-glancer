@@ -521,27 +521,23 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             Some(file) => vec![file],
             None => self.db.body_ir.body_files(crate_ref)?,
         };
-        let macro_definitions =
-            selection.and_then(|selection| selection.macro_definitions.as_deref());
+        let macro_definitions = selection
+            .filter(|selection| selection.scan_macro_calls_only)
+            .map(|selection| selection.macro_definitions.as_slice());
         for file in files {
             rg_std::check_cancel!(self.db, "body scan file");
-            let selected = selection
-                .map(|selection| selection.owners(self.db, crate_ref, file))
-                .transpose()?;
-            let owners: Vec<_> = self
-                .db
-                .body_ir
-                .owners(crate_ref, SourceSelection::AllInFile(file))?
-                .filter(|owner| {
-                    selected
-                        .as_ref()
-                        .is_none_or(|selected| selected.contains(&owner.owner))
-                })
-                .map(|owner| BodyKey {
-                    krate: crate_ref,
-                    owner: owner.owner,
-                })
-                .collect();
+            let owners = match selection {
+                Some(selection) => selection.body_keys(self.db, crate_ref, file)?,
+                None => self
+                    .db
+                    .body_ir
+                    .owners(crate_ref, SourceSelection::AllInFile(file))?
+                    .map(|owner| BodyKey {
+                        krate: crate_ref,
+                        owner: owner.owner,
+                    })
+                    .collect(),
+            };
             let scanner = BodySourceScanner::new(self.db, file_id, &owners);
             let candidates = match macro_definitions {
                 Some(definitions) => scanner.macro_calls_to(definitions)?,

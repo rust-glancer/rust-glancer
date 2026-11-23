@@ -3,12 +3,12 @@
 //! A spelling can rule out an entire file before any semantic scan. Within a selected file,
 //! declaration metadata and source tokens can rule out individual bodies before inference.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use rg_def_map::{DefMapSource as _, ModuleOrigin};
 use rg_ir_model::{
-    CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, LocalDefRef, ModuleRef, OuterBodyOwner,
-    Span, TypeDefRef,
+    BodyKey, CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, LocalDefRef, ModuleRef,
+    OuterBodyOwner, Span, TypeDefRef,
 };
 use rg_semantic_ir::{BodyOwnerData, ItemStoreQuery, SourceSelection};
 use rg_syntax::{
@@ -107,28 +107,29 @@ pub struct ReferenceSourceSelection {
     pub modules: Vec<ModuleRef>,
     /// Searched nominal types, used to narrow `Self` in methods with a known impl receiver.
     pub types: Vec<TypeDefRef>,
-    /// When every target is a macro, expansion already identified its body calls. Other
-    /// searches need the ordinary scanner to resolve value and type references too.
-    pub macro_definitions: Option<Vec<LocalDefRef>>,
+    /// Macro targets can match a resolved call whose written spelling is an import alias.
+    pub macro_definitions: Vec<LocalDefRef>,
+    /// When every target is a macro, its calls can be read without demanding inference.
+    pub scan_macro_calls_only: bool,
 }
 
 impl ReferenceSourceSelection {
     /// Choose outer owners in one file; selecting one also includes its nested bodies.
     ///
     /// This reads declaration metadata and syntax, never inferred bodies.
-    pub(crate) fn owners(
+    pub(crate) fn body_keys(
         &self,
         db: &IndexedViewDb<'_>,
         krate: CrateRef,
         file: FileId,
-    ) -> anyhow::Result<HashSet<OuterBodyOwner>> {
+    ) -> anyhow::Result<Vec<BodyKey>> {
         let owners = db.body_ir.owners(krate, SourceSelection::AllInFile(file))?;
-        if owners.clone().next().is_none() {
-            return Ok(HashSet::new());
+        if owners.as_slice().is_empty() {
+            return Ok(Vec::new());
         }
-        let mut selected = HashSet::new();
+        let key = |owner: OuterBodyOwner| BodyKey { krate, owner };
         if self.labels.is_empty() {
-            return Ok(owners.clone().map(|owner| owner.owner).collect());
+            return Ok(owners.map(|owner| key(owner.owner)).collect());
         }
         let labels: Vec<_> = self
             .labels
@@ -136,24 +137,19 @@ impl ReferenceSourceSelection {
             .filter_map(|label| label.spelling_in(krate))
             .collect();
         if labels.is_empty() {
-            return Ok(selected);
+            return Ok(Vec::new());
         }
-        // Keep generated owners even when the text lacks a label. `include!` also prevents this
-        // shortcut: the included file may contain references absent from the invocation's text.
         let text = db.sources().text(file)?;
         // A capture such as `caf\u{e9}` need not contain its decoded name in the file text.
         // Escapes require the syntax pass below before we can rule out its references.
-        if !labels.iter().any(|label| text.contains(*label))
-            && !text.contains("include")
-            && !text.contains('\\')
+        let syntax = if labels.iter().any(|label| text.contains(*label))
+            || text.contains("include")
+            || text.contains('\\')
         {
-            return Ok(owners
-                .clone()
-                .filter(|owner| owner.source.as_item_tree().is_none())
-                .map(|owner| owner.owner)
-                .collect());
-        }
-        let syntax = db.source_syntax(krate, file)?;
+            Some(db.source_syntax(krate, file)?.syntax_node())
+        } else {
+            None
+        };
         let mut tokens: HashMap<String, Vec<Span>> = HashMap::new();
         let mut macro_arguments: HashMap<String, Vec<Span>> = HashMap::new();
         // Token equality ignores comments and ordinary string text while retaining identifiers
@@ -161,8 +157,8 @@ impl ReferenceSourceSelection {
         // Also record `impl`, `mod`, and `include`: they can introduce a new scope or more source,
         // so finding them below may prevent us from ruling out an owner by its enclosing scope.
         for token in syntax
-            .syntax_node()
-            .descendants_with_tokens()
+            .into_iter()
+            .flat_map(|root| root.descendants_with_tokens())
             .filter_map(|element| element.into_token())
         {
             rg_std::check_cancel!(db, "reference source selection");
@@ -204,13 +200,32 @@ impl ReferenceSourceSelection {
                 }
             }
         }
-        for owner in owners.clone() {
+        let mut selected = Vec::new();
+        for owner in owners {
             rg_std::check_cancel!(db, "reference owner selection");
-            let span = db.source_span(DefMapRef::Crate(krate), owner.source, owner.location)?;
-            // Generated owners and included source cannot be ruled out from the invocation's
-            // written tokens. Keep them even without a matching label in the owner's span.
-            if owner.source.as_item_tree().is_none() || Self::contains(&tokens, "include", span) {
-                selected.insert(owner.owner);
+            let generated = owner.source.as_item_tree().is_none();
+            let span = if generated {
+                // `generate!(alias)` can copy a call to a macro imported under another name.
+                // Keep the owner when matching uses of that macro by identity.
+                if !self.macro_definitions.is_empty() {
+                    selected.push(key(owner.owner));
+                    continue;
+                }
+                let Some(invocation) = db.body_ir.generated_body_invocation(&owner)? else {
+                    // Keep owners whose exact occurrences have no known bound in this file.
+                    selected.push(key(owner.owner));
+                    continue;
+                };
+                invocation
+            } else {
+                if tokens.is_empty() {
+                    continue;
+                }
+                db.source_span(DefMapRef::Crate(krate), owner.source, owner.location)?
+            };
+            // An include can introduce references absent from the invoking source.
+            if Self::contains(&tokens, "include", span) {
+                selected.push(key(owner.owner));
                 continue;
             }
             for &label in &labels {
@@ -219,8 +234,8 @@ impl ReferenceSourceSelection {
                 }
                 // A macro can move an argument into a different impl or module. Written owner
                 // context proves nothing about the expansion's interpretation of that token.
-                if Self::contains(&macro_arguments, label, span) {
-                    selected.insert(owner.owner);
+                if generated || Self::contains(&macro_arguments, label, span) {
+                    selected.push(key(owner.owner));
                     break;
                 }
                 // `Self` and relative module paths depend on where the token is written. A nested
@@ -237,7 +252,7 @@ impl ReferenceSourceSelection {
                     _ => true,
                 };
                 if plausible {
-                    selected.insert(owner.owner);
+                    selected.push(key(owner.owner));
                     break;
                 }
             }
