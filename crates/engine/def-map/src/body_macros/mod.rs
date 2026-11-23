@@ -11,7 +11,6 @@ use anyhow::Context as _;
 use rg_ir_model::{BuiltinMacroExprKind, CrateRef, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
-use rg_std::CancellationToken;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_text::Name;
 
@@ -19,7 +18,6 @@ use crate::{DefMapQuery, DefinitionReader, MacroDefinitionView, NameResolutionEn
 
 mod call;
 mod expanded;
-mod format;
 mod fragments;
 
 use self::call::{BodyMacroCallee, BodyMacroInvocation, ResolvedBodyMacroCall};
@@ -58,16 +56,14 @@ pub struct BodyMacroExpander<'db, 'txn> {
     def_maps: &'txn DefinitionReader<'db>,
     runtime: MacroExpansionRuntime,
     depth: Rc<Cell<usize>>,
-    cancellation: CancellationToken,
 }
 
 impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
-    pub fn new(def_maps: &'txn DefinitionReader<'db>, cancellation: CancellationToken) -> Self {
+    pub fn new(def_maps: &'txn DefinitionReader<'db>) -> Self {
         Self {
             def_maps,
             runtime: MacroExpansionRuntime::default(),
             depth: Rc::new(Cell::new(0)),
-            cancellation,
         }
     }
 

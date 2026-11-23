@@ -117,14 +117,14 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
     /// Keep the original written call's file and range. The nested syntax has generated offsets,
     /// so its tokens need this expansion's map to recover original argument positions.
     /// Its `$crate` paths belong to the macro definition that produced the output.
-    pub(super) fn in_expansion<T>(&self, expanded: &ExpandedBodyMacro<T>) -> Self {
+    pub fn in_expansion<T>(&self, expanded: &ExpandedBodyMacro<T>) -> Self {
         Self {
             origin: expanded.call_origin(),
             ..self.clone()
         }
     }
 
-    pub(super) fn source(&self) -> BodySource {
+    pub fn source(&self) -> BodySource {
         self.source
     }
 

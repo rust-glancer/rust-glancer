@@ -8,22 +8,16 @@
 //! example, `Action` is a type path while `Start` is a value path. The facade keeps those semantic
 //! inputs distinct instead of forcing scanners to choose a navigation result.
 
-use std::collections::{HashMap, hash_map::Entry};
-
 use anyhow::Context as _;
 use rg_body_ir::ExprKind;
-use rg_def_map::{
-    BodyMacroExpander, ItemSourceKind, MacroCopyEvidence, MacroCopyRef, SourceOccurrenceLocation,
-};
+use rg_def_map::{MacroCopyRef, SourceOccurrenceLocation};
 use rg_ir_model::{
     BodyBindingRef, BodyKey, CrateRef, FieldKey, FileId, GenericDefRef, ModuleRef, Path,
     SourceLocationKind, Span,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::{ItemMacroCopyIndex, SourceSelection, TypePathContext};
-use rg_std::UniqueVec;
-use rg_syntax::SourceFile;
+use rg_semantic_ir::{SourceSelection, TypePathContext};
 
 use super::scan::{
     BindingSurface, BodyCursorScanner, BodySourceCandidate, BodySourceScanner,
@@ -132,6 +126,10 @@ pub struct IndexedSourceOccurrence {
 }
 
 impl IndexedSourceOccurrence {
+    pub(super) fn written_span(&self) -> (FileId, Span) {
+        (self.file_id, self.span)
+    }
+
     /// Split the occurrence into transport-neutral parts.
     pub fn into_parts(
         self,
@@ -345,87 +343,6 @@ impl IndexedTypePath {
     }
 }
 
-type BodyOccurrences = HashMap<(FileId, Span), Vec<IndexedSourceOccurrence>>;
-
-/// Reuse source inventories and full body scans across one rename in this snapshot.
-pub struct MacroEditSourceView<'a, 'db> {
-    db: &'a IndexedViewDb<'db>,
-    items: ItemMacroCopyIndex<'db>,
-    bodies: HashMap<BodyKey, BodyOccurrences>,
-}
-
-impl<'a, 'db> MacroEditSourceView<'a, 'db> {
-    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
-        Self {
-            db,
-            items: db.item_macro_copy_index(),
-            bodies: HashMap::new(),
-        }
-    }
-
-    /// Gather every expansion and semantic occurrence that can constrain this physical edit.
-    /// Select worklists by declaration metadata before opening their source or inferred facts.
-    pub fn occurrences(
-        &mut self,
-        krate: CrateRef,
-        file: FileId,
-        span: Span,
-        evidence: &mut MacroCopyEvidence,
-    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
-        self.items.record(krate, file, span, evidence)?;
-        let view = SourceOccurrenceView::new(self.db);
-        let selection = SourceSelection::all_at(file, span.start);
-        let mut occurrences = view.declaration_occurrences(krate, selection)?;
-        let mut keys = UniqueVec::new();
-        for owner in self.db.body_ir.owners(krate, selection)? {
-            rg_std::check_cancel!(self.db, "macro argument owners");
-            if !self
-                .db
-                .body_ir
-                .declaration_location(krate, owner.source, owner.location)?
-                .span
-                .contains_span(span)
-            {
-                continue;
-            }
-            let key = BodyKey {
-                krate,
-                owner: owner.owner,
-            };
-            if !keys.push(key) {
-                continue;
-            }
-            for (expansion, coverage) in self.db.body_ir.macro_copy_coverage(key)? {
-                if coverage.file == file {
-                    evidence.record(expansion, span, coverage);
-                }
-            }
-            let indexed = match self.bodies.entry(key) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => {
-                    let mut indexed = BodyOccurrences::new();
-                    for occurrence in view.occurrences_in_body(key)? {
-                        indexed
-                            .entry((occurrence.file_id, occurrence.span))
-                            .or_default()
-                            .push(occurrence);
-                    }
-                    entry.insert(indexed)
-                }
-            };
-            // The same written function can be included with a different macro in scope.
-            // An opaque call in that route may provide no expansion or indexed name at all.
-            if let Some(at_edit) = indexed.get(&(file, span)) {
-                occurrences.extend(at_edit.iter().cloned());
-            } else if matches!(owner.source.kind, ItemSourceKind::ItemTree(_)) {
-                evidence.mark_unverified();
-            }
-        }
-        occurrences.retain(|entry| entry.span == span);
-        Ok(occurrences)
-    }
-}
-
 /// Finds declaration, reference, and structural source occurrences.
 ///
 /// Point queries select the narrowest body-local source node at `$0` and retain any independently
@@ -444,19 +361,6 @@ pub struct SourceOccurrenceView<'a, 'db> {
 impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
-    }
-
-    /// Find caller-written format templates through macro expansion, without loading bodies.
-    pub fn format_string_spans(
-        &self,
-        crate_ref: CrateRef,
-        file: FileId,
-        syntax: &SourceFile,
-        range: Option<Span>,
-    ) -> anyhow::Result<Vec<Span>> {
-        let config = self.db.crate_config(crate_ref)?;
-        BodyMacroExpander::new(&self.db.def_map, self.db.cancellation().clone())
-            .format_string_spans(&config, crate_ref, file, syntax, range)
     }
 
     /// Returns the named source spelling selected by an expression, when the expression has one.

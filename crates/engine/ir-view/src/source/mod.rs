@@ -8,6 +8,8 @@
 
 mod completion;
 mod documentation;
+mod format;
+mod macro_edits;
 mod occurrence;
 mod references;
 mod scan;
@@ -15,7 +17,7 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
-pub use rg_def_map::{MacroCopyEvidence, SourceOccurrenceLocation};
+pub use rg_def_map::SourceOccurrenceLocation;
 
 pub use self::{
     completion::{
@@ -31,10 +33,12 @@ pub use self::{
         DocumentationDeclarationIndex, DocumentationPlacement, DocumentationSource,
         DocumentationSourceView, ModuleDocumentationSource,
     },
+    format::FormatStringSourceView,
+    macro_edits::{MacroCopyEvidence, MacroEditSourceView},
     occurrence::{
         IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence,
         IndexedSourceProvenance, IndexedSourceRole, IndexedSourceSurface, IndexedTypePath,
-        IndexedTypePathScope, MacroEditSourceView, SourceOccurrenceView,
+        IndexedTypePathScope, SourceOccurrenceView,
     },
     references::{ReferenceMacroTargets, ReferenceSearchLabel, ReferenceSourceSelection},
 };

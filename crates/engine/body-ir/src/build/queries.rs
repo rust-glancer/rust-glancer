@@ -80,7 +80,7 @@ pub fn prepare_body(db: &QueryContext<'_>, key: BodyKey) -> ajika::Result<Option
     let cancellation = db.services().cancellation.clone();
     let build = || -> anyhow::Result<_> {
         let mut lowered = LoweredBodies::new(key);
-        let mut macros = BodyMacroExpansion::new(edition, &definitions, cfg, cancellation.clone());
+        let mut macros = BodyMacroExpansion::new(edition, &definitions, cfg);
         BodyTaskLowering::new(db, edition, &mut lowered, cfg, &cancellation).lower_tasks(
             &mut [BodyLoweringTask::for_owner(owner, source)],
             &mut macros,

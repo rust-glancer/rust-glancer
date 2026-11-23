@@ -7,31 +7,71 @@
 //! Highlighting only needs that position and the placeholder syntax. Preparing analyzed function
 //! bodies would also resolve names and infer types, which this query does not need.
 
-use rg_cfg_eval::CfgEvaluator;
+use rg_def_map::{
+    BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExprExpansion,
+    ExpandedBodyMacro,
+};
 use rg_ir_model::{BodySource, CrateRef, FileId, Span};
 use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{AstNode, AstToken as _, SourceFile, SyntaxNode, WalkEvent, ast};
 use rg_workspace::CrateConfig;
 
-use super::{
-    BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExprExpansion,
-    ExpandedBodyMacro,
-};
+use crate::IndexedViewDb;
 
-impl BodyMacroExpander<'_, '_> {
-    /// Return each original template span once, even if a wrapper copies it into several calls.
-    /// Skip literals supplied by the macro definition: they were not written in the call.
-    pub fn format_string_spans(
-        &mut self,
-        config: &CrateConfig,
+pub struct FormatStringSourceView<'a, 'db> {
+    db: &'a IndexedViewDb<'db>,
+}
+
+impl<'a, 'db> FormatStringSourceView<'a, 'db> {
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
+    }
+
+    /// Return the written template spans from calls that touch the requested range. A wrapper
+    /// may copy the same literal into several formatting calls, so return its source span once.
+    /// A template supplied by the macro definition has no span to highlight at the call site.
+    pub fn spans(
+        &self,
         crate_ref: CrateRef,
         file: FileId,
         syntax: &SourceFile,
         range: Option<Span>,
     ) -> anyhow::Result<Vec<Span>> {
+        let config = self.db.crate_config(crate_ref)?;
+        let mut scan = FormatStringScan {
+            db: self.db,
+            config: &config,
+            expander: BodyMacroExpander::new(&self.db.def_map),
+            spans: Vec::new(),
+        };
+        scan.scan_file(crate_ref, file, syntax, range)?;
+        // One argument can be copied into several formatting calls by a wrapper.
+        scan.spans
+            .sort_unstable_by_key(|span| (span.start, span.end));
+        scan.spans.dedup();
+        Ok(scan.spans)
+    }
+}
+
+/// One scan shares the expansion cache and recursion limit across the file and its nested calls.
+struct FormatStringScan<'a, 'db> {
+    db: &'a IndexedViewDb<'db>,
+    config: &'a CrateConfig,
+    expander: BodyMacroExpander<'db, 'a>,
+    spans: Vec<Span>,
+}
+
+impl FormatStringScan<'_, '_> {
+    fn scan_file(
+        &mut self,
+        crate_ref: CrateRef,
+        file: FileId,
+        syntax: &SourceFile,
+        range: Option<Span>,
+    ) -> anyhow::Result<()> {
+        let config = self.config;
         let cfg = config.cfg();
-        let mut spans = Vec::new();
-        for call in self.format_macro_calls(syntax.syntax(), cfg)? {
+        for call in self.format_macro_calls(syntax.syntax())? {
             let span = Span::from_text_range(call.syntax().text_range());
             if span.intersection(range.unwrap_or(span)).is_none() {
                 continue;
@@ -58,7 +98,8 @@ impl BodyMacroExpander<'_, '_> {
             // `use std::format_args as render` resolves to the actual formatting builtin.
             let path = enclosing_inline_module_path(call.syntax());
             let Some(module) = self
-                .def_maps
+                .db
+                .def_map
                 .module_for_inline_path(crate_ref, file, &path)?
             else {
                 continue;
@@ -70,12 +111,9 @@ impl BodyMacroExpander<'_, '_> {
                 config.edition,
             )
             .with_cfg(cfg);
-            self.collect_format_call(site, &call, &mut spans)?;
+            self.collect_format_call(site, &call)?;
         }
-        // One argument can be copied into several formatting calls by a wrapper.
-        spans.sort_unstable_by_key(|span| (span.start, span.end));
-        spans.dedup();
-        Ok(spans)
+        Ok(())
     }
 
     /// Follow one call until expansion reaches a builtin that identifies its format template.
@@ -83,10 +121,9 @@ impl BodyMacroExpander<'_, '_> {
         &mut self,
         site: BodyMacroCallSite<'_>,
         call: &ast::MacroCall,
-        spans: &mut Vec<Span>,
     ) -> anyhow::Result<()> {
-        rg_std::check_cancel!(self.cancellation, "format macro expansion");
-        let Some(_scope) = self.expansion_scope() else {
+        rg_std::check_cancel!(self.db, "format macro expansion");
+        let Some(_scope) = self.expander.expansion_scope() else {
             return Ok(());
         };
         // `emit!("{user}");` can produce two `let` statements. Trying to parse that as one
@@ -100,12 +137,14 @@ impl BodyMacroExpander<'_, '_> {
             .is_some_and(|node| ast::ExprStmt::can_cast(node.kind()));
         if statement
             && let Some(expanded) = self
+                .expander
                 .expand_stmt_call(site.clone(), call)?
                 .and_then(|outcome| outcome.expansion)
         {
-            return self.collect_expanded_format_strings(&site, expanded, spans);
+            return self.collect_expanded_format_strings(&site, expanded);
         }
         let Some(expansion) = self
+            .expander
             .expand_expr_call(site.clone(), call)?
             .and_then(|outcome| outcome.expansion)
         else {
@@ -113,7 +152,7 @@ impl BodyMacroExpander<'_, '_> {
         };
         match expansion {
             BodyMacroExprExpansion::Expanded(expanded) => {
-                self.collect_expanded_format_strings(&site, expanded, spans)?;
+                self.collect_expanded_format_strings(&site, expanded)?;
             }
             BodyMacroExprExpansion::Builtin {
                 arguments: Some(arguments),
@@ -128,16 +167,13 @@ impl BodyMacroExpander<'_, '_> {
                     && let Some(span) =
                         context.source_for_exact_syntax(site.source(), literal.syntax())
                 {
-                    spans.push(span);
+                    self.spans.push(span);
                 }
                 // In `format_args!("{}", format_args!("{user}"))`, the inner template needs
                 // highlighting too. Its tokens must pass through this argument map as well.
                 let nested = site.in_expansion(&context);
-                for call in self.format_macro_calls(
-                    syntax.syntax(),
-                    site.cfg().expect("format query has cfg"),
-                )? {
-                    self.collect_format_call(nested.clone(), &call, spans)?;
+                for call in self.format_macro_calls(syntax.syntax())? {
+                    self.collect_format_call(nested.clone(), &call)?;
                 }
             }
             BodyMacroExprExpansion::Builtin {
@@ -152,30 +188,24 @@ impl BodyMacroExpander<'_, '_> {
         &mut self,
         site: &BodyMacroCallSite<'_>,
         expanded: ExpandedBodyMacro<T>,
-        spans: &mut Vec<Span>,
     ) -> anyhow::Result<()> {
         let nested = site.in_expansion(&expanded);
         let (syntax, _) = expanded.into_syntax_and_context();
-        for call in
-            self.format_macro_calls(syntax.syntax(), site.cfg().expect("format query has cfg"))?
-        {
-            self.collect_format_call(nested.clone(), &call, spans)?;
+        for call in self.format_macro_calls(syntax.syntax())? {
+            self.collect_format_call(nested.clone(), &call)?;
         }
         Ok(())
     }
 
     /// Skip inactive syntax before expanding calls, including cfg gates produced by macros.
-    fn format_macro_calls(
-        &self,
-        syntax: &SyntaxNode,
-        cfg: CfgEvaluator<'_>,
-    ) -> anyhow::Result<Vec<ast::MacroCall>> {
+    fn format_macro_calls(&self, syntax: &SyntaxNode) -> anyhow::Result<Vec<ast::MacroCall>> {
+        let cfg = self.config.cfg();
         let mut calls = Vec::new();
         let mut walk = syntax.preorder();
         let mut visited = 0usize;
         while let Some(event) = walk.next() {
             if visited.is_multiple_of(64) {
-                rg_std::check_cancel!(self.cancellation, "format macro syntax");
+                rg_std::check_cancel!(self.db, "format macro syntax");
             }
             visited += 1;
             let WalkEvent::Enter(node) = event else {

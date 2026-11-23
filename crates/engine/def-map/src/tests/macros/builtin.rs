@@ -156,6 +156,37 @@ make_from_selected!();
 }
 
 #[test]
+fn cfg_select_expands_item_arms_from_macro_output_and_aliases() {
+    let project = build_builtin_macro_fixture(
+        r#"
+//- /src/lib.rs crate:cfg_select_tokens
+macro_rules! select_item {
+    ($name:ident) => {
+        cfg_select! {
+            false => {},
+            _ => { pub struct $name; }
+        }
+    };
+}
+
+select_item!(FromExpansion);
+
+use core::cfg_select as select;
+select! {
+    true => { pub struct FromAlias; }
+}
+"#,
+    );
+    let target = project.lib("cfg_select_tokens");
+    target
+        .entry("FromExpansion")
+        .assert_type_exists("cfg_select emitted by another macro should select an arm");
+    target
+        .entry("FromAlias")
+        .assert_type_exists("the resolved builtin should select an arm through an alias");
+}
+
+#[test]
 fn qualified_cfg_select_expands_first_enabled_item_arm() {
     let project = build_builtin_macro_fixture(
         r#"

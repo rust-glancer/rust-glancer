@@ -11,7 +11,6 @@ use rg_def_map::{
     BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, DefinitionReader,
 };
 use rg_ir_model::ModuleRef;
-use rg_std::CancellationToken;
 use rg_syntax::ast;
 
 use crate::body::BodySource;
@@ -89,11 +88,10 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
         edition: rg_text::RustEdition,
         def_maps: &'ctx DefinitionReader<'db>,
         cfg: CfgEvaluator<'ctx>,
-        cancellation: CancellationToken,
     ) -> Self {
         Self {
             edition,
-            expander: DefMapBodyMacroExpander::new(def_maps, cancellation),
+            expander: DefMapBodyMacroExpander::new(def_maps),
             cfg,
         }
     }

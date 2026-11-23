@@ -331,16 +331,16 @@ impl<'a> DeclarationCollector<'a> {
             return;
         };
         let forwarding = ForwardedMacroInputs::new(source, self.state.crate_ref, &input.forwarded);
-        let (source, dollar_crate) = match source.kind {
+        let (source, enclosing_dollar_crate) = match source.kind {
             ItemSourceKind::Generated(generated) => (
                 self.state
                     .generated_items
                     .source(generated.source())
                     .expect("generated call source should exist")
                     .origin_source,
-                input.path_crate.or(self.dollar_crate),
+                self.dollar_crate,
             ),
-            ItemSourceKind::ItemTree(written) => (written, input.path_crate),
+            ItemSourceKind::ItemTree(written) => (written, None),
             _ => unreachable!("crate macro calls need written or generated source"),
         };
         self.state.push_macro_call(
@@ -351,7 +351,8 @@ impl<'a> DeclarationCollector<'a> {
                 callee: call.callee.clone(),
                 args: input.args.clone(),
                 builtin: call.builtin.clone(),
-                dollar_crate,
+                path_crate: input.path_crate,
+                enclosing_dollar_crate,
                 file_id: item.file_id,
                 call_site: input.call_site,
                 forwarding,

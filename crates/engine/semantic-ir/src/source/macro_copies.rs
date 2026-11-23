@@ -1,13 +1,30 @@
-//! Resolve each selected item expansion inventory once during a rename.
+//! Find item macro invocations covering a written range.
+//!
+//! DefMap records the input token origins for each expansion. This index resolves those origins
+//! into spans in the active snapshot, once per target, file, and source store. A file reached
+//! through multiple `include!` calls can have several owners with their own expansion results.
 
 use std::collections::{HashMap, hash_map::Entry};
 
-use rg_def_map::{GeneratedSourceStoreId, MacroCopyCoverage, MacroCopyEvidence, MacroExpansionRef};
+use rg_def_map::{GeneratedSourceStoreId, MacroCopyCoverage, MacroExpansionRef};
 use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, Span};
 use rg_item_tree::file_declaration_sources;
 use rg_source::QueryContext;
 
 use super::{DeclarationSourceResolver, ItemSourceView, SourceSelection};
+
+/// What the item expansion recorded for an invocation covering the range.
+pub enum ItemMacroCoverage {
+    Expanded {
+        id: MacroExpansionRef,
+        coverage: MacroCopyCoverage,
+        /// This call has its own written invocation. A nested generated call can share the
+        /// enclosing invocation's range as a fallback.
+        is_root: bool,
+    },
+    /// The invocation has a known source range and no usable copy inventory.
+    Unverified,
+}
 
 pub struct ItemMacroCopyIndex<'db> {
     db: &'db QueryContext<'db>,
@@ -22,12 +39,14 @@ impl<'db> ItemMacroCopyIndex<'db> {
         }
     }
 
-    pub fn record(
+    /// Visit each invocation that contains the whole edit, including overlapping invocations
+    /// from different source owners.
+    pub fn for_each_at(
         &mut self,
         krate: CrateRef,
         file: FileId,
         edit: Span,
-        evidence: &mut MacroCopyEvidence,
+        mut visit: impl FnMut(&ItemMacroCoverage),
     ) -> ajika::Result<()> {
         let db = self.db;
         let members = DeclarationSourceResolver::new(db, krate)
@@ -51,17 +70,8 @@ impl<'db> ItemMacroCopyIndex<'db> {
                 .iter()
                 .take_while(|call| call.span.start <= edit.start)
             {
-                if !call.span.contains_span(edit) {
-                    continue;
-                }
-                let Some(expansion) = &call.expansion else {
-                    evidence.mark_unverified();
-                    continue;
-                };
-                let copied = evidence.record(expansion.id, edit, &expansion.coverage);
-                // A different semantic route may discard the argument altogether.
-                if expansion.is_root && !copied {
-                    evidence.mark_unverified();
+                if call.span.contains_span(edit) {
+                    visit(&call.coverage);
                 }
             }
         }
@@ -89,7 +99,7 @@ impl<'db> ItemMacroCopyIndex<'db> {
                 calls.push(IndexedMacroCall {
                     span,
                     max_end: span.end,
-                    expansion: None,
+                    coverage: ItemMacroCoverage::Unverified,
                 });
             }
         }
@@ -106,7 +116,7 @@ impl<'db> ItemMacroCopyIndex<'db> {
             calls.push(IndexedMacroCall {
                 span,
                 max_end: span.end,
-                expansion: Some(IndexedItemExpansion {
+                coverage: ItemMacroCoverage::Expanded {
                     id: MacroExpansionRef::Item {
                         krate,
                         store,
@@ -129,7 +139,7 @@ impl<'db> ItemMacroCopyIndex<'db> {
                         forwarded: copies.forwarded.clone(),
                     },
                     is_root: copies.is_root,
-                }),
+                },
             });
         }
         calls.sort_unstable_by_key(|call| call.span.start);
@@ -145,11 +155,5 @@ impl<'db> ItemMacroCopyIndex<'db> {
 struct IndexedMacroCall {
     span: Span,
     max_end: u32,
-    expansion: Option<IndexedItemExpansion>,
-}
-
-struct IndexedItemExpansion {
-    id: MacroExpansionRef,
-    coverage: MacroCopyCoverage,
-    is_root: bool,
+    coverage: ItemMacroCoverage,
 }

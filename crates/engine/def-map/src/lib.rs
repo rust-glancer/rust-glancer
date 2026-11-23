@@ -53,7 +53,7 @@ pub use self::{
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     },
-    macro_copies::{MacroCopyCoverage, MacroCopyEvidence, MacroCopyRef, MacroExpansionRef},
+    macro_copies::{MacroCopyCoverage, MacroCopyRef, MacroExpansionRef},
     macro_definition::{
         MacroDefinitionData, MacroDefinitionKind, MacroDefinitionPayload, MacroDefinitionView,
     },

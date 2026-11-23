@@ -21,7 +21,7 @@ use rg_source::QueryContext;
 
 pub(crate) use self::resolve::DeclarationSourceResolver;
 pub use self::{
-    macro_copies::ItemMacroCopyIndex,
+    macro_copies::{ItemMacroCopyIndex, ItemMacroCoverage},
     ownership::{SourceOwnership, SourceOwnershipIndex, complete_source_ownership},
     resolve::SourceSelection,
 };

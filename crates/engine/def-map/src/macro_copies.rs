@@ -1,6 +1,6 @@
 //! Copy coverage belongs to the expansion that produced the tokens.
 
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use rg_ir_model::{BodyKey, CrateRef, FileId, Span};
 use rg_std::{MemorySize, Shrink};
@@ -75,53 +75,6 @@ pub struct MacroCopyCoverage {
     pub copies: Vec<(u32, Span)>,
     pub transformed: Vec<Span>,
     pub forwarded: Vec<MacroCopyRef>,
-}
-
-/// The proof obligations for one proposed edit, found across the selected source routes.
-#[derive(Default)]
-pub struct MacroCopyEvidence {
-    copies: HashSet<MacroCopyRef>,
-    forwarded: HashSet<MacroCopyRef>,
-    blocked: bool,
-}
-
-impl MacroCopyEvidence {
-    pub fn mark_unverified(&mut self) {
-        self.blocked = true;
-    }
-
-    pub fn is_complete(&self, selected: MacroCopyRef, verified: &HashSet<MacroCopyRef>) -> bool {
-        !self.blocked
-            && verified.contains(&selected)
-            && verified.is_subset(&self.copies)
-            && self
-                .copies
-                .difference(&self.forwarded)
-                .all(|copy| verified.contains(copy))
-    }
-
-    pub fn record(
-        &mut self,
-        expansion: MacroExpansionRef,
-        edit: Span,
-        coverage: &MacroCopyCoverage,
-    ) -> bool {
-        // A format capture edits an inner range of the literal. Every copy of the literal
-        // still needs to account for that exact inner edit.
-        let mut found = false;
-        for &(token, input) in &coverage.copies {
-            if input.contains_span(edit) {
-                found = true;
-                self.copies.insert(MacroCopyRef { expansion, token });
-            }
-        }
-        self.blocked |= coverage
-            .transformed
-            .iter()
-            .any(|input| input.contains_span(edit));
-        self.forwarded.extend(coverage.forwarded.iter().copied());
-        found
-    }
 }
 
 /// A nested item macro receives distinct parent-copy IDs even when several inputs

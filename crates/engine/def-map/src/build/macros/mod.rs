@@ -27,6 +27,7 @@ use crate::macro_copies::ForwardedMacroInputs;
 
 mod attempts;
 mod builtin_derive;
+mod cfg_select;
 mod expand;
 mod generated;
 mod generated_tree;
@@ -145,7 +146,11 @@ pub(super) struct MacroCallSite {
     pub(super) callee: Option<Name>,
     pub(super) args: Option<TopSubtree>,
     pub(super) builtin: Option<BuiltinMacroItem>,
-    pub(super) dollar_crate: Option<CrateRef>,
+    /// Crate bound to a leading `$crate` token in the callee path.
+    pub(super) path_crate: Option<CrateRef>,
+    /// Fallback for `$crate` in the enclosing expansion's syntax. Selecting a cfg arm
+    /// keeps that context because its tokens come from the invocation.
+    pub(super) enclosing_dollar_crate: Option<CrateRef>,
     pub(super) file_id: FileId,
     pub(super) call_site: TtSpan,
     pub(super) forwarding: Option<ForwardedMacroInputs>,

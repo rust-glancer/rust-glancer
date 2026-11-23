@@ -39,8 +39,7 @@ impl BodyStoreBuilder<'_> {
         // `body_local_items` is the cursor into `lowered_bodies`: each collected slot means that
         // body has its local DefMap/item store ready. Nested lowering may extend `lowered_bodies`,
         // so the loop stops only once every appended body has been collected too.
-        let mut macro_expansion =
-            BodyMacroExpansion::new(self.edition, def_map, cfg, self.cancellation.clone());
+        let mut macro_expansion = BodyMacroExpansion::new(self.edition, def_map, cfg);
         while self.body_local_items.len() < self.lowered_bodies.bodies().len() {
             self.db.check_cancelled()?;
             let body = self.body_local_items.next_id();
