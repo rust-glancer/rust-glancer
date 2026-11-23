@@ -73,20 +73,21 @@ pub enum BodyLexicalName {
     },
 }
 
-/// Body binding with a known inferred type.
+/// A binding at a possible hint position. Copied bindings with no hint type still participate
+/// in deciding what to show at their shared written position.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InferredBindingTy {
+pub struct BindingTyCandidate {
     source: BodySource,
-    ty: IndexedType,
+    ty: Option<IndexedType>,
 }
 
-impl InferredBindingTy {
+impl BindingTyCandidate {
     pub fn source(&self) -> BodySource {
         self.source
     }
 
-    pub fn ty(&self) -> &IndexedType {
-        &self.ty
+    pub fn ty(&self) -> Option<&IndexedType> {
+        self.ty.as_ref()
     }
 }
 
@@ -445,17 +446,18 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(names)
     }
 
-    /// Return bindings whose inferred type is already known from body facts.
+    /// Return inferred type candidates at written binding positions.
     ///
     /// These are the local pattern bindings that can carry inferred type hints: ordinary `let`
     /// bindings, `let else` and match-pattern bindings, `for` loop pattern bindings, and
-    /// unannotated closure parameters.
-    pub fn inferred_binding_tys(
+    /// unannotated closure parameters. Keep copied bindings even when an annotation or an unknown
+    /// type suppresses their hint, since another copy may yield a type at the same position.
+    pub fn binding_ty_candidates(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         range: Span,
-    ) -> anyhow::Result<Vec<InferredBindingTy>> {
+    ) -> anyhow::Result<Vec<BindingTyCandidate>> {
         let mut bindings = Vec::new();
         for (_, body) in self
             .db
@@ -488,30 +490,27 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 {
                     source = body.source_at(name);
                 }
-                if !source.is_exact_in_file(file_id) {
-                    continue;
-                }
-                let binding_id = BindingId(binding_idx);
-                if !matches!(binding.kind, BindingKind::Let)
-                    && !inferred_closure_params.contains(&binding_id)
+                if !source.is_exact_in_file(file_id)
+                    || !range.touches(source.span.end)
+                    || binding.name.is_none()
                 {
                     continue;
                 }
-                if binding.name.is_none() || binding.annotation.is_some() {
-                    continue;
+                let binding_id = BindingId(binding_idx);
+                let can_hint = binding.annotation.is_none()
+                    && (matches!(binding.kind, BindingKind::Let)
+                        || inferred_closure_params.contains(&binding_id));
+                let ty = if can_hint {
+                    body.binding_ty(binding_id)
+                        .filter(|ty| !matches!(ty, Ty::Unknown))
+                        .cloned()
+                        .map(IndexedType::new)
+                } else {
+                    None
+                };
+                if ty.is_some() || !source.is_written() {
+                    bindings.push(BindingTyCandidate { source, ty });
                 }
-                let ty = body.binding_ty(binding_id).cloned().unwrap_or(Ty::Unknown);
-                if matches!(ty, Ty::Unknown) {
-                    continue;
-                }
-                if !range.touches(source.span.end) {
-                    continue;
-                }
-
-                bindings.push(InferredBindingTy {
-                    source,
-                    ty: IndexedType::new(ty),
-                });
             }
         }
 

@@ -74,25 +74,26 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         // projection separate from hint families backed by declaration metadata.
         let mut hints = HintCandidates::default();
         for binding in BodyView::new(self.analysis.view_db())
-            .inferred_binding_tys(crate_ref, file_id, range)?
+            .binding_ty_candidates(crate_ref, file_id, range)?
         {
-            let Some(presentation) = renderer.render_presentation(binding.ty(), self.max_length)?
-            else {
-                continue;
-            };
-
             let source = binding.source();
-            let hint = InlayHint {
-                file_id: source.file_id,
-                span: source.span,
-                position: InlayHintPosition::After,
-                kind: InlayHintKind::Type,
-                label: format!(": {}", presentation.compact),
-                tooltip: Some(presentation.concrete),
-                padding_left: None,
-                padding_right: None,
+            let hint = if let Some(ty) = binding.ty() {
+                renderer
+                    .render_presentation(ty, self.max_length)?
+                    .map(|presentation| InlayHint {
+                        file_id: source.file_id,
+                        span: source.span,
+                        position: InlayHintPosition::After,
+                        kind: InlayHintKind::Type,
+                        label: format!(": {}", presentation.compact),
+                        tooltip: Some(presentation.concrete),
+                        padding_left: None,
+                        padding_right: None,
+                    })
+            } else {
+                None
             };
-            hints.push(hint, !source.is_written());
+            hints.record(source.span.end, !source.is_written(), hint);
         }
 
         Ok(hints.into_vec())
@@ -141,7 +142,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 padding_left: Some(true),
                 padding_right: None,
             };
-            hints.push(hint, !expr_source.is_written());
+            hints.record(expr_span.end, !expr_source.is_written(), Some(hint));
         }
 
         Ok(hints.into_vec())
@@ -230,8 +231,6 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     padding_left: None,
                     padding_right: Some(true),
                 });
-                // Suppression is also an answer. A copy that would omit an obvious label
-                // must still take part in deciding whether another copy can show one.
                 hints.record(span.start, copied, hint);
             }
         }
@@ -325,8 +324,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     }
 }
 
-/// Equal hints from repeated copies need only one label. Conflicting labels at the same
-/// position would describe different meanings for the same source text.
+/// Show one hint when copies agree at a written position. A copy whose hint is suppressed
+/// still supplies an answer, so a label from another copy can disagree with it.
 #[derive(Default)]
 struct HintCandidates {
     written: UniqueVec<InlayHint>,
@@ -334,10 +333,6 @@ struct HintCandidates {
 }
 
 impl HintCandidates {
-    fn push(&mut self, hint: InlayHint, copied: bool) {
-        self.record(hint.text_offset(), copied, Some(hint));
-    }
-
     fn record(&mut self, offset: u32, copied: bool, hint: Option<InlayHint>) {
         if copied {
             self.copied.entry(offset).or_default().push(hint);
