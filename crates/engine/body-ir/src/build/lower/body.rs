@@ -1,18 +1,16 @@
 //! Shared lowering context for expression bodies.
 
-use std::sync::Arc;
-
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
     BodyMacroCallOrigin, BodyMacroExprExpansion, CopiedArgumentFragments, ExpandedBodyMacro,
-    GeneratedBodySyntax,
+    GeneratedBodySyntax, MacroCopyRef, MacroExpansionRef,
 };
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceId, Span};
 use rg_item_tree::{RecordSource, SourceRole};
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
 
 use super::{
-    arguments::{ArgumentCopies, ExpansionCopies},
+    arguments::ArgumentCopies,
     builder::{BodyBuilder, LoweredBodyData},
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
@@ -188,11 +186,10 @@ impl BodyLowering<'_> {
                 {
                     // For `"{user}"`, the written range covers `user` and the copy ID
                     // tracks the whole literal that carried it into this expansion.
-                    let copy = context
-                        .copies
-                        .as_ref()
-                        .and_then(|copies| copies.get(&token))
-                        .copied();
+                    let copy = context.invocation.map(|expansion| MacroCopyRef {
+                        expansion,
+                        token: token.start().into(),
+                    });
                     return (
                         BodySource::macro_argument(context.source.file_id, span),
                         copy,
@@ -261,20 +258,26 @@ impl BodyLowering<'_> {
         let previous = self.generated_context.take();
         // Exact locations can survive parser recovery or an incomplete parent expansion.
         // Keep those locations for navigation and leave copy coverage unknown.
-        let copies = (!expanded_context.has_parse_errors()
+        let invocation = if !expanded_context.has_parse_errors()
             && previous
                 .as_ref()
-                .is_none_or(|context| context.copies.is_some()))
-        .then(|| {
-            self.argument_copies.expand(
-                &expanded_context,
-                call_source,
-                previous
-                    .as_ref()
-                    .and_then(|context| context.copies.as_deref()),
-            )
-        })
-        .map(Arc::new);
+                .is_none_or(|context| context.invocation.is_some())
+        {
+            self.argument_copies
+                .expand(&expanded_context, call_source, |parent_range| {
+                    let parent = previous.as_ref()?;
+                    let expansion = parent.invocation?;
+                    let (_, token) = parent
+                        .expanded
+                        .argument_source(parent.source, parent_range)?;
+                    (token == parent_range).then_some(MacroCopyRef {
+                        expansion,
+                        token: token.start().into(),
+                    })
+                })
+        } else {
+            None
+        };
         let fragments = CopiedArgumentFragments::new(
             &expanded_context,
             syntax.syntax(),
@@ -284,7 +287,7 @@ impl BodyLowering<'_> {
         self.generated_context = Some(GeneratedBodyMacroContext {
             source: call_source,
             expanded: expanded_context,
-            copies,
+            invocation,
             fragments,
         });
         let result = f(self, syntax);
@@ -302,7 +305,7 @@ impl BodyLowering<'_> {
         self.generated_context = Some(GeneratedBodyMacroContext {
             source: task.body.source,
             expanded: task.body.expansion.clone(),
-            copies: task.copies.clone(),
+            invocation: task.body.invocation,
             fragments,
         });
     }
@@ -315,7 +318,7 @@ impl BodyLowering<'_> {
         self.builder.generated_bodies.insert(
             location,
             GeneratedBodyTask {
-                body: GeneratedBodySyntax {
+                body: Box::new(GeneratedBodySyntax {
                     syntax: syntax.clone(),
                     expansion: context.expanded.clone(),
                     // The invocation may be handwritten. Its range is a fallback shared
@@ -324,9 +327,9 @@ impl BodyLowering<'_> {
                         context.source.file_id,
                         context.source.span,
                     ),
-                },
+                    invocation: context.invocation,
+                }),
                 depth: self.macro_expansion.expansion_depth(),
-                copies: context.copies.clone(),
             },
         );
     }
@@ -441,6 +444,6 @@ impl BodyLowering<'_> {
 struct GeneratedBodyMacroContext {
     source: BodySource,
     expanded: ExpandedBodyMacro<SyntaxNode>,
-    copies: Option<Arc<ExpansionCopies>>,
+    invocation: Option<MacroExpansionRef>,
     fragments: CopiedArgumentFragments,
 }

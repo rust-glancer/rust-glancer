@@ -1273,6 +1273,33 @@ impl TopSubtree {
         encode_all(tts.into_iter(), span_frequencies, symbols)
     }
 
+    /// Rebuild the packed tree with new origins, preserving text, jointness, and nesting.
+    pub fn map_spans(&self, mut map: impl FnMut(Span) -> Span) -> Self {
+        Self::from_serialized(
+            self.as_token_trees()
+                .iter_flat_tokens()
+                .map(|mut token| {
+                    match &mut token {
+                        TokenTree::Leaf(leaf) => {
+                            let span = match leaf {
+                                Leaf::Literal(token) => &mut token.span,
+                                Leaf::Punct(token) => &mut token.span,
+                                Leaf::Ident(token) => &mut token.span,
+                            };
+                            *span = map(*span);
+                        }
+                        TokenTree::Subtree(subtree) => {
+                            let delimiter = &mut subtree.delimiter;
+                            delimiter.open = map(delimiter.open);
+                            delimiter.close = map(delimiter.close);
+                        }
+                    }
+                    token
+                })
+                .collect(),
+        )
+    }
+
     pub fn from_subtree(subtree: SubtreeView<'_>) -> Self {
         let mut builder = TopSubtreeBuilder::new(subtree.top_subtree().delimiter);
         builder.extend_with_tt(subtree.token_trees());

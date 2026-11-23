@@ -7,7 +7,10 @@
 use std::{collections::HashSet, sync::Arc};
 
 use rg_arena::Arena;
-use rg_ir_model::{BodyRef, BodySource, CrateRef, FileId, ImplId, PackageSlot, SourceId, TraitId};
+use rg_ir_model::{
+    BodyRef, BodySource, CrateRef, FileId, ImplId, PackageSlot, SourceId, SourceLocation, Span,
+    TraitId,
+};
 use rg_item_tree::{
     DeclarationSourceStore, ExpandedItemBodies, ItemNode, ItemTreeId, ItemTreeRef,
     file_declarations,
@@ -16,9 +19,25 @@ use rg_macro_runtime::{ExpansionParseKind, ExpansionSyntax};
 use rg_source::QueryContext;
 use rg_std::{MemorySize, Shrink};
 use rg_syntax::{AstNode as _, SyntaxNode, TextRange, ast};
+use rg_tt::Span as TtSpan;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ExpandedBodyMacro, body_macros::BodyMacroInputSources};
+use crate::{
+    ExpandedBodyMacro, MacroCopyRef, MacroExpansionRef, body_macros::BodyMacroInputSources,
+};
+
+/// A resolved occurrence and the expansion copy that produced it, when tracked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceOccurrenceLocation {
+    pub location: SourceLocation,
+    pub copy: Option<MacroCopyRef>,
+}
+
+impl SourceOccurrenceLocation {
+    pub fn span(self) -> Span {
+        self.location.span
+    }
+}
 
 /// Stable identifier of one macro expansion within its owning source store.
 ///
@@ -73,6 +92,14 @@ pub struct GeneratedItemRef {
 }
 
 impl GeneratedItemRef {
+    pub fn expansion(self, krate: CrateRef) -> MacroExpansionRef {
+        MacroExpansionRef::Item {
+            krate,
+            store: self.source_store,
+            source: self.source,
+        }
+    }
+
     pub fn source_store(self) -> GeneratedSourceStoreId {
         self.source_store
     }
@@ -194,6 +221,7 @@ pub(crate) struct GeneratedSourceData {
     pub(crate) origin_file_id: FileId,
     pub(crate) locations: GeneratedLocations,
     pub(crate) bodies: Option<ExpandedItemBodies>,
+    pub(crate) copies: Option<ExpansionTokenCopies>,
     pub(crate) origin_source: ItemTreeRef,
     pub(crate) top_level: Vec<ItemTreeId>,
     pub(crate) items: Arena<ItemTreeId, ItemNode>,
@@ -216,6 +244,9 @@ impl GeneratedSourceData {
 pub struct GeneratedItemStore {
     id: GeneratedSourceStoreId,
     sources: Arena<GeneratedSourceId, GeneratedSourceData>,
+    #[memsize(skip)]
+    #[shrink(skip)]
+    unverified_calls: Vec<TtSpan>,
 }
 
 impl GeneratedItemStore {
@@ -223,6 +254,7 @@ impl GeneratedItemStore {
         Self {
             id,
             sources: Arena::new(),
+            unverified_calls: Vec::new(),
         }
     }
 
@@ -239,16 +271,41 @@ impl GeneratedItemStore {
     pub fn into_sources(self, db: &QueryContext<'_>) -> ajika::Result<GeneratedSourceStore> {
         let mut sources = Vec::with_capacity(self.sources.len());
         let mut bodies = Vec::new();
+        let mut expansions = Vec::new();
         for (index, source) in self.sources.into_vec().into_iter().enumerate() {
             if let Some(data) = source.bodies {
                 // A source lookup can open the locations without loading the expanded tokens.
                 let output = db.output(("generated bodies", index), Arc::new(data))?;
                 bodies.push((GeneratedSourceId(index), output));
             }
+            if let Some(copies) = source.copies {
+                expansions.push((GeneratedSourceId(index), copies));
+            }
             sources.push(source.locations);
         }
         bodies.shrink_to_fit();
-        Ok(GeneratedSourceStore { sources, bodies })
+        // Navigation reads locations. Only edit verification needs to open the complete
+        // inventory, including tokens that have no semantic occurrence.
+        let copies = if expansions.is_empty() && self.unverified_calls.is_empty() {
+            None
+        } else {
+            Some(db.output(
+                "item macro copies",
+                Arc::new(ItemMacroCopies {
+                    expansions,
+                    unverified_calls: self.unverified_calls,
+                }),
+            )?)
+        };
+        Ok(GeneratedSourceStore {
+            sources,
+            bodies,
+            copies,
+        })
+    }
+
+    pub(crate) fn record_unverified_call(&mut self, call: TtSpan) {
+        self.unverified_calls.push(call);
     }
 
     pub(crate) fn alloc_source(&mut self, source: GeneratedSourceData) -> GeneratedSourceId {
@@ -283,8 +340,9 @@ impl GeneratedItemStore {
 #[memsize(leaf)]
 #[shrink(leaf)]
 pub struct GeneratedLocation {
-    pub origin: rg_tt::Span,
+    pub origin: TtSpan,
     pub editable: bool,
+    pub copy: Option<u32>,
 }
 
 impl GeneratedLocation {
@@ -339,6 +397,39 @@ impl GeneratedExpansionLocations {
     }
 }
 
+/// The parts of copy coverage retained before physical token positions are opened.
+/// This also exists for expansions that produce no bodies.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ExpansionTokenCopies {
+    #[memsize(skip)]
+    #[shrink(skip)]
+    pub call_site: TtSpan,
+    #[memsize(skip)]
+    #[shrink(skip)]
+    pub tokens: Vec<(u32, TtSpan)>,
+    #[memsize(skip)]
+    #[shrink(skip)]
+    pub transformed: Vec<TtSpan>,
+    pub forwarded: Vec<MacroCopyRef>,
+    pub is_root: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct ItemMacroCopies {
+    expansions: Vec<(GeneratedSourceId, ExpansionTokenCopies)>,
+    unverified_calls: Vec<TtSpan>,
+}
+
+impl ItemMacroCopies {
+    pub fn expansions(&self) -> impl Iterator<Item = (GeneratedSourceId, &ExpansionTokenCopies)> {
+        self.expansions.iter().map(|(id, copies)| (*id, copies))
+    }
+
+    pub fn unverified_calls(&self) -> &[TtSpan] {
+        &self.unverified_calls
+    }
+}
+
 /// Choose whether generated declarations own occurrence mappings or reuse another item's IDs.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum GeneratedLocations {
@@ -362,9 +453,22 @@ pub struct GeneratedSourceStore {
     #[memsize(skip)]
     #[shrink(skip)]
     bodies: Vec<(GeneratedSourceId, ajika::Output<ExpandedItemBodies>)>,
+    #[memsize(skip)]
+    #[shrink(skip)]
+    copies: Option<ajika::Output<ItemMacroCopies>>,
 }
 
 impl GeneratedSourceStore {
+    pub fn macro_copies<'db>(
+        &self,
+        db: &'db QueryContext<'db>,
+    ) -> ajika::Result<Option<&'db ItemMacroCopies>> {
+        self.copies
+            .as_ref()
+            .map(|copies| copies.value_ref(db))
+            .transpose()
+    }
+
     pub fn get(&self, source: GeneratedSourceId) -> Option<&GeneratedLocations> {
         self.sources.get(source.0)
     }
@@ -381,7 +485,13 @@ impl GeneratedSourceStore {
         else {
             return Ok(None);
         };
-        GeneratedBodySyntax::open(db, krate, self.bodies[index].1.clone(), generated.item)
+        GeneratedBodySyntax::open(
+            db,
+            krate,
+            self.bodies[index].1.clone(),
+            generated.item,
+            Some(generated.expansion(krate)),
+        )
     }
 }
 
@@ -394,6 +504,7 @@ pub struct GeneratedBodySyntax {
     pub syntax: SyntaxNode,
     pub expansion: ExpandedBodyMacro<SyntaxNode>,
     pub source: BodySource,
+    pub invocation: Option<MacroExpansionRef>,
 }
 
 impl GeneratedBodySyntax {
@@ -409,7 +520,8 @@ impl GeneratedBodySyntax {
         let Some(output) = bodies.get(item.item) else {
             return Ok(None);
         };
-        Self::open(db, krate, output.clone(), item.item)
+        // TODO: Publish copy coverage for pre-lowered arms through the file source output.
+        Self::open(db, krate, output.clone(), item.item, None)
     }
 
     fn open(
@@ -417,6 +529,7 @@ impl GeneratedBodySyntax {
         krate: CrateRef,
         output: ajika::Output<ExpandedItemBodies>,
         item: ItemTreeId,
+        invocation: Option<MacroExpansionRef>,
     ) -> ajika::Result<Option<Self>> {
         let parsed = parsed_generated_bodies(db, krate, output)?;
         let Some((_, range)) = parsed.data.items.iter().find(|(id, _)| *id == item) else {
@@ -435,6 +548,7 @@ impl GeneratedBodySyntax {
             syntax,
             expansion: parsed.expansion.clone(),
             source: parsed.source,
+            invocation,
         }))
     }
 }
@@ -470,7 +584,6 @@ fn parsed_generated_bodies(
         span_map,
         BodyMacroInputSources::Declaration(inputs),
         data.call_site,
-        package,
         data.dollar_crate.unwrap_or(krate),
     );
     Ok(ParsedGeneratedBodies {

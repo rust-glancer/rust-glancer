@@ -34,16 +34,14 @@ pub struct ExpansionSpanMap {
 }
 
 impl ExpansionSpanMap {
-    pub fn entries(&self) -> impl Iterator<Item = (TextSize, Span)> + '_ {
-        self.spans.iter().copied()
+    pub fn map_spans(&mut self, mut map: impl FnMut(Span) -> Span) {
+        for (_, span) in &mut self.spans {
+            *span = map(*span);
+        }
     }
 
-    pub fn span_at(&self, offset: TextSize) -> Option<Span> {
-        let index = self.spans.partition_point(|(end, _)| *end <= offset);
-        self.spans
-            .get(index)
-            .or_else(|| self.spans.last())
-            .map(|(_, span)| *span)
+    pub fn entries(&self) -> impl Iterator<Item = (TextSize, Span)> + '_ {
+        self.spans.iter().copied()
     }
 
     /// Attribute a generated range to one input owner and syntax context. A range such as
@@ -63,19 +61,6 @@ impl ExpansionSpanMap {
             origin.origins = origin.origins.join(token.origins);
         }
         Some(origin)
-    }
-
-    /// Returns the mapped span only when it points into the requested source file.
-    pub fn span_for_range_in_file(
-        &self,
-        range: TextRange,
-        origin_package: usize,
-        origin_file_id: u32,
-    ) -> Option<Span> {
-        let span = self.span_for_range(range)?;
-        (span.anchor.package as usize == origin_package
-            && span.anchor.file_id.raw_file_id() == origin_file_id)
-            .then_some(span)
     }
 
     fn push(&mut self, end: TextSize, span: Span) {
@@ -718,35 +703,5 @@ fn push_punct_token(
             span: span_for_range(TextRange::at(offset, len)),
         }));
         offset += len;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use rg_syntax::TextSize;
-
-    use super::*;
-
-    #[test]
-    fn span_for_range_in_file_filters_mapped_origin() {
-        let span = SpanFactory::new(2, 7, TokenOwner::Declaration(0), Edition::CURRENT).span_for(3);
-        let other_package =
-            SpanFactory::new(3, 7, TokenOwner::Declaration(0), Edition::CURRENT).span_for(3);
-        let span_map = ExpansionSpanMap {
-            spans: vec![(TextSize::new(5), span), (TextSize::new(10), other_package)],
-        };
-        let generated_range = TextRange::new(TextSize::new(0), TextSize::new(5));
-
-        assert_eq!(
-            span_map.span_for_range_in_file(generated_range, 2, 7),
-            Some(span),
-        );
-        assert_eq!(span_map.span_for_range_in_file(generated_range, 2, 8), None);
-        let other_range = TextRange::new(TextSize::new(5), TextSize::new(10));
-        assert_eq!(
-            span_map.span_for_range_in_file(other_range, 3, 7),
-            Some(other_package),
-        );
-        assert_eq!(span_map.span_for_range_in_file(other_range, 2, 7), None);
     }
 }

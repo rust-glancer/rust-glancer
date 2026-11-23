@@ -4,12 +4,14 @@
 //! source identity to the file tables read through the operation's query context. Generated syntax
 //! takes an extra step: its occurrences identify input tokens, which lead back to those file tables.
 
+mod macro_copies;
 mod ownership;
 mod resolve;
 
 use rg_def_map::{
     GeneratedBodySyntax, GeneratedExpansionLocations, GeneratedItemRef, GeneratedLocations,
-    GeneratedSourceStore, GeneratedSourceStoreId, ItemSource, ItemSourceKind,
+    GeneratedSourceStore, GeneratedSourceStoreId, ItemSource, ItemSourceKind, MacroCopyRef,
+    MacroExpansionRef, SourceOccurrenceLocation,
 };
 use rg_ir_model::{
     CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, SourceLocationKind, Span,
@@ -19,6 +21,7 @@ use rg_source::QueryContext;
 
 pub(crate) use self::resolve::DeclarationSourceResolver;
 pub use self::{
+    macro_copies::ItemMacroCopyIndex,
     ownership::{SourceOwnership, SourceOwnershipIndex, complete_source_ownership},
     resolve::SourceSelection,
 };
@@ -35,6 +38,7 @@ use crate::{BodyOwnerData, associated_declarations, target_declarations};
 pub enum ItemSourceView<'db> {
     File(&'db DeclarationSourceStore<Span>),
     Generated {
+        expansion: MacroExpansionRef,
         locations: &'db GeneratedExpansionLocations,
         inputs: Vec<((PackageSlot, FileId), &'db DeclarationSourceStore<Span>)>,
     },
@@ -77,7 +81,11 @@ impl<'db> ItemSourceView<'db> {
                                     file_declaration_sources(db, package, file)?,
                                 ));
                             }
-                            return Ok(Self::Generated { locations, inputs });
+                            return Ok(Self::Generated {
+                                expansion: generated.expansion(krate),
+                                locations,
+                                inputs,
+                            });
                         }
                     }
                 }
@@ -165,27 +173,43 @@ impl<'db> ItemSourceView<'db> {
             Self::Generated { locations, .. } => locations.initializer_preview(occurrence),
         }
     }
-}
 
-impl SourceLocations for ItemSourceView<'_> {
-    fn location(&self, occurrence: SourceId) -> Option<SourceLocation> {
+    pub fn occurrence(&self, id: SourceId) -> Option<SourceOccurrenceLocation> {
         match self {
-            Self::File(locations) => locations.location(occurrence),
-            Self::Generated { locations, inputs } => {
-                // The first lookup finds an input token reference. Only the input file's table
-                // can turn that reference into byte offsets for this operation's snapshot.
-                let location = locations.get(occurrence)?;
-                let input = location.input_file();
+            Self::File(locations) => Some(SourceOccurrenceLocation {
+                location: locations.location(id)?,
+                copy: None,
+            }),
+            Self::Generated {
+                expansion,
+                locations,
+                inputs,
+            } => {
+                // Resolve the token origin and copy ID from the same generated occurrence.
+                let source = locations.get(id)?;
+                let input = source.input_file();
                 let sources = inputs.iter().find(|(key, _)| *key == input)?.1;
-                Some(SourceLocation {
-                    span: sources.token_span(location.origin)?,
-                    kind: if location.editable {
-                        SourceLocationKind::MacroArgument
-                    } else {
-                        SourceLocationKind::NavigationFallback
+                Some(SourceOccurrenceLocation {
+                    location: SourceLocation {
+                        span: sources.token_span(source.origin)?,
+                        kind: if source.editable {
+                            SourceLocationKind::MacroArgument
+                        } else {
+                            SourceLocationKind::NavigationFallback
+                        },
                     },
+                    copy: source.copy.map(|token| MacroCopyRef {
+                        expansion: *expansion,
+                        token,
+                    }),
                 })
             }
         }
+    }
+}
+
+impl SourceLocations for ItemSourceView<'_> {
+    fn location(&self, id: SourceId) -> Option<SourceLocation> {
+        self.occurrence(id).map(|source| source.location)
     }
 }

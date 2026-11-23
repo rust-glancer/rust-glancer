@@ -4,6 +4,7 @@ use rg_ir_model::{CrateRef, FileId, SourceLocation, Span, identity::DeclarationR
 pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 use rg_ir_view::source::{
     IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceProvenance, IndexedSourceSurface,
+    SourceOccurrenceLocation,
 };
 
 use crate::model::SymbolAt;
@@ -67,11 +68,14 @@ impl SourceSymbol {
             span,
             role: SourceSymbolRole::Declaration,
             surface: IndexedSourceSurface::Plain,
-            provenance: IndexedSourceProvenance::from_exact_location(location),
+            provenance: IndexedSourceProvenance::from_exact_location(SourceOccurrenceLocation {
+                location,
+                copy: None,
+            }),
         }
     }
 
-    pub(super) fn from_occurrence(occurrence: IndexedSourceOccurrence) -> Self {
+    pub(crate) fn from_occurrence(occurrence: IndexedSourceOccurrence) -> Self {
         let (fact, crate_ref, file_id, span, role, surface, provenance) = occurrence.into_parts();
         let symbol = match fact {
             IndexedSourceFact::Declaration(declaration) => {

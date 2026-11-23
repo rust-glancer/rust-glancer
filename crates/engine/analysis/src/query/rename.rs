@@ -3,16 +3,17 @@
 //! Rename builds on the same symbol identity used by goto-definition and references, but keeps a
 //! stricter policy: only declaration-like names with unambiguous source occurrences become edits.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use anyhow::Context as _;
-use rg_ir_model::{
-    BodyKey, CrateRef, DefMapRef, FileId, SourceLocationKind, Span, identity::DeclarationRef,
-};
+use rg_ir_model::{CrateRef, FileId, SourceLocationKind, Span, identity::DeclarationRef};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
-    source::{IndexedSourceProvenance, IndexedSourceSurface, SourceOccurrenceView},
+    source::{
+        IndexedSourceProvenance, IndexedSourceSurface, MacroCopyEvidence, MacroEditSourceView,
+        SourceOccurrenceView,
+    },
 };
 use rg_std::ExpectedUnique;
 
@@ -426,21 +427,12 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     }
 }
 
-type BodyMacroOccurrences = HashMap<(FileId, Span), Vec<SourceSymbol>>;
-
-/// Request-local proof that a text edit can update all uses of an input token.
-///
-/// If `both!(run)` emits `left.run()` and `right.run()`, a reference search for the left
-/// method can return just one of them. Editing `run` in the invocation changes both calls.
-///
-/// Read all occurrences at the written span before accepting the edit. Compare the number
-/// of distinct copy IDs with lowering's total to catch uses such as `stringify!(run)` that
-/// have no semantic occurrence to look up.
+/// Request-local proof that a text edit can update every copy of a macro input.
 struct MacroArgumentEdits<'a, 'analysis, 'db> {
     resolver: &'a RenameResolver<'analysis, 'db>,
     declaration: DeclarationRef,
-    owners: HashMap<BodyKey, BodyMacroOccurrences>,
     accepted: HashSet<(CrateRef, FileId, Span)>,
+    sources: MacroEditSourceView<'a, 'db>,
 }
 
 impl<'a, 'analysis, 'db> MacroArgumentEdits<'a, 'analysis, 'db> {
@@ -448,8 +440,8 @@ impl<'a, 'analysis, 'db> MacroArgumentEdits<'a, 'analysis, 'db> {
         Self {
             resolver,
             declaration,
-            owners: HashMap::new(),
             accepted: HashSet::new(),
+            sources: MacroEditSourceView::new(resolver.analysis.view_db()),
         }
     }
 
@@ -460,31 +452,32 @@ impl<'a, 'analysis, 'db> MacroArgumentEdits<'a, 'analysis, 'db> {
         if location.kind != SourceLocationKind::MacroArgument {
             return Ok(true);
         }
-        // A cursor on a direct use still needs to prove the macro input that names its declaration.
-        let DefMapRef::Body(body) = self.declaration.origin() else {
-            return Ok(false);
-        };
-        let symbol = self
-            .occurrences(body.key())?
-            .get(&(declaration.file_id(), location.span))
-            .and_then(|symbols| {
-                symbols
-                    .iter()
-                    .find(|symbol| symbol.role() == SourceSymbolRole::Declaration)
-            })
-            .cloned();
-        match symbol {
-            Some(symbol) => self.accepts(&symbol),
-            None => Ok(false),
+        // A direct use can point to a declaration whose name came from a macro input.
+        let index = SourceSymbolIndex::new(self.resolver.analysis.view_db());
+        for candidate in index.symbols_at(
+            declaration.crate_ref(),
+            declaration.file_id(),
+            location.span.start,
+        )? {
+            if candidate.span() == location.span
+                && candidate.role() == SourceSymbolRole::Declaration
+                && self
+                    .resolver
+                    .unique_declaration(candidate.symbol().clone())?
+                    == Some(self.declaration)
+            {
+                return self.accepts(&candidate);
+            }
         }
+        Ok(false)
     }
 
     #[rg_std::cancelable("macro argument rename", token = self.resolver.analysis)]
     fn accepts(&mut self, symbol: &SourceSymbol) -> anyhow::Result<bool> {
-        let usage = match symbol.provenance() {
+        let selected_copy = match symbol.provenance() {
             IndexedSourceProvenance::Direct => return Ok(true),
-            IndexedSourceProvenance::MacroArgument { usage: Some(usage) } => usage,
-            IndexedSourceProvenance::MacroArgument { usage: None } => return Ok(false),
+            IndexedSourceProvenance::MacroArgument { copy: Some(copy) } => copy,
+            IndexedSourceProvenance::MacroArgument { copy: None } => return Ok(false),
         };
         let Some(format_capture) = Self::format_capture(symbol) else {
             return Ok(false);
@@ -495,83 +488,41 @@ impl<'a, 'analysis, 'db> MacroArgumentEdits<'a, 'analysis, 'db> {
             return Ok(true);
         }
         let resolver = self.resolver;
-        let declaration = self.declaration;
-        let view = SourceOccurrenceView::new(resolver.analysis.view_db());
-        // A file included by two modules can give the same bytes two meanings. Check each
-        // containing owner in the package's targets, starting from the physical range.
-        let mut selected_seen = false;
+        let mut evidence = MacroCopyEvidence::default();
+        let mut verified = HashSet::new();
+        // Included source can have a different interpretation in each configured target or
+        // module. Join the proof for every route that would see the same physical edit.
         for (krate, _) in resolver
             .analysis
             .workspace
-            .targets_for_package(usage.owner.krate.package)
+            .targets_for_package(selected_copy.expansion.krate().package)
         {
-            for owner in view.body_owners_at(krate, symbol.file_id(), symbol.span())? {
-                let Some(occurrences) = self
-                    .occurrences(owner)?
-                    .get(&(symbol.file_id(), symbol.span()))
+            for occurrence in
+                self.sources
+                    .occurrences(krate, symbol.file_id(), symbol.span(), &mut evidence)?
+            {
+                let occurrence = SourceSymbol::from_occurrence(occurrence);
+                rg_std::check_cancel!(resolver.analysis, "macro argument rename");
+                let IndexedSourceProvenance::MacroArgument { copy: Some(copy) } =
+                    occurrence.provenance()
                 else {
                     return Ok(false);
                 };
-                // Several source occurrences can describe one output token. Check every
-                // meaning and credit each copy only once toward the total.
-                let mut copies = HashSet::new();
-                let mut total = ExpectedUnique::new();
-                for occurrence in occurrences {
-                    rg_std::check_cancel!(resolver.analysis, "macro argument rename");
-                    let IndexedSourceProvenance::MacroArgument { usage: Some(other) } =
-                        occurrence.provenance()
-                    else {
-                        return Ok(false);
-                    };
-                    if other.owner != owner
-                        || Self::format_capture(occurrence) != Some(format_capture)
-                        || resolver.unique_declaration(occurrence.symbol().clone())?
-                            != Some(declaration)
-                    {
-                        return Ok(false);
-                    }
-                    copies.insert(other.copy);
-                    total.push(other.total_copies);
-                }
-                if total.into_option().map(|total| total as usize) != Some(copies.len()) {
+                if occurrence.role() == SourceSymbolRole::Structural
+                    || Self::format_capture(&occurrence) != Some(format_capture)
+                    || resolver.unique_declaration(occurrence.symbol().clone())?
+                        != Some(self.declaration)
+                {
                     return Ok(false);
                 }
-                // Coverage in other owners is insufficient if the occurrence that prompted
-                // this edit is missing from its own owner's scan.
-                selected_seen |= owner == usage.owner && copies.contains(&usage.copy);
+                verified.insert(copy);
             }
         }
-        if selected_seen {
+        let accepted = evidence.is_complete(selected_copy, &verified);
+        if accepted {
             self.accepted.insert(location);
         }
-        Ok(selected_seen)
-    }
-
-    fn occurrences(&mut self, owner: BodyKey) -> anyhow::Result<&BodyMacroOccurrences> {
-        // A rename can check several arguments in the same body. Group the unfiltered
-        // occurrences by written range so all those checks share one scan.
-        let occurrences = match self.owners.entry(owner) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let index = SourceSymbolIndex::new(self.resolver.analysis.view_db());
-                let mut by_span = BodyMacroOccurrences::new();
-                for occurrence in index.symbols_in_body(owner)? {
-                    rg_std::check_cancel!(self.resolver.analysis, "macro argument rename");
-                    if matches!(
-                        occurrence.provenance(),
-                        IndexedSourceProvenance::MacroArgument { .. }
-                    ) {
-                        by_span
-                            .entry((occurrence.file_id(), occurrence.span()))
-                            .or_default()
-                            .push(occurrence);
-                    }
-                }
-                entry.insert(by_span)
-            }
-        };
-
-        Ok(occurrences)
+        Ok(accepted)
     }
 
     /// Shorthand rewrites can change several tokens, so they need a separate proof.

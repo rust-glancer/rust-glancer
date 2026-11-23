@@ -224,7 +224,6 @@ impl BodyMacroCallee<'_> {
 pub(super) struct BodyMacroInvocation {
     path_text: String,
     args: TopSubtree,
-    call_package: PackageSlot,
     call_site: TtSpan,
     input_sources: BodyMacroInputSources,
 }
@@ -294,7 +293,6 @@ impl BodyMacroInvocation {
         Some(Self {
             path_text,
             args,
-            call_package: package,
             call_site,
             input_sources,
         })
@@ -310,10 +308,6 @@ impl BodyMacroInvocation {
 
     pub(super) fn input_sources(&self) -> BodyMacroInputSources {
         self.input_sources.clone()
-    }
-
-    pub(super) fn call_package(&self) -> PackageSlot {
-        self.call_package
     }
 
     pub(super) fn expansion_request<'a>(

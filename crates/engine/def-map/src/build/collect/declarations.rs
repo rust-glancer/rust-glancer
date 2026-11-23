@@ -40,6 +40,7 @@ use crate::{
             MacroCallSite, MacroDefinitionRecord, MacroUseImport, PendingGeneratedModule,
         },
     },
+    macro_copies::ForwardedMacroInputs,
     profile::metric,
 };
 
@@ -329,6 +330,7 @@ impl<'a> DeclarationCollector<'a> {
         let Some(input) = &call.input else {
             return;
         };
+        let forwarding = ForwardedMacroInputs::new(source, self.state.crate_ref, &input.forwarded);
         let (source, dollar_crate) = match source.kind {
             ItemSourceKind::Generated(generated) => (
                 self.state
@@ -352,6 +354,7 @@ impl<'a> DeclarationCollector<'a> {
                 dollar_crate,
                 file_id: item.file_id,
                 call_site: input.call_site,
+                forwarding,
                 order,
                 module_file_context: context,
             },

@@ -321,7 +321,7 @@ forward! {
         );
         let span = expansion
             .span_map
-            .span_for_range_in_file(strings[0].syntax().text_range(), 0, 0)
+            .span_for_range(strings[0].syntax().text_range())
             .expect("generated doc attribute should map to its comment");
         assert_eq!(
             &source[sources
@@ -394,7 +394,7 @@ documented! {
             assert_eq!(literal.text(), "1e3", "{expression}");
             let span = expanded
                 .span_map
-                .span_for_range_in_file(literal.text_range(), 0, 0)
+                .span_for_range(literal.text_range())
                 .expect("recovered token should map to macro input");
             assert_eq!(
                 &source[sources

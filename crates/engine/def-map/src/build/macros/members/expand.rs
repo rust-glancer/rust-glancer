@@ -18,11 +18,12 @@ use rg_workspace::{CrateConfig, PackageInput};
 use super::{AssociatedItemInput, AssociatedItemSource};
 use crate::{
     CrateResolutionEnv, GeneratedItemStore, GeneratedSourceStore, GeneratedSourceStoreId,
-    ItemSource, MacroDefinitionEnv,
+    ItemSource, ItemSourceKind, MacroDefinitionEnv,
     build::macros::{
         ItemOrder, MAX_MACRO_EXPANSION_DEPTH, MacroScopeData,
         generated_tree::GeneratedSourceLowering, resolve::ItemMacroResolver,
     },
+    macro_copies::ForwardedMacroInputs,
 };
 
 /// One owner's declarations after replacing member macro calls with their output.
@@ -183,8 +184,21 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                     self.items.push((member.source, member.item));
                 }
                 ItemKind::MacroCall(call) => {
-                    if let Some(expansion) = self.expand_macro(&member, call)? {
-                        self.enqueue_expansion(&member, expansion)?;
+                    let expansion = self.expand_macro(&member, call)?;
+                    if matches!(member.source.kind, ItemSourceKind::ItemTree(_))
+                        && !matches!(
+                            expansion,
+                            Some(
+                                MemberExpansion::Generated { .. }
+                                    | MemberExpansion::SelectedItems(_)
+                            )
+                        )
+                        && let Some(input) = &call.input
+                    {
+                        self.generated.record_unverified_call(input.call_site);
+                    }
+                    if let Some(expansion) = expansion {
+                        self.enqueue_expansion(&member, call, expansion)?;
                     }
                 }
                 _ => {}
@@ -328,6 +342,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
     fn enqueue_expansion(
         &mut self,
         parent: &PendingMember,
+        call: &MacroCallItem,
         expansion: MemberExpansion<'_>,
     ) -> anyhow::Result<()> {
         match expansion {
@@ -384,12 +399,16 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                 call_site,
                 dollar_crate,
             } => {
+                let forwarding = call.input.as_ref().and_then(|input| {
+                    ForwardedMacroInputs::new(parent.source, self.krate, &input.forwarded)
+                });
                 let data = GeneratedSourceLowering::lower(
                     parent.origin_source,
                     parent.source.file_id,
                     call_site,
                     dollar_crate,
                     syntax,
+                    forwarding.as_ref(),
                 )?;
                 let source_id = self.generated.alloc_source(data);
                 let data = self

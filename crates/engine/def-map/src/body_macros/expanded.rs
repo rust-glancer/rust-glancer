@@ -12,6 +12,7 @@ use rg_tt::{
 };
 
 use super::BodyMacroCallOrigin;
+use crate::macro_copies::{expansion_tokens, forwarded_input_id, is_argument_origin};
 
 /// Generated body syntax plus the macro-definition origin needed while lowering it.
 ///
@@ -32,7 +33,6 @@ pub struct ExpandedBodyMacro<T> {
     source_map: Arc<ExpansionSpanMap>,
     input_sources: BodyMacroInputSources,
     call_site: TtSpan,
-    call_package: PackageSlot,
     dollar_crate: CrateRef,
     parse_errors: Vec<SyntaxError>,
     transformed_inputs: Arc<[TtSpan]>,
@@ -44,7 +44,6 @@ impl<T> ExpandedBodyMacro<T> {
         source_map: ExpansionSpanMap,
         input_sources: BodyMacroInputSources,
         call_site: TtSpan,
-        call_package: PackageSlot,
         dollar_crate: CrateRef,
     ) -> Self {
         Self {
@@ -52,7 +51,6 @@ impl<T> ExpandedBodyMacro<T> {
             source_map: Arc::new(source_map),
             input_sources,
             call_site,
-            call_package,
             dollar_crate,
             parse_errors: Vec::new(),
             transformed_inputs: Arc::default(),
@@ -100,13 +98,8 @@ impl<T> ExpandedBodyMacro<T> {
     /// Require the span to be inside this call and keep the original token's length, so a template
     /// token or whole-call fallback cannot pass as a written argument.
     fn source_for_token_range(&self, call_source: BodySource, range: TextRange) -> Option<Span> {
-        self.argument_token(call_source, range)
-            .map(|(span, _)| span)
-    }
-
-    fn argument_token(&self, call_source: BodySource, range: TextRange) -> Option<(Span, TtSpan)> {
-        let (span, origin) = self.argument_origin(call_source, range)?;
-        (span.len() == u32::from(range.len())).then_some((span, origin))
+        let (span, _) = self.argument_origin(call_source, range)?;
+        (span.len() == u32::from(range.len())).then_some(span)
     }
 
     pub(super) fn argument_origin(
@@ -114,17 +107,15 @@ impl<T> ExpandedBodyMacro<T> {
         call_source: BodySource,
         range: TextRange,
     ) -> Option<(Span, TtSpan)> {
-        let origin = self.source_map.span_for_range_in_file(
-            range,
-            self.call_package.0,
-            call_source.file_id.as_raw(),
-        )?;
+        let origin = self.source_map.span_for_range(range)?;
         let span = self.input_span(call_source, origin)?;
         Some((span, origin))
     }
 
     fn input_span(&self, call_source: BodySource, span: TtSpan) -> Option<Span> {
-        if span.anchor != self.call_site.anchor {
+        if span.anchor.file_id.raw_file_id() != call_source.file_id.as_raw()
+            || !is_argument_origin(self.call_site, span)
+        {
             return None;
         }
         let span = self.input_sources.span(span)?;
@@ -162,7 +153,6 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
             source_map,
             input_sources,
             call_site,
-            call_package,
             dollar_crate,
             parse_errors,
             transformed_inputs,
@@ -175,7 +165,6 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
                 source_map,
                 input_sources,
                 call_site,
-                call_package,
                 dollar_crate,
                 parse_errors,
                 transformed_inputs,
@@ -198,18 +187,15 @@ impl ExpandedBodyMacro<SyntaxNode> {
         &self,
         call_source: BodySource,
     ) -> impl Iterator<Item = (TextRange, Span, Option<TextRange>)> + '_ {
-        self.syntax
+        let root = self
+            .syntax
             .ancestors()
             .last()
-            .expect("expansion syntax has a root")
-            .descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .filter(|token| !token.kind().is_trivia())
-            .filter_map(move |token| {
-                let range = token.text_range();
-                let (span, origin) = self.argument_token(call_source, range)?;
-                Some((range, span, self.input_sources.parent_range(origin)))
-            })
+            .expect("expansion syntax has a root");
+        expansion_tokens(&root, &self.source_map).filter_map(move |(range, origin)| {
+            let span = self.input_span(call_source, origin)?;
+            Some((range, span, self.input_sources.parent_range(origin)))
+        })
     }
 
     /// Some inputs also affect text created by the template, such as a concatenated name.
@@ -268,7 +254,6 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
         expansion: ExpansionSyntax,
         input_sources: BodyMacroInputSources,
         call_site: TtSpan,
-        call_package: PackageSlot,
         dollar_crate: CrateRef,
     ) -> Self {
         Self {
@@ -278,7 +263,6 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
                 expansion.span_map,
                 input_sources,
                 call_site,
-                call_package,
                 dollar_crate,
             )
         }
@@ -290,7 +274,6 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
             source_map,
             input_sources,
             call_site,
-            call_package,
             dollar_crate,
             transformed_inputs,
             ..
@@ -302,7 +285,6 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
             source_map,
             input_sources,
             call_site,
-            call_package,
             dollar_crate,
             parse_errors: parse.parse_errors().to_vec(),
             transformed_inputs,
@@ -334,15 +316,10 @@ impl BodyMacroInputSources {
         let Self::Body(map) = self else {
             return None;
         };
-        let first = map
-            .parent_ranges
-            .get(token.origins.first() as usize)?
-            .as_ref()?;
-        let last = map
-            .parent_ranges
-            .get(token.origins.last()? as usize)?
-            .as_ref()?;
-        Some(first.cover(*last))
+        map.parent_ranges
+            .get(forwarded_input_id(token)? as usize)
+            .copied()
+            .flatten()
     }
 }
 

@@ -1,6 +1,9 @@
 use std::{collections::HashSet, fmt, sync::Arc, vec::IntoIter};
 
-use rg_def_map::{DefMap, ItemSource, ItemSourceKind};
+use rg_def_map::{
+    DefMap, ItemSource, ItemSourceKind, MacroCopyCoverage, MacroExpansionRef,
+    SourceOccurrenceLocation,
+};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId,
     ItemStoreRef, LocalDefRef, SemanticItemRef, SourceId, SourceLocation, Span,
@@ -92,6 +95,32 @@ impl<'db> BodyReader<'db> {
             .value_ref(self.db)
             .map_err(ReadError::Query)?
             .get(body.body))
+    }
+
+    pub fn macro_copy_coverage(
+        &self,
+        key: BodyKey,
+    ) -> Result<impl Iterator<Item = (MacroExpansionRef, &MacroCopyCoverage)>, ReadError> {
+        let expansions = if self.targets.contains(&key.krate) {
+            let prepared = prepare_body(self.db, key).map_err(ReadError::Query)?;
+            match prepared.as_ref() {
+                Some(prepared) => prepared
+                    .expansions
+                    .value_ref(self.db)
+                    .map_err(ReadError::Query)?
+                    .as_slice(),
+                None => &[],
+            }
+        } else {
+            &[]
+        };
+        Ok(expansions.iter().enumerate().map(move |(index, coverage)| {
+            let expansion = MacroExpansionRef::Body {
+                owner: key,
+                expansion: index as u32,
+            };
+            (expansion, coverage)
+        }))
     }
 
     /// Expansion resolves the callee before inference. Each invocation's source IDs belong
@@ -372,6 +401,15 @@ pub enum DeclarationSourceView<'a> {
 }
 
 impl<'a> DeclarationSourceView<'a> {
+    pub fn exact_occurrence(&self, id: Option<SourceId>) -> Option<SourceOccurrenceLocation> {
+        let id = id?;
+        let source = match self {
+            Self::Item(view) => view.occurrence(id),
+            Self::Body(view) => view.occurrence(id),
+        }?;
+        source.location.is_exact().then_some(source)
+    }
+
     pub fn initializer_preview(&self, occurrence: SourceId) -> Option<&'a str> {
         match self {
             Self::Item(source) => source.initializer_preview(occurrence),

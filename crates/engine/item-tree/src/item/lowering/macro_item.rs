@@ -105,6 +105,7 @@ impl FromAst for MacroCallItem {
                 args: item.token_tree().map(|token_tree| {
                     syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
                 }),
+                forwarded: Vec::new(),
             }),
             builtin: ctx.builtin,
         }

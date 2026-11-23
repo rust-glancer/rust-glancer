@@ -109,6 +109,12 @@ pub(crate) fn apply_expansion_attempts(
         // A deferred include hands its remaining work to source loading, which completes the
         // pending operation before the next scan without resolving this call again.
         if let Some(directive) = state.macro_directives.get_mut(attempt.call_id) {
+            // The selected arm is read as written syntax. Calls inside it have their own
+            // provenance and the surrounding builtin does not reinterpret their tokens.
+            directive.has_copy_coverage = matches!(
+                attempt.outcome,
+                MacroExpansionAttemptOutcome::ItemTreeFragment { .. }
+            );
             directive.state = match &attempt.outcome {
                 MacroExpansionAttemptOutcome::WaitingForImports => {
                     MacroDirectiveState::WaitingForImports
@@ -335,6 +341,7 @@ impl MacroExpansionAttempt {
                 source: call.source,
                 file_id: call.file_id,
                 call_site: call.call_site,
+                forwarding: call.forwarding.clone(),
                 order: call.order.clone(),
                 dollar_crate: None,
                 parent_call: call_id,

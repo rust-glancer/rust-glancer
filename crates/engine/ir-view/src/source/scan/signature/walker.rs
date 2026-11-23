@@ -11,9 +11,7 @@ use rg_ir_model::{
     ItemOwner, SemanticItemRef, SourceId, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId,
     TypeDefRef,
 };
-use rg_item_tree::{
-    FieldList, GenericParams, SourceLocations as _, TypeBound, TypeRef, WherePredicate,
-};
+use rg_item_tree::{FieldList, GenericParams, TypeBound, TypeRef, WherePredicate};
 use rg_semantic_ir::{
     ConstData, EnumData, FunctionData, ImplData, ItemStoreQuery, SemanticItemView, StaticData,
     StructData, TraitData, TypeAliasData, TypePathContext, UnionData,
@@ -403,24 +401,24 @@ impl<C: SignatureScanCollector> SignatureItemScan<'_, '_, C> {
         });
     }
 
-    fn push_field(&mut self, field: FieldRef, location: SourceId) {
-        let Some(location) = self.locations.exact_location(Some(location)) else {
+    fn push_field(&mut self, field: FieldRef, source: SourceId) {
+        let Some(location) = self.locations.exact_occurrence(Some(source)) else {
             return;
         };
         self.collector
             .push_candidate(SignatureSourceCandidate::Field { field, location });
     }
 
-    fn push_function(&mut self, function: FunctionRef, location: SourceId) {
-        let Some(location) = self.locations.exact_location(Some(location)) else {
+    fn push_function(&mut self, function: FunctionRef, source: SourceId) {
+        let Some(location) = self.locations.exact_occurrence(Some(source)) else {
             return;
         };
         self.collector
             .push_candidate(SignatureSourceCandidate::Function { function, location });
     }
 
-    fn push_enum_variant(&mut self, variant: EnumVariantRef, location: SourceId) {
-        let Some(location) = self.locations.exact_location(Some(location)) else {
+    fn push_enum_variant(&mut self, variant: EnumVariantRef, source: SourceId) {
+        let Some(location) = self.locations.exact_occurrence(Some(source)) else {
             return;
         };
         self.collector

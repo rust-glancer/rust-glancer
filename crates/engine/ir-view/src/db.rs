@@ -11,8 +11,8 @@ use rg_ir_model::{
 };
 use rg_parse::SourceReader;
 use rg_semantic_ir::{
-    AssociatedItemStore, ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView,
-    SourceSelection,
+    AssociatedItemStore, ItemLookupQuery, ItemMacroCopyIndex, ItemReader, SemanticItemSource,
+    SemanticItemView, SourceSelection,
 };
 use rg_source::{QueryContext, ReadError};
 use rg_std::{Cancelable, CancellationToken, Cancelled, UniqueVec};
@@ -134,6 +134,10 @@ impl<'db> IndexedViewDb<'db> {
     /// Returns the edition whose syntax rules apply to declarations owned by this origin.
     pub fn origin_edition(&self, origin: DefMapRef) -> anyhow::Result<RustEdition> {
         self.crate_edition(origin.origin_crate())
+    }
+
+    pub(crate) fn item_macro_copy_index(&self) -> ItemMacroCopyIndex<'db> {
+        ItemMacroCopyIndex::new(self.queries)
     }
 }
 

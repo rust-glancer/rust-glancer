@@ -2,13 +2,12 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{BodySource, SourceId, SourceLocation, Span};
+use rg_def_map::{MacroCopyRef, SourceOccurrenceLocation};
+use rg_ir_model::{BodySource, ExprId, SourceId, SourceLocation, SourceLocationKind, Span};
 use rg_item_tree::{RecordSource, SourceLocations, SourceRole, TypeSource, initializer_preview};
 use rg_std::{MemorySize, Shrink};
 use rg_syntax::{AstNode as _, TextRange, ast};
 use wincode::{SchemaRead, SchemaWrite};
-
-use super::BodySourceMap;
 
 /// Source data for a single body's occurrence IDs. Nested bodies have their own store.
 ///
@@ -19,7 +18,9 @@ use super::BodySourceMap;
 pub struct BodySourceStore {
     entries: Vec<BodySource>,
     initializer_previews: HashMap<SourceId, String>,
-    pub(crate) provenance: BodySourceMap,
+    // Only tracked macro arguments need a link to the expansion's copy inventory.
+    argument_uses: Vec<MacroArgumentUse>,
+    format_captures: Vec<FormatCaptureSource>,
 }
 
 impl BodySourceStore {
@@ -39,12 +40,41 @@ impl BodySourceStore {
         self.entries[id.local as usize]
     }
 
+    pub fn occurrence(&self, id: SourceId) -> Option<SourceOccurrenceLocation> {
+        let location = self.location(id)?;
+        let copy = if location.kind == SourceLocationKind::MacroArgument {
+            // Entries were appended in source ID order, independent of written offsets.
+            self.argument_uses
+                .binary_search_by_key(&id.local, |usage| usage.source)
+                .ok()
+                .map(|index| self.argument_uses[index].copy)
+        } else {
+            None
+        };
+        Some(SourceOccurrenceLocation { location, copy })
+    }
+
     pub fn span(&self, id: SourceId) -> Span {
         self.source(id).span
     }
 
-    pub fn provenance(&self) -> &BodySourceMap {
-        &self.provenance
+    /// Whether lowering proved this capture's exact range in a written template.
+    pub fn is_format_capture(&self, expr: ExprId, span: Span) -> bool {
+        self.format_captures
+            .binary_search_by_key(&expr.0, |capture| capture.expr.0)
+            .ok()
+            .is_some_and(|index| self.format_captures[index].span == span)
+    }
+
+    pub(crate) fn record_format_capture(&mut self, expr: ExprId, span: Span) {
+        self.format_captures
+            .push(FormatCaptureSource { expr, span });
+    }
+
+    pub(crate) fn finish_recording(&mut self) {
+        // Order captures once so expression scans can look them up individually.
+        self.format_captures
+            .sort_unstable_by_key(|capture| capture.expr.0);
     }
 
     /// Bounded display text for this initializer or a declaration recorded inside this body.
@@ -60,7 +90,7 @@ impl BodySourceStore {
 
     pub(crate) fn recorder<'a>(
         &'a mut self,
-        map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<u32>),
+        map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<MacroCopyRef>),
     ) -> BodySourceRecorder<'a> {
         BodySourceRecorder { store: self, map }
     }
@@ -75,11 +105,23 @@ impl SourceLocations for BodySourceStore {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+struct MacroArgumentUse {
+    source: u32,
+    copy: MacroCopyRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+struct FormatCaptureSource {
+    expr: ExprId,
+    span: Span,
+}
+
 /// A lowering operation fixes its mapper before it records any ranges. Generated syntax can
 /// therefore use the same declaration/type lowerers without changing the meaning of stored IDs.
 pub(crate) struct BodySourceRecorder<'a> {
     store: &'a mut BodySourceStore,
-    map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<u32>),
+    map: &'a dyn Fn(TextRange, SourceRole) -> (BodySource, Option<MacroCopyRef>),
 }
 
 impl RecordSource for BodySourceRecorder<'_> {
@@ -87,7 +129,10 @@ impl RecordSource for BodySourceRecorder<'_> {
         let (source, copy) = (self.map)(range, role);
         let id = self.store.record(source);
         if let Some(copy) = copy {
-            self.store.provenance.record_argument_use(id, copy);
+            self.store.argument_uses.push(MacroArgumentUse {
+                source: id.local,
+                copy,
+            });
         }
         id
     }

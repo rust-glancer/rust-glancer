@@ -3,8 +3,6 @@
 //! A task opens either a file item or an item from its owning macro expansion. Both sources
 //! supply the same function or initializer syntax to the body lowerer.
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::GeneratedBodySyntax;
@@ -17,8 +15,8 @@ use rg_syntax::{AstNode as _, SyntaxKind, SyntaxNode, TextRange, ast};
 use rg_text::RustEdition;
 
 use super::{
-    LoweredBodies, arguments::ExpansionCopies, body::BodyLowering,
-    macro_expansion::BodyMacroExpansionContext, syntax::source_for,
+    LoweredBodies, body::BodyLowering, macro_expansion::BodyMacroExpansionContext,
+    syntax::source_for,
 };
 use crate::BodyOwner;
 
@@ -63,19 +61,15 @@ impl BodyLoweringTask {
 /// still count toward the same macro input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GeneratedBodyTask {
-    pub(super) body: GeneratedBodySyntax,
+    pub(super) body: Box<GeneratedBodySyntax>,
     pub(super) depth: usize,
-    pub(super) copies: Option<Arc<ExpansionCopies>>,
 }
 
 impl GeneratedBodyTask {
     pub(crate) fn for_owner(body: GeneratedBodySyntax) -> Self {
-        // TODO: Share copy provenance across item-scope owners. An outer item expansion can
-        // emit syntax outside this worklist.
         Self {
-            body,
+            body: Box::new(body),
             depth: 0,
-            copies: None,
         }
     }
 }

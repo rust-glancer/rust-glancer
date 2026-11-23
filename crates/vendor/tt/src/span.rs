@@ -71,6 +71,9 @@ pub enum TokenOwner {
     /// A synthesized `$crate` token. The anchor's package and this target ID select its
     /// defining crate. It does not address a physical source table.
     DollarCrate(u32),
+    /// An input to a nested item macro. The call keeps both its original token origin
+    /// and the ID of the copy in the parent expansion until its output is collected.
+    Forwarded,
 }
 
 /// Endpoints in a source-occurrence table, never text offsets. A merged parser token can

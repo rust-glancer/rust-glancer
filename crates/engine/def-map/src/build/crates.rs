@@ -71,7 +71,13 @@ impl CrateBuilder {
     /// Move settled data into the result and discard build-only work queues.
     /// Generated declarations remain separate because Semantic IR still needs their item syntax.
     /// Deferred owners retain the textual scope needed to resolve their unexpanded member calls.
-    pub(crate) fn finish(self, package_name: &str) -> CrateBuildOutput {
+    pub(crate) fn finish(mut self, package_name: &str) -> CrateBuildOutput {
+        for directive in &self.macro_directives {
+            if !directive.has_copy_coverage && directive.call.forwarding.is_none() {
+                self.generated_items
+                    .record_unverified_call(directive.call.call_site);
+            }
+        }
         let macro_expansion_limit =
             self.macro_expansion_limit
                 .map(|report| MacroExpansionLimitReport {
@@ -128,6 +134,7 @@ impl CrateBuilder {
             call,
             origin,
             state: MacroDirectiveState::Pending,
+            has_copy_coverage: false,
         });
     }
 

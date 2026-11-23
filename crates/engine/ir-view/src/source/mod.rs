@@ -15,6 +15,8 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
+pub use rg_def_map::{MacroCopyEvidence, SourceOccurrenceLocation};
+
 pub use self::{
     completion::{
         IndexedAssociatedPathQualifier, IndexedAssociatedTypeBindingScope,
@@ -30,9 +32,9 @@ pub use self::{
         DocumentationSourceView, ModuleDocumentationSource,
     },
     occurrence::{
-        IndexedMacroArgumentUse, IndexedSignatureTypeScope, IndexedSourceFact,
-        IndexedSourceOccurrence, IndexedSourceProvenance, IndexedSourceRole, IndexedSourceSurface,
-        IndexedTypePath, IndexedTypePathScope, SourceOccurrenceView,
+        IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence,
+        IndexedSourceProvenance, IndexedSourceRole, IndexedSourceSurface, IndexedTypePath,
+        IndexedTypePathScope, MacroEditSourceView, SourceOccurrenceView,
     },
     references::{ReferenceMacroTargets, ReferenceSearchLabel, ReferenceSourceSelection},
 };

@@ -4,6 +4,7 @@
 //! `$ident => foo`, interpolates variables in the template, to get `fn foo() {}`
 
 use rg_tt::{
+    TokenOrigins,
     span::{Edition, Span},
     tt::{
         self, Delimiter, TopSubtreeBuilder,
@@ -165,6 +166,16 @@ struct ExpandCtx<'a> {
     transformed_inputs: Vec<Span>,
 }
 
+impl ExpandCtx<'_> {
+    /// Synthesized output can use the call for diagnostics. It occupies no input token.
+    fn synthetic_call_site(&self) -> Span {
+        Span {
+            origins: TokenOrigins::synthetic(self.call_site.origins.first()),
+            ..self.call_site
+        }
+    }
+}
+
 fn expand_subtree_with_delimiter(
     ctx: &mut ExpandCtx<'_>,
     template: &MetaTemplate,
@@ -247,7 +258,7 @@ fn expand_subtree(
                     .map_or(0, |nest| nest.idx);
                 builder.push(tt::Leaf::Literal(tt::Literal {
                     text_and_suffix: Symbol::integer(index),
-                    span: ctx.call_site,
+                    span: ctx.synthetic_call_site(),
                     kind: tt::LitKind::Integer,
                     suffix_len: 0,
                 }));
@@ -262,7 +273,7 @@ fn expand_subtree(
                     });
                 builder.push(tt::Leaf::Literal(tt::Literal {
                     text_and_suffix: Symbol::integer(length),
-                    span: ctx.call_site,
+                    span: ctx.synthetic_call_site(),
                     kind: tt::LitKind::Integer,
                     suffix_len: 0,
                 }));
@@ -306,7 +317,7 @@ fn expand_subtree(
 
                 builder.push(tt::Leaf::Literal(tt::Literal {
                     text_and_suffix: Symbol::integer(res),
-                    span: ctx.call_site,
+                    span: ctx.synthetic_call_site(),
                     suffix_len: 0,
                     kind: tt::LitKind::Integer,
                 }));
@@ -607,6 +618,7 @@ fn fix_up_and_push_path_tt(
     builder: &mut tt::TopSubtreeBuilder,
     subtree: tt::TokenTreesView<'_>,
 ) {
+    let span = ctx.synthetic_call_site();
     let mut prev_was_ident = false;
     // Note that we only need to fix up the top-level `TokenTree`s because the
     // context of the paths in the descendant `Subtree`s won't be changed by the
@@ -625,12 +637,12 @@ fn fix_up_and_push_path_tt(
                     tt::Leaf::Punct(tt::Punct {
                         char: ':',
                         spacing: tt::Spacing::Joint,
-                        span: ctx.call_site,
+                        span,
                     }),
                     tt::Leaf::Punct(tt::Punct {
                         char: ':',
                         spacing: tt::Spacing::Alone,
-                        span: ctx.call_site,
+                        span,
                     }),
                 ]);
             }

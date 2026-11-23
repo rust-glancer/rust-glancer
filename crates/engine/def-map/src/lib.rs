@@ -22,6 +22,7 @@ mod build;
 mod import;
 mod item_scope;
 mod local;
+mod macro_copies;
 mod macro_definition;
 mod map;
 mod module;
@@ -52,6 +53,7 @@ pub use self::{
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     },
+    macro_copies::{MacroCopyCoverage, MacroCopyEvidence, MacroCopyRef, MacroExpansionRef},
     macro_definition::{
         MacroDefinitionData, MacroDefinitionKind, MacroDefinitionPayload, MacroDefinitionView,
     },
@@ -68,9 +70,10 @@ pub use self::{
         ResolvePathResult,
     },
     source::{
-        BodyItemSourceRef, GeneratedBodySyntax, GeneratedExpansionLocations, GeneratedItemRef,
-        GeneratedItemStore, GeneratedLocation, GeneratedLocations, GeneratedSourceId,
-        GeneratedSourceStore, GeneratedSourceStoreId, ItemSource, ItemSourceKind,
+        BodyItemSourceRef, ExpansionTokenCopies, GeneratedBodySyntax, GeneratedExpansionLocations,
+        GeneratedItemRef, GeneratedItemStore, GeneratedLocation, GeneratedLocations,
+        GeneratedSourceId, GeneratedSourceStore, GeneratedSourceStoreId, ItemSource,
+        ItemSourceKind, SourceOccurrenceLocation,
     },
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };

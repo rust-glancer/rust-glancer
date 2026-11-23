@@ -57,7 +57,6 @@ impl BodyLowering<'_> {
             if source.location().is_exact() {
                 self.builder
                     .sources
-                    .provenance
                     .record_format_capture(expr, source.span);
             }
         });

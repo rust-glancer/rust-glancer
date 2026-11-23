@@ -40,7 +40,7 @@ pub use self::{
     },
     reader::{CrateItemSource, ItemReader},
     source::{
-        ItemSourceView, SourceOwnership, SourceOwnershipIndex, SourceSelection,
+        ItemMacroCopyIndex, ItemSourceView, SourceOwnership, SourceOwnershipIndex, SourceSelection,
         complete_source_ownership,
     },
 };

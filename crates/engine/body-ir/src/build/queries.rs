@@ -1,14 +1,15 @@
 //! Prepare and infer one outer owner and the bodies nested inside it.
 
 use rg_arena::Arena;
-use rg_def_map::{CrateDefMapReader, DefinitionReader, GeneratedBodySyntax, ItemSourceKind};
+use rg_def_map::{
+    CrateDefMapReader, DefinitionReader, GeneratedBodySyntax, ItemSourceKind, MacroCopyCoverage,
+};
 use rg_ir_model::{BodyId, BodyKey};
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{
     BodyOwnerData, ItemLookupQuery, ItemReader, ItemSourceView, TargetDeclarationReader, body_owner,
 };
 use rg_source::{QueryContext, ReadError};
-use rg_std::Shrink as _;
 use rg_workspace::CrateConfig;
 
 use super::{
@@ -25,6 +26,7 @@ use crate::{BodyFactsStore, BodySourceStore, BodyStore, PreparedBodyStore, profi
 pub struct PreparedBody {
     data: PreparedBodyStore,
     sources: Arena<BodyId, BodySourceStore>,
+    expansions: Vec<MacroCopyCoverage>,
 }
 
 impl PreparedBody {
@@ -77,7 +79,7 @@ pub fn prepare_body(db: &QueryContext<'_>, key: BodyKey) -> ajika::Result<Option
     let cfg = config.cfg();
     let cancellation = db.services().cancellation.clone();
     let build = || -> anyhow::Result<_> {
-        let mut lowered = LoweredBodies::default();
+        let mut lowered = LoweredBodies::new(key);
         let mut macros = BodyMacroExpansion::new(edition, &definitions, cfg, cancellation.clone());
         BodyTaskLowering::new(db, edition, &mut lowered, cfg, &cancellation).lower_tasks(
             &mut [BodyLoweringTask::for_owner(owner, source)],
@@ -88,15 +90,12 @@ pub fn prepare_body(db: &QueryContext<'_>, key: BodyKey) -> ajika::Result<Option
         }
         // Nested bodies allocate into this root's arena. They can borrow earlier local items in
         // the worklist without crossing an Ajika query boundary or aliasing another root's IDs.
-        let (mut data, mut sources) =
-            BodyStoreBuilder::new(key, db, edition, lowered, cancellation).prepare(
-                &definitions,
-                &items,
-                cfg,
-            )?;
-        data.shrink_to_fit();
-        sources.shrink_to_fit();
-        Ok(Some(PreparedBody::new(db, data, sources)?))
+        let prepared = BodyStoreBuilder::new(key, db, edition, lowered, cancellation).prepare(
+            &definitions,
+            &items,
+            cfg,
+        )?;
+        Ok(Some(prepared))
     };
     build().map_err(|error| {
         ReadError::query_cause(error.as_ref())

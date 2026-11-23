@@ -8,16 +8,21 @@
 //! example, `Action` is a type path while `Start` is a value path. The facade keeps those semantic
 //! inputs distinct instead of forcing scanners to choose a navigation result.
 
+use std::collections::{HashMap, hash_map::Entry};
+
 use anyhow::Context as _;
 use rg_body_ir::ExprKind;
-use rg_def_map::BodyMacroExpander;
+use rg_def_map::{
+    BodyMacroExpander, ItemSourceKind, MacroCopyEvidence, MacroCopyRef, SourceOccurrenceLocation,
+};
 use rg_ir_model::{
     BodyBindingRef, BodyKey, CrateRef, FieldKey, FileId, GenericDefRef, ModuleRef, Path,
-    SourceLocation, SourceLocationKind, Span,
+    SourceLocationKind, Span,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::{SourceSelection, TypePathContext};
+use rg_semantic_ir::{ItemMacroCopyIndex, SourceSelection, TypePathContext};
+use rg_std::UniqueVec;
 use rg_syntax::SourceFile;
 
 use super::scan::{
@@ -45,17 +50,6 @@ pub enum IndexedSourceRole {
     Structural,
 }
 
-/// The output token behind an occurrence and the expected coverage for its input.
-///
-/// Copy IDs are shared by the bodies in one owner worklist. The total includes uses with
-/// no indexed occurrence, so a query can tell when it has missed part of the expansion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IndexedMacroArgumentUse {
-    pub owner: BodyKey,
-    pub copy: u32,
-    pub total_copies: u32,
-}
-
 /// How an occurrence relates to macro input, independently of the syntax needed to rewrite it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexedSourceProvenance {
@@ -63,20 +57,20 @@ pub enum IndexedSourceProvenance {
     Direct,
     /// A copied input token. Several semantic occurrences can occupy the same written span.
     MacroArgument {
-        /// An exact written range can still lack copy coverage, for example when an item
-        /// macro emits bodies in separate owner worklists.
-        usage: Option<IndexedMacroArgumentUse>,
+        /// Parser recovery and unsupported expansions can leave an exact navigation range
+        /// without enough copy information to authorize editing it.
+        copy: Option<MacroCopyRef>,
     },
 }
 
 impl IndexedSourceProvenance {
-    pub fn from_exact_location(location: SourceLocation) -> Self {
+    pub fn from_exact_location(source: SourceOccurrenceLocation) -> Self {
         debug_assert!(
-            location.is_exact(),
+            source.location.is_exact(),
             "indexed occurrences have exact locations"
         );
-        if location.kind == SourceLocationKind::MacroArgument {
-            Self::MacroArgument { usage: None }
+        if source.location.kind == SourceLocationKind::MacroArgument {
+            Self::MacroArgument { copy: source.copy }
         } else {
             Self::Direct
         }
@@ -166,7 +160,7 @@ impl IndexedSourceOccurrence {
         fact: IndexedSourceFact,
         crate_ref: CrateRef,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
     ) -> Self {
         Self::declaration_with_surface(
             fact,
@@ -182,14 +176,14 @@ impl IndexedSourceOccurrence {
         fact: IndexedSourceFact,
         crate_ref: CrateRef,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
         surface: IndexedSourceSurface,
     ) -> Self {
         Self {
             fact,
             crate_ref,
             file_id,
-            span: location.span,
+            span: location.span(),
             role: IndexedSourceRole::Declaration,
             surface,
             provenance: IndexedSourceProvenance::from_exact_location(location),
@@ -201,7 +195,7 @@ impl IndexedSourceOccurrence {
         fact: IndexedSourceFact,
         crate_ref: CrateRef,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
     ) -> Self {
         Self::reference_with_surface(
             fact,
@@ -217,14 +211,14 @@ impl IndexedSourceOccurrence {
         fact: IndexedSourceFact,
         crate_ref: CrateRef,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
         surface: IndexedSourceSurface,
     ) -> Self {
         Self {
             fact,
             crate_ref,
             file_id,
-            span: location.span,
+            span: location.span(),
             role: IndexedSourceRole::Reference,
             surface,
             provenance: IndexedSourceProvenance::from_exact_location(location),
@@ -236,13 +230,13 @@ impl IndexedSourceOccurrence {
         fact: IndexedSourceFact,
         crate_ref: CrateRef,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
     ) -> Self {
         Self {
             fact,
             crate_ref,
             file_id,
-            span: location.span,
+            span: location.span(),
             role: IndexedSourceRole::Structural,
             surface: IndexedSourceSurface::Plain,
             provenance: IndexedSourceProvenance::from_exact_location(location),
@@ -351,6 +345,87 @@ impl IndexedTypePath {
     }
 }
 
+type BodyOccurrences = HashMap<(FileId, Span), Vec<IndexedSourceOccurrence>>;
+
+/// Reuse source inventories and full body scans across one rename in this snapshot.
+pub struct MacroEditSourceView<'a, 'db> {
+    db: &'a IndexedViewDb<'db>,
+    items: ItemMacroCopyIndex<'db>,
+    bodies: HashMap<BodyKey, BodyOccurrences>,
+}
+
+impl<'a, 'db> MacroEditSourceView<'a, 'db> {
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self {
+            db,
+            items: db.item_macro_copy_index(),
+            bodies: HashMap::new(),
+        }
+    }
+
+    /// Gather every expansion and semantic occurrence that can constrain this physical edit.
+    /// Select worklists by declaration metadata before opening their source or inferred facts.
+    pub fn occurrences(
+        &mut self,
+        krate: CrateRef,
+        file: FileId,
+        span: Span,
+        evidence: &mut MacroCopyEvidence,
+    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
+        self.items.record(krate, file, span, evidence)?;
+        let view = SourceOccurrenceView::new(self.db);
+        let selection = SourceSelection::all_at(file, span.start);
+        let mut occurrences = view.declaration_occurrences(krate, selection)?;
+        let mut keys = UniqueVec::new();
+        for owner in self.db.body_ir.owners(krate, selection)? {
+            rg_std::check_cancel!(self.db, "macro argument owners");
+            if !self
+                .db
+                .body_ir
+                .declaration_location(krate, owner.source, owner.location)?
+                .span
+                .contains_span(span)
+            {
+                continue;
+            }
+            let key = BodyKey {
+                krate,
+                owner: owner.owner,
+            };
+            if !keys.push(key) {
+                continue;
+            }
+            for (expansion, coverage) in self.db.body_ir.macro_copy_coverage(key)? {
+                if coverage.file == file {
+                    evidence.record(expansion, span, coverage);
+                }
+            }
+            let indexed = match self.bodies.entry(key) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let mut indexed = BodyOccurrences::new();
+                    for occurrence in view.occurrences_in_body(key)? {
+                        indexed
+                            .entry((occurrence.file_id, occurrence.span))
+                            .or_default()
+                            .push(occurrence);
+                    }
+                    entry.insert(indexed)
+                }
+            };
+            // The same written function can be included with a different macro in scope.
+            // An opaque call in that route may provide no expansion or indexed name at all.
+            if let Some(at_edit) = indexed.get(&(file, span)) {
+                occurrences.extend(at_edit.iter().cloned());
+            } else if matches!(owner.source.kind, ItemSourceKind::ItemTree(_)) {
+                evidence.mark_unverified();
+            }
+        }
+        occurrences.retain(|entry| entry.span == span);
+        Ok(occurrences)
+    }
+}
+
 /// Finds declaration, reference, and structural source occurrences.
 ///
 /// Point queries select the narrowest body-local source node at `$0` and retain any independently
@@ -369,37 +444,6 @@ pub struct SourceOccurrenceView<'a, 'db> {
 impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
-    }
-
-    /// A physical range can occur in several bodies when a module file is included twice.
-    /// Use declaration metadata to find these owners before opening their occurrences.
-    pub fn body_owners_at(
-        &self,
-        krate: CrateRef,
-        file: FileId,
-        span: Span,
-    ) -> anyhow::Result<Vec<BodyKey>> {
-        let mut keys = rg_std::UniqueVec::new();
-        for owner in self
-            .db
-            .body_ir
-            .owners(krate, SourceSelection::in_range(file, span))?
-        {
-            rg_std::check_cancel!(self.db, "macro argument owners");
-            if self
-                .db
-                .body_ir
-                .declaration_location(krate, owner.source, owner.location)?
-                .span
-                .contains_span(span)
-            {
-                keys.push(BodyKey {
-                    krate,
-                    owner: owner.owner,
-                });
-            }
-        }
-        Ok(keys.into_vec())
     }
 
     /// Find caller-written format templates through macro expansion, without loading bodies.
@@ -462,7 +506,8 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
-        occurrences.extend(self.declaration_occurrences(crate_ref, file_id, Some(offset))?);
+        occurrences
+            .extend(self.declaration_occurrences(crate_ref, SourceSelection::at(file_id, offset))?);
         Ok(occurrences)
     }
 
@@ -473,13 +518,15 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     pub(crate) fn declaration_occurrences(
         &self,
         crate_ref: CrateRef,
-        file_id: FileId,
-        offset: Option<u32>,
+        selection: SourceSelection,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
-        for candidate in match offset {
-            Some(offset) => DefinitionSourceScanner::at(self.db, crate_ref, file_id, offset),
-            None => DefinitionSourceScanner::in_crate(self.db, crate_ref, Some(file_id)),
+        let file = selection.file();
+        for candidate in match (file, selection.offset()) {
+            (Some(file), Some(offset)) => {
+                DefinitionSourceScanner::at(self.db, crate_ref, file, offset)
+            }
+            _ => DefinitionSourceScanner::in_crate(self.db, crate_ref, file),
         }
         .scan()?
         {
@@ -487,15 +534,8 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
-        for candidate in match offset {
-            Some(offset) => SignatureSourceScanner::at(self.db, crate_ref, file_id, offset),
-            None => SignatureSourceScanner::in_crate(self.db, crate_ref, Some(file_id)),
-        }
-        .scan()?
-        {
-            if let Some(occurrence) =
-                self.signature_occurrence(crate_ref, candidate, Some(file_id))?
-            {
+        for candidate in SignatureSourceScanner::new(self.db, crate_ref, selection).scan()? {
+            if let Some(occurrence) = self.signature_occurrence(crate_ref, candidate, file)? {
                 occurrences.push(occurrence);
             }
         }
@@ -557,7 +597,13 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 }
             }
         }
-        for candidate in SignatureSourceScanner::in_crate(self.db, crate_ref, file_id).scan()? {
+        for candidate in SignatureSourceScanner::new(
+            self.db,
+            crate_ref,
+            file_id.map_or(SourceSelection::All, SourceSelection::AllInFile),
+        )
+        .scan()?
+        {
             if let Some(occurrence) = self
                 .signature_occurrence(crate_ref, candidate, file_id)
                 .context("convert signature occurrence")?
@@ -692,9 +738,15 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             }
             _ => None,
         };
-        let source_map = body_sources.map(|sources| sources.provenance());
         let format_capture = matches!(&candidate, BodySourceCandidate::Expr { expr, .. }
-            if source_map.is_some_and(|map| map.is_format_capture(*expr, location.span)));
+            if body_sources.is_some_and(|sources| sources.is_format_capture(*expr, location.span)));
+        let location = source_id
+            .and_then(|(_, id)| body_sources?.occurrence(id))
+            .filter(|source| source.location == location)
+            .unwrap_or(SourceOccurrenceLocation {
+                location,
+                copy: None,
+            });
         let occurrence = match candidate {
             BodySourceCandidate::Body { body, .. } => {
                 let Some(data) = self.db.body_ir.body(body)? else {
@@ -848,23 +900,6 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         };
 
         Ok(occurrence.map(|mut occurrence| {
-            if location.kind == SourceLocationKind::MacroArgument {
-                occurrence.provenance = IndexedSourceProvenance::MacroArgument {
-                    usage: source_id.and_then(|(body, source)| {
-                        let sources = body_sources?;
-                        if sources.source(source).location() != location {
-                            return None;
-                        }
-                        let (copy, total_copies) =
-                            sources.provenance().macro_argument_use(source)?;
-                        Some(IndexedMacroArgumentUse {
-                            owner: body.key(),
-                            copy,
-                            total_copies,
-                        })
-                    }),
-                };
-            }
             if format_capture {
                 occurrence.surface = IndexedSourceSurface::FormatCapture;
             }
@@ -877,7 +912,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         &self,
         declaration: DeclarationRef,
         scan_target: CrateRef,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
         fallback_file_id: Option<FileId>,
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {
         // Some scanner families know only the selected span. Use the declaration projection for

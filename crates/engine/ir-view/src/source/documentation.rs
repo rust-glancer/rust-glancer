@@ -92,7 +92,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
         let resolution = ResolutionView::new(self.db);
         let mut declarations = Vec::new();
         for occurrence in SourceOccurrenceView::new(self.db)
-            .declaration_occurrences(crate_ref, file, None)
+            .declaration_occurrences(crate_ref, rg_semantic_ir::SourceSelection::AllInFile(file))
             .context("read documentation owner declarations")?
         {
             let (fact, _, _, span, role, _, _) = occurrence.into_parts();

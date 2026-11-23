@@ -11,12 +11,10 @@
 //! ```
 
 use anyhow::Context as _;
-use rg_def_map::{DefMapView, ModuleOrigin};
+use rg_def_map::{DefMapView, ModuleOrigin, SourceOccurrenceLocation};
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, FileId, LocalDefRef, ModuleId, ModuleRef, Path, SourceLocation,
-    Span,
+    CrateRef, DefId, DefMapRef, FileId, LocalDefRef, ModuleId, ModuleRef, Path, Span,
 };
-use rg_item_tree::SourceLocations as _;
 
 use crate::IndexedViewDb;
 
@@ -29,19 +27,19 @@ pub(crate) enum DefinitionSourceCandidate {
     Def {
         def: DefId,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
     },
     UsePath {
         module: ModuleRef,
         path: Path,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
     },
     ImportAlias {
         module: ModuleRef,
         path: Path,
         file_id: FileId,
-        location: SourceLocation,
+        location: SourceOccurrenceLocation,
     },
 }
 
@@ -132,10 +130,10 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
             let locations = self
                 .db
                 .declaration_source(module_ref.origin, declaration_source)?;
-            let Some(location) = locations.exact_location(Some(span)) else {
+            let Some(location) = locations.exact_occurrence(Some(span)) else {
                 continue;
             };
-            if self.offset_matches(location.span) {
+            if self.offset_matches(location.span()) {
                 candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Module(module_ref),
                     file_id: declaration_source.file_id,
@@ -161,10 +159,10 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
             let locations = self
                 .db
                 .declaration_source(local_def_ref.origin, local_def.source)?;
-            let Some(location) = locations.exact_location(local_def.name_location) else {
+            let Some(location) = locations.exact_occurrence(local_def.name_location) else {
                 continue;
             };
-            if self.offset_matches(location.span) {
+            if self.offset_matches(location.span()) {
                 candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Local(local_def_ref),
                     file_id: local_def.file_id,
@@ -192,10 +190,10 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
             };
             let locations = self.db.declaration_source(module.origin, import.source)?;
             for (path, span) in prefixes {
-                let Some(location) = locations.exact_location(Some(span)) else {
+                let Some(location) = locations.exact_occurrence(Some(span)) else {
                     continue;
                 };
-                if self.offset_matches(location.span) {
+                if self.offset_matches(location.span()) {
                     candidates.push(DefinitionSourceCandidate::UsePath {
                         module,
                         path,
@@ -205,8 +203,8 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 }
             }
 
-            if let Some(location) = locations.exact_location(import.alias_location)
-                && self.offset_matches(location.span)
+            if let Some(location) = locations.exact_occurrence(import.alias_location)
+                && self.offset_matches(location.span())
             {
                 candidates.push(DefinitionSourceCandidate::ImportAlias {
                     module,

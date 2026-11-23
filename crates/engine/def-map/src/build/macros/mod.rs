@@ -20,8 +20,10 @@ use rg_ir_model::{CrateRef, FileId, LocalDefId, ModuleId, ModuleRef};
 use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
 use rg_parse::ModuleFileContext;
 use rg_text::Name;
-use rg_tt::TopSubtree;
+use rg_tt::{Span as TtSpan, TopSubtree};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::macro_copies::ForwardedMacroInputs;
 
 mod attempts;
 mod builtin_derive;
@@ -53,6 +55,7 @@ pub(super) struct MacroDirective {
     pub(super) call: MacroCallSite,
     pub(super) origin: MacroCallOrigin,
     pub(super) state: MacroDirectiveState,
+    pub(super) has_copy_coverage: bool,
 }
 
 impl MacroDirective {
@@ -144,7 +147,8 @@ pub(super) struct MacroCallSite {
     pub(super) builtin: Option<BuiltinMacroItem>,
     pub(super) dollar_crate: Option<CrateRef>,
     pub(super) file_id: FileId,
-    pub(super) call_site: rg_tt::Span,
+    pub(super) call_site: TtSpan,
+    pub(super) forwarding: Option<ForwardedMacroInputs>,
     pub(super) order: ItemOrder,
     /// Logical filesystem base inherited by declarations emitted from this call.
     pub(super) module_file_context: Arc<ModuleFileContext>,

@@ -47,11 +47,12 @@ impl LoweredBodyData {
         self.pending_binding_resolutions.clear();
     }
 
-    pub(crate) fn into_parts(self) -> (BodyData, BodySourceStore) {
+    pub(crate) fn into_parts(mut self) -> (BodyData, BodySourceStore) {
         debug_assert!(
             self.pending_binding_resolutions.is_empty(),
             "pending binding candidates should be materialized before BodyData is frozen",
         );
+        self.sources.finish_recording();
         (self.body, self.sources)
     }
 }

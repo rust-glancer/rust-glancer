@@ -136,7 +136,6 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                                 expansion,
                                 invocation.input_sources(),
                                 invocation.call_site(),
-                                invocation.call_package(),
                                 site.dollar_crate_for_expansion()?,
                             )
                             .cast_root_or_child::<ast::FormatArgsExpr>()
@@ -324,7 +323,6 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             expansion,
             invocation.input_sources(),
             invocation.call_site(),
-            invocation.call_package(),
             site.dollar_crate_for_expansion()?,
         ))
     }
@@ -346,7 +344,6 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             expansion,
             invocation.input_sources(),
             invocation.call_site(),
-            invocation.call_package(),
             resolved.data.dollar_crate,
         ))
     }

@@ -128,4 +128,9 @@ pub struct MacroCallInput {
     pub path_crate: Option<CrateRef>,
     #[shrink(skip)]
     pub args: Option<TopSubtree>,
+    /// Tagged nested arguments use a parent copy ID until the child's output is
+    /// collected. This table recovers their original input origins.
+    #[memsize(skip)]
+    #[shrink(skip)]
+    pub forwarded: Vec<(u32, TtSpan)>,
 }

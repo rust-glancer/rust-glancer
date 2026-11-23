@@ -6,6 +6,7 @@
 //! pre-`=` binding without erasing its primary meaning as a type argument. Keeping these policies
 //! separate leaves the walker independent of a runtime scan mode.
 
+use rg_body_ir::DeclarationSourceView;
 use rg_ir_model::{FileId, Span};
 use rg_item_tree::{SourceLocations, TypePath, TypeRef};
 
@@ -30,7 +31,7 @@ pub(super) trait SignatureScanCollector {
         path: &TypePath,
         file_id: FileId,
         position: TypeNamePosition,
-        locations: &dyn SourceLocations,
+        locations: &DeclarationSourceView<'_>,
     );
 }
 
@@ -80,17 +81,17 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
         path: &TypePath,
         file_id: FileId,
         _position: TypeNamePosition,
-        locations: &dyn SourceLocations,
+        locations: &DeclarationSourceView<'_>,
     ) {
         if path.anchor.is_some() {
             return;
         }
 
         for (idx, segment) in path.segments.iter().enumerate() {
-            let Some(location) = locations.exact_location(segment.location) else {
+            let Some(location) = locations.exact_occurrence(segment.location) else {
                 continue;
             };
-            if !self.offset_matches(location.span) {
+            if !self.offset_matches(location.span()) {
                 continue;
             }
             let Some(def_map_path) = path.as_def_map_path_prefix(idx) else {
@@ -148,7 +149,7 @@ impl SignatureScanCollector for SignatureCompletionCollector {
         path: &TypePath,
         _file_id: FileId,
         position: TypeNamePosition,
-        locations: &dyn SourceLocations,
+        locations: &DeclarationSourceView<'_>,
     ) {
         if let Some(binding) =
             AssociatedTypeBindingSyntax::explicit_at(path, self.offset, locations)
@@ -235,7 +236,7 @@ impl SignatureScanCollector for ImplicitAssociatedTypeBindingCollector {
         path: &TypePath,
         _file_id: FileId,
         _position: TypeNamePosition,
-        locations: &dyn SourceLocations,
+        locations: &DeclarationSourceView<'_>,
     ) {
         let Some(binding) = AssociatedTypeBindingSyntax::implicit_at(path, self.offset, locations)
         else {

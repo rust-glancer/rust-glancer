@@ -3,6 +3,50 @@ use rg_analysis::ReferenceQuery;
 use crate::testonly::ProjectSourceFixture;
 
 #[test]
+fn rename_ignores_synthesized_punctuation_in_macro_arguments() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /src/lib.rs crate:macro_path_rename
+fn target<T>(value: T) -> T { value }
+const $decl$VALUE: u8 = 1;
+macro_rules! make {
+    ($path:path, $value:ident) => { fn read() -> u8 { $path($value) } };
+}
+make!(target<u8>, $module_arg$VALUE);
+fn outer() {
+    make!(target<u8>, $body_arg$VALUE);
+}
+"#,
+    );
+    let project = fixture.build_project();
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route source")
+            .expect("source target");
+        let expected =
+            ["decl", "module_arg", "body_arg"].map(|name| fixture.markers().position(name).offset);
+        let crates = [context.crate_ref];
+        let query = ReferenceQuery::find_references(&crates, true);
+        for offset in expected {
+            let rename = snapshot
+                .analysis()
+                .rename(context.crate_ref, context.file, offset, "RENAMED", query)
+                .expect("compute rename")
+                .unwrap_or_else(|| panic!("rename should succeed at {offset}"));
+            assert_eq!(
+                rename
+                    .edits
+                    .iter()
+                    .map(|edit| edit.span.start)
+                    .collect::<Vec<_>>(),
+                expected,
+            );
+        }
+    });
+}
+
+#[test]
 fn rename_updates_forwarded_and_repeated_macro_arguments() {
     let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
@@ -19,8 +63,18 @@ macro_rules! match_like {
     (($node:expr), $name:pat => $body:expr) => { if let Some($name) = $node { $body } };
 }
 macro_rules! generate {
-    ($value:ident) => { fn one() -> u8 { $value } fn two() -> u8 { $value } };
+    ($value:ident) => { fn one() -> u8 { crate::$value } fn two() -> u8 { crate::$value } };
 }
+macro_rules! forward_items {
+    ($value:ident) => { mod emitted { generate!($value); } };
+}
+macro_rules! define {
+    ($name:ident) => { struct $name; fn in_signature(_: $name) -> $name { $name } };
+}
+macro_rules! type_only { ($name:ident) => { struct $name; }; }
+struct Methods;
+macro_rules! generate_member { ($value:ident) => { fn value() -> u8 { crate::$value } }; }
+macro_rules! forward_member { ($value:ident) => { impl Methods { generate_member!($value); } }; }
 macro_rules! pair { ($left:expr, $right:expr) => { ($left, $right) }; }
 macro_rules! forward_twice { ($name:ident) => { pair!($name, $name) }; }
 macro_rules! optional_suffix {
@@ -33,6 +87,7 @@ macro_rules! optional_suffix {
 fn write() {
     let mut $acc_decl$acc = String::new();
     let _ = format_to_acc!($acc_use$acc, "{}", 1);
+    let _ = format_to_acc!($acc_use_again$acc, "{}", 2);
 }
 
 fn bind(node: Option<u8>) {
@@ -41,6 +96,12 @@ fn bind(node: Option<u8>) {
 
 const $const_decl$VALUE: u8 = 1;
 fn generated() { generate!($const_use$VALUE); }
+generate!($module_use$VALUE);
+forward_items!($forwarded_use$VALUE);
+forward_member!($member_use$VALUE);
+define!($generated_decl$Generated);
+fn takes_generated(_: $generated_use$Generated) {}
+type_only!($only_decl$Only);
 fn forward() { let $pair_decl$item = 1; let _ = forward_twice!($pair_use$item); }
 fn omitted_suffix() { let $optional_decl$item = 1; optional_suffix!($optional_use$item); }
 "#,
@@ -54,36 +115,48 @@ fn omitted_suffix() { let $optional_decl$item = 1; optional_suffix!($optional_us
         let analysis = snapshot.analysis();
         let crates = [context.crate_ref];
         let query = ReferenceQuery::find_references(&crates, true);
-        for (decl, usage) in [
-            ("acc_decl", "acc_use"),
-            ("bind_decl", "bind_use"),
-            ("const_decl", "const_use"),
-            ("pair_decl", "pair_use"),
-            ("optional_decl", "optional_use"),
+        for markers in [
+            &["acc_decl", "acc_use", "acc_use_again"][..],
+            &["bind_decl", "bind_use"],
+            &[
+                "const_decl",
+                "const_use",
+                "module_use",
+                "forwarded_use",
+                "member_use",
+            ],
+            &["generated_decl", "generated_use"],
+            &["only_decl"],
+            &["pair_decl", "pair_use"],
+            &["optional_decl", "optional_use"],
         ] {
-            let expected = [decl, usage].map(|name| fixture.markers().position(name).offset);
-            for offset in expected {
+            let expected = markers
+                .iter()
+                .map(|name| fixture.markers().position(name).offset)
+                .collect::<Vec<_>>();
+            for &offset in &expected {
                 assert!(
                     analysis
                         .prepare_rename(context.crate_ref, context.file, offset)
                         .expect("prepare rename")
                         .is_some(),
-                    "{decl} at {offset}",
+                    "{markers:?} at {offset}",
                 );
                 let rename = analysis
                     .rename(context.crate_ref, context.file, offset, "renamed", query)
                     .expect("rename")
-                    .unwrap_or_else(|| {
-                        panic!("rename should update {decl} and {usage} from {offset}")
-                    });
+                    .unwrap_or_else(|| panic!("rename should update {markers:?} from {offset}"));
                 assert_eq!(
                     rename
                         .edits
                         .iter()
                         .map(|edit| (edit.span.start, edit.new_text.as_str()))
                         .collect::<Vec<_>>(),
-                    expected.map(|offset| (offset, "renamed")),
-                    "{decl} at {offset}",
+                    expected
+                        .iter()
+                        .map(|&offset| (offset, "renamed"))
+                        .collect::<Vec<_>>(),
+                    "{markers:?} at {offset}",
                 );
             }
         }
