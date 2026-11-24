@@ -1,7 +1,7 @@
 /**
  * Decides which language-client state should be rendered in the shared status view.
  *
- * The language client can be starting, indexing, stale, running diagnostics, failed, or ready based
+ * The language client can be starting, indexing, running diagnostics, failed, or ready based
  * on several independent event streams. This module merges those signals and delegates the final
  * rendering to `StatusView`.
  */
@@ -32,7 +32,6 @@ export interface ClientStatusView {
   starting(details: StatusDetails): void;
   indexing(details?: StatusDetails): void;
   ready(details?: StatusDetails): void;
-  stale(details?: StatusDetails): void;
   diagnosticsRunning(command: string | undefined, details?: StatusDetails): void;
   diagnosticsFailed(details?: StatusDetails): void;
   stopped(reason: string, details?: StatusDetails): void;
@@ -42,7 +41,7 @@ export interface ClientStatusView {
 /**
  * Tracks client-facing state and decides which status-bar state should win.
  *
- * VS Code document events, LSP lifecycle events, and work-done progress can arrive independently.
+ * Language-client lifecycle events, workspace status, and work-done progress can arrive independently.
  * Keeping their merge logic here makes the extension controller mostly responsible for wiring.
  */
 export class ClientStatus {
@@ -91,7 +90,7 @@ export class ClientStatus {
     const nextDetails =
       activeWorkspaceRoot === undefined ? details : { ...details, activeWorkspaceRoot };
     this.details = nextDetails;
-    this.refresh(false);
+    this.refresh();
   }
 
   public indexing(): void {
@@ -108,7 +107,6 @@ export class ClientStatus {
     root: string,
     state: ActiveWorkspaceState,
     message: string | undefined,
-    isActiveRustDocumentDirty: boolean,
   ): void {
     if (this.details === undefined) {
       return;
@@ -120,7 +118,7 @@ export class ClientStatus {
       ...this.details,
       activeWorkspaceRoot: root,
     };
-    this.refresh(isActiveRustDocumentDirty);
+    this.refresh();
   }
 
   public stopped(reason: string, details: StatusDetails | undefined = this.details): void {
@@ -155,13 +153,13 @@ export class ClientStatus {
     );
   }
 
-  public refresh(isActiveRustDocumentDirty: boolean): void {
+  public refresh(): void {
     if (!this.running || this.details === undefined) {
       return;
     }
 
     // Engine lifecycle wins because the workspace may not have any analysis to serve yet.
-    // Once the active engine is ready, file freshness and diagnostics become the useful signals.
+    // Once the active engine is ready, use the status bar to show Cargo diagnostics progress.
     if (this.activeWorkspaceState === "indexing") {
       this.show("indexing", "$(sync~spin) Rust Glancer: indexing", () =>
         this.view.indexing(this.details),
@@ -170,10 +168,6 @@ export class ClientStatus {
       const reason = this.activeWorkspaceFailureReason ?? "active workspace failed";
       this.show("failed", "$(error) Rust Glancer: failed", () =>
         this.view.failed(reason, this.details ?? {}),
-      );
-    } else if (isActiveRustDocumentDirty) {
-      this.show("stale", "$(warning) Rust Glancer: stale until save", () =>
-        this.view.stale(this.details),
       );
     } else if (this.diagnosticsRunning) {
       this.show("diagnostics-running", "$(sync~spin) Rust Glancer: cargo check running", () =>
@@ -191,7 +185,6 @@ export class ClientStatus {
   public handleWorkDoneProgress(
     token: ProgressToken,
     params: WorkDoneProgressBegin | WorkDoneProgressReport | WorkDoneProgressEnd,
-    isActiveRustDocumentDirty: boolean,
   ): void {
     if (params.kind === "begin") {
       if (params.title !== CARGO_DIAGNOSTICS_PROGRESS_TITLE) {
@@ -202,7 +195,7 @@ export class ClientStatus {
       this.diagnosticsRunning = true;
       this.diagnosticsFailed = false;
       this.diagnosticsCommand = params.message;
-      this.refresh(isActiveRustDocumentDirty);
+      this.refresh();
       return;
     }
 
@@ -217,7 +210,7 @@ export class ClientStatus {
       if (!this.diagnosticsRunning) {
         this.diagnosticsCommand = undefined;
       }
-      this.refresh(isActiveRustDocumentDirty);
+      this.refresh();
     }
   }
 

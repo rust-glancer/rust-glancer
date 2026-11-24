@@ -21,7 +21,6 @@ import {
   type ClientStatusSnapshot,
 } from "../status/client-status";
 import { StatusView } from "../status/status-view";
-import { isRustFile } from "../utils/lsp-utils";
 import { ResolvedServer } from "./server";
 
 export interface LanguageClientSessionSnapshot extends ClientStatusSnapshot {
@@ -104,7 +103,6 @@ export class LanguageClientSession implements vscode.Disposable {
             break;
           case State.Running:
             this.clientStatus.ready(statusDetails);
-            this.refreshStatus();
             break;
           case State.Stopped:
             if (this.client === client) {
@@ -115,19 +113,13 @@ export class LanguageClientSession implements vscode.Disposable {
       }),
       client.onNotification(SERVER_NOTIFICATIONS.activeWorkspaceChanged, (params) => {
         const status = params as ActiveWorkspaceChangedParams;
-        this.clientStatus.activeWorkspace(
-          status.root,
-          status.state,
-          status.message,
-          this.isActiveRustDocumentDirty(),
-        );
+        this.clientStatus.activeWorkspace(status.root, status.state, status.message);
       }),
     );
 
     try {
       await client.start();
       this.clientStatus.ready(statusDetails);
-      this.refreshStatus();
       this.extensionLog.info("rust-glancer client started");
     } catch (error) {
       this.client = undefined;
@@ -185,7 +177,7 @@ export class LanguageClientSession implements vscode.Disposable {
   }
 
   public refreshStatus(): void {
-    this.clientStatus.refresh(this.isActiveRustDocumentDirty());
+    this.clientStatus.refresh();
   }
 
   public snapshot(): LanguageClientSessionSnapshot {
@@ -206,15 +198,10 @@ export class LanguageClientSession implements vscode.Disposable {
     return {
       ...hoverMiddleware(() => this.client, this.extensionLog),
       handleWorkDoneProgress: (token, params, next) => {
-        this.clientStatus.handleWorkDoneProgress(token, params, this.isActiveRustDocumentDirty());
+        this.clientStatus.handleWorkDoneProgress(token, params);
         next(token, params);
       },
     };
-  }
-
-  private isActiveRustDocumentDirty(): boolean {
-    const document = vscode.window.activeTextEditor?.document;
-    return document !== undefined && isRustFile(document) && document.isDirty;
   }
 }
 
