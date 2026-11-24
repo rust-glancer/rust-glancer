@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/rust-glancer/rust-glancer/compare/v0.5.0...v0.5.1) (2026-11-24)
+
+
+### Features
+
+* Remove stale notification from status bar on vscode ([#322](https://github.com/rust-glancer/rust-glancer/issues/322)) ([ba0fae8](https://github.com/rust-glancer/rust-glancer/commit/ba0fae8aa6bc145a4a12400a7d41647e89b8398e))
+
 ## [0.5.0](https://github.com/rust-glancer/rust-glancer/compare/v0.4.0...v0.5.0) (2026-11-23)
 
 
