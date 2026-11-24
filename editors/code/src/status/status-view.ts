@@ -50,15 +50,6 @@ export class StatusView implements vscode.Disposable {
     this.showState("ready", "$(check) Rust Glancer: ready", "Ready", details);
   }
 
-  public stale(details: StatusDetails = this.details): void {
-    this.showState(
-      "stale",
-      "$(warning) Rust Glancer: stale until save",
-      "Stale until save",
-      details,
-    );
-  }
-
   public diagnosticsRunning(
     command: string | undefined,
     details: StatusDetails = this.details,

@@ -37,15 +37,6 @@ export class ExtensionController implements vscode.Disposable {
       vscode.workspace.onDidOpenTextDocument((document) => {
         void this.activateForDocument(document);
       }),
-      vscode.workspace.onDidChangeTextDocument((event) => {
-        this.refreshForDocument(event.document);
-      }),
-      vscode.workspace.onDidSaveTextDocument((document) => {
-        this.refreshForDocument(document);
-      }),
-      vscode.workspace.onDidCloseTextDocument((document) => {
-        this.refreshForDocument(document);
-      }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         void this.handleWorkspaceFoldersChanged();
       }),
@@ -209,13 +200,6 @@ export class ExtensionController implements vscode.Disposable {
     const client = await this.clientSlot.getSession(workspaceFolder);
     client?.refreshStatus();
     return client !== undefined;
-  }
-
-  private refreshForDocument(document: vscode.TextDocument): void {
-    if (isRustFile(document)) {
-      this.clientSlot.current()?.refreshStatus();
-    }
-    this.refreshActiveStatus();
   }
 
   private async handleWorkspaceFoldersChanged(): Promise<void> {

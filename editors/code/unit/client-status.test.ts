@@ -11,51 +11,48 @@ const DETAILS: StatusDetails = {
 };
 
 describe("client status state precedence", () => {
-  it("lets engine state, dirty files, and diagnostics win in that order", () => {
+  it("shows Cargo diagnostics progress once the active workspace is ready", () => {
     const status = clientStatus();
     status.starting(DETAILS);
     status.ready(DETAILS);
-    status.handleWorkDoneProgress(
-      "cargo",
-      { kind: "begin", title: "Cargo diagnostics", message: "cargo check" },
-      false,
-    );
+    status.handleWorkDoneProgress("cargo", {
+      kind: "begin",
+      title: "Cargo diagnostics",
+      message: "cargo check",
+    });
 
     assert.equal(
       render(status),
       "diagnostics-running: $(sync~spin) Rust Glancer: cargo check running",
     );
 
-    status.activeWorkspace("/workspace/project_a", "indexing", undefined, true);
+    status.activeWorkspace("/workspace/project_a", "indexing", undefined);
     assert.equal(render(status), "indexing: $(sync~spin) Rust Glancer: indexing [project_a]");
 
-    status.activeWorkspace("/workspace/project_a", "ready", undefined, true);
-    assert.equal(render(status), "stale: $(warning) Rust Glancer: stale until save [project_a]");
-
-    status.refresh(false);
+    status.activeWorkspace("/workspace/project_a", "ready", undefined);
     assert.equal(
       render(status),
       "diagnostics-running: $(sync~spin) Rust Glancer: cargo check running [project_a]",
     );
 
-    status.handleWorkDoneProgress("cargo", { kind: "end", message: "Failed" }, false);
+    status.handleWorkDoneProgress("cargo", { kind: "end", message: "Failed" });
     assert.equal(
       render(status),
       "diagnostics-failed: $(error) Rust Glancer: cargo check failed [project_a]",
     );
   });
 
-  it("keeps active workspace failure above dirty and diagnostics state", () => {
+  it("keeps active workspace failure above diagnostics state", () => {
     const status = clientStatus();
     status.starting(DETAILS);
     status.ready(DETAILS);
-    status.handleWorkDoneProgress(
-      "cargo",
-      { kind: "begin", title: "Cargo diagnostics", message: "cargo check" },
-      false,
-    );
+    status.handleWorkDoneProgress("cargo", {
+      kind: "begin",
+      title: "Cargo diagnostics",
+      message: "cargo check",
+    });
 
-    status.activeWorkspace("/workspace/project_b", "failed", "index failed", true);
+    status.activeWorkspace("/workspace/project_b", "failed", "index failed");
 
     assert.equal(render(status), "failed: $(error) Rust Glancer: failed [project_b]");
     assert.equal(status.snapshot().diagnosticsRunning, true);
@@ -66,7 +63,7 @@ describe("client status state precedence", () => {
     const status = clientStatus();
     status.starting(DETAILS);
     status.ready(DETAILS);
-    status.activeWorkspace("/workspace/project_d", "ready", undefined, false);
+    status.activeWorkspace("/workspace/project_d", "ready", undefined);
 
     status.ready({
       ...DETAILS,
@@ -96,7 +93,6 @@ function noopView(): ClientStatusView {
     starting() {},
     indexing() {},
     ready() {},
-    stale() {},
     diagnosticsRunning() {},
     diagnosticsFailed() {},
     stopped() {},

@@ -16,7 +16,6 @@ export type StatusState =
   | "starting"
   | "indexing"
   | "ready"
-  | "stale"
   | "diagnostics-running"
   | "diagnostics-failed"
   | "stopped"
