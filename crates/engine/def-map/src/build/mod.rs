@@ -8,7 +8,6 @@ mod macro_source_files;
 mod macros;
 mod output;
 mod plan;
-mod progress;
 mod resolution_env;
 mod resolve;
 mod target;

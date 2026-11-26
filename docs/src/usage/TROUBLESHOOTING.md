@@ -4,7 +4,7 @@ If Rust Glancer won't start, crashes, or gets stuck indexing, logs are very help
 Set `RUST_GLANCER_LOG` to this value, then restart the language server and reproduce the problem.
 
 ```text
-info,rg_lsp_server=debug,rg_project=debug,rg_def_map::progress=debug
+info,rg_lsp_server=debug,rg_project=debug
 ```
 
 - **VS Code and forks.** In `settings.json`, add the variable to `rust-glancer.server.extraEnv`.

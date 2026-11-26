@@ -10,7 +10,6 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    time::Instant,
 };
 
 use tower_lsp_server::{
@@ -56,13 +55,11 @@ impl WorkspaceProgressState {
         self.next_sequence += 1;
 
         tracing::debug!(root = %root.display(), ?token, "requesting workspace indexing progress token");
-        let started = Instant::now();
         match lsp_client.create_work_done_progress(token.clone()).await {
             Ok(()) => {
                 tracing::debug!(
                     root = %root.display(),
                     ?token,
-                    elapsed_ms = started.elapsed().as_millis(),
                     "editor acknowledged workspace indexing progress token"
                 );
                 let progress = lsp_client.progress(token, title).begin().await;
@@ -72,7 +69,6 @@ impl WorkspaceProgressState {
                 tracing::debug!(
                     root = %root.display(),
                     ?token,
-                    elapsed_ms = started.elapsed().as_millis(),
                     error = %error,
                     "failed to create workspace indexing progress"
                 );

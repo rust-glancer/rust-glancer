@@ -8,13 +8,6 @@
 //! stays at ingress. A completion handler receives the captured request capability, not a second
 //! scheduler handle.
 
-use std::{
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-};
-
-use tokio::io::{AsyncWrite, Stdout};
 use tower_lsp_server::{LspService, Server};
 
 use crate::{
@@ -31,10 +24,7 @@ use crate::{
 /// engine orchestration, but not process-wide application initialization.
 pub async fn serve_stdio() -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
-    let stdout = StdioOutput {
-        stdout: tokio::io::stdout(),
-        first_output: FirstOutput::Waiting,
-    };
+    let stdout = tokio::io::stdout();
     let inlay_refresher = InlayRefresher::default();
     let recent_editor_saves = RecentEditorSaves::default();
     let editor = EditorStateHandle::default();
@@ -65,58 +55,4 @@ pub async fn serve_stdio() -> anyhow::Result<()> {
     tracing::info!("rust-glancer LSP stdio transport closed");
 
     Ok(())
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FirstOutput {
-    Waiting,
-    Written,
-    Flushed,
-}
-
-/// Observe the pipe after a handler returns. The transport owns framing and can finish without
-/// returning its write error to the caller, so report the first nonempty flush and failures here.
-struct StdioOutput {
-    stdout: Stdout,
-    first_output: FirstOutput,
-}
-
-impl AsyncWrite for StdioOutput {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bytes: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        let result = Pin::new(&mut self.stdout).poll_write(cx, bytes);
-        match &result {
-            Poll::Ready(Ok(0)) if !bytes.is_empty() => {
-                tracing::warn!("LSP stdout accepted zero bytes from a nonempty write");
-            }
-            Poll::Ready(Ok(written))
-                if *written > 0 && self.first_output == FirstOutput::Waiting =>
-            {
-                self.first_output = FirstOutput::Written;
-            }
-            Poll::Ready(Err(error)) => tracing::warn!(%error, "failed to write LSP stdout"),
-            _ => {}
-        }
-        result
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let result = Pin::new(&mut self.stdout).poll_flush(cx);
-        match &result {
-            Poll::Ready(Ok(())) if self.first_output == FirstOutput::Written => {
-                self.first_output = FirstOutput::Flushed;
-                tracing::debug!("flushed first LSP output to stdout");
-            }
-            Poll::Ready(Err(error)) => tracing::warn!(%error, "failed to flush LSP stdout"),
-            _ => {}
-        }
-        result
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.stdout).poll_shutdown(cx)
-    }
 }
