@@ -165,6 +165,20 @@ rg_wincode_utils = { path = "crates/lib/wincode-utils" }
 test_fixture = { path = "crates/lib/test-fixture" }
 rg_codegen = { path = "crates/tools/codegen" }
 
+# Keep source locations in development backtraces and offer full symbols for debugger sessions.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[profile.debugging.package."*"]
+debug = true
+
 # Published binaries can take longer to build to optimize across crate boundaries.
 # Keep this separate from `release`, which is also used for local performance work.
 [profile.dist]

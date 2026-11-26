@@ -160,6 +160,12 @@ impl QueryContext {
     }
 }
 
+enum QueryPublication {
+    Cancelled,
+    Reject(QueryError),
+    Publish,
+}
+
 impl QueryRunner<'_> {
     /// Run one read-only request through the common query lifecycle.
     ///
@@ -242,7 +248,39 @@ impl QueryRunner<'_> {
             })
         }
         .map_err(QueryRunError::from);
-        let error = result.as_ref().err().and_then(QueryRunError::as_error);
+        // Share error classification and logging across queries with different response types.
+        let publication =
+            self.query_publication(label, queue_elapsed, started, result.as_ref().map(|_| ()));
+        match publication {
+            QueryPublication::Cancelled => {}
+            QueryPublication::Reject(error) => {
+                let _ = respond_to.send(Err(error));
+            }
+            QueryPublication::Publish => {
+                let result = match result {
+                    Ok(value) => Ok(QueryValue::new(value, scope)),
+                    Err(QueryRunError::SaveRequired(path)) => {
+                        Err(QueryError::SaveRequired { path })
+                    }
+                    Err(QueryRunError::Analysis(error)) => {
+                        Err(QueryError::Internal(EngineError::from(error)))
+                    }
+                };
+                let _ = respond_to.send(result);
+            }
+        }
+
+        MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
+    }
+
+    fn query_publication(
+        &mut self,
+        label: &'static str,
+        queue_elapsed: Duration,
+        started: Instant,
+        result: Result<(), &QueryRunError>,
+    ) -> QueryPublication {
+        let error = result.err().and_then(QueryRunError::as_error);
         let runtime_error = error.and_then(|error| {
             error
                 .chain()
@@ -262,10 +300,7 @@ impl QueryRunner<'_> {
         let stale_path = if cancelled_checkpoint.is_some() {
             None
         } else {
-            result
-                .as_ref()
-                .err()
-                .and_then(QueryRunError::as_error)
+            error
                 .and_then(Project::stale_source_path)
                 .map(Path::to_path_buf)
         };
@@ -301,8 +336,8 @@ impl QueryRunner<'_> {
                 "analysis query completed"
             );
         } else {
-            match &result {
-                Ok(_) => {
+            match result {
+                Ok(()) => {
                     tracing::info!(
                         query = label,
                         queued_ms = queue_elapsed.as_millis(),
@@ -347,25 +382,16 @@ impl QueryRunner<'_> {
         }
 
         if cancelled_checkpoint.is_some() {
-            // The receiver is already gone. Cancellation is an execution detail, not a semantic
-            // query error or an empty feature result, so there is deliberately nothing to publish.
+            // The receiver is already gone. There is nothing to publish.
+            QueryPublication::Cancelled
         } else if saved_source_changed {
-            let _ = respond_to.send(Err(QueryError::SavedSourceChanged));
+            QueryPublication::Reject(QueryError::SavedSourceChanged)
         } else if repair_pending {
             // The next Ajika run attempts one repair before serving its callback.
-            let _ = respond_to.send(Err(QueryError::TemporarilyUnavailable));
+            QueryPublication::Reject(QueryError::TemporarilyUnavailable)
         } else {
-            let result = match result {
-                Ok(value) => Ok(QueryValue::new(value, scope)),
-                Err(QueryRunError::SaveRequired(path)) => Err(QueryError::SaveRequired { path }),
-                Err(QueryRunError::Analysis(error)) => {
-                    Err(QueryError::Internal(EngineError::from(error)))
-                }
-            };
-            let _ = respond_to.send(result);
+            QueryPublication::Publish
         }
-
-        MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
     }
 }
 

@@ -2175,7 +2175,6 @@ dependencies = [
 name = "rg_std"
 version = "0.0.0"
 dependencies = [
- "gen-lsp-types",
  "rg_std_derive",
  "wincode",
 ]
