@@ -12,6 +12,7 @@
 
 - [Installation](usage/INSTALL.md)
 - [Configuration](usage/CONFIGURE.md)
+- [Troubleshooting](usage/TROUBLESHOOTING.md)
 - [Limitations](usage/LIMITATIONS.md)
 
 ---
