@@ -8,6 +8,7 @@
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
+    time::Instant,
 };
 
 use anyhow::Context as _;
@@ -193,7 +194,9 @@ impl DocumentOwner {
     }
 
     fn run_locate_project(cwd: &Path, manifest_path: &Path) -> std::io::Result<Output> {
-        Command::new("cargo")
+        tracing::debug!(cwd = %cwd.display(), manifest_path = %manifest_path.display(), "running cargo locate-project");
+        let started = Instant::now();
+        let output = Command::new("cargo")
             .current_dir(cwd)
             .arg("locate-project")
             .arg("--workspace")
@@ -201,7 +204,14 @@ impl DocumentOwner {
             .arg("plain")
             .arg("--manifest-path")
             .arg(manifest_path)
-            .output()
+            .output();
+        tracing::debug!(
+            manifest_path = %manifest_path.display(),
+            elapsed_ms = started.elapsed().as_millis(),
+            status = ?output.as_ref().map(|output| output.status),
+            "cargo locate-project completed"
+        );
+        output
     }
 
     fn nearest_manifest(document_dir: &Path) -> Option<PathBuf> {

@@ -11,6 +11,7 @@ use std::{
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
+    time::Instant,
 };
 
 use anyhow::Context as _;
@@ -352,17 +353,23 @@ impl EngineRegistry {
     }
 
     /// Materializes a reserved engine id into a ready engine process.
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(rg.workspace = %start.root.display(), rg.engine_id = start.id.index())
+    )]
     async fn start_reserved_engine(
         &self,
         start: ReservedEngineStart,
     ) -> anyhow::Result<EngineClient> {
+        let started = Instant::now();
         self.client_status.workspace_indexing(&start.root).await;
+        tracing::debug!("starting workspace engine");
         let spawned = self.spawn_engine(start.root.clone(), start.config).await;
         let (engine, exit_monitor) = match spawned {
             Ok(engine) => engine,
             Err(error) => {
-                self.mark_failed(start.id, start.root, error.to_string())
-                    .await;
+                self.mark_failed(start.id, start.root, &error).await;
                 return Err(error);
             }
         };
@@ -381,12 +388,12 @@ impl EngineRegistry {
                     engine_client.shutdown(request_context).await
                 })
                 .await;
-            self.mark_failed(start.id, start.root, error.to_string())
-                .await;
+            self.mark_failed(start.id, start.root, &error).await;
             return Err(error);
         }
 
-        self.mark_ready(start.id, start.root.clone(), engine).await;
+        self.mark_ready(start.id, start.root.clone(), engine, started)
+            .await;
 
         let inner = Arc::downgrade(&self.inner);
         let lsp_client = self.lsp_client.clone();
@@ -442,7 +449,13 @@ impl EngineRegistry {
     }
 
     /// Replaces a starting slot with a ready process and wakes waiters.
-    async fn mark_ready(&self, id: EngineId, root: PathBuf, process: EngineProcess) {
+    async fn mark_ready(
+        &self,
+        id: EngineId,
+        root: PathBuf,
+        process: EngineProcess,
+        startup_started: Instant,
+    ) {
         let project_status = process.engine_client().project_status_changes();
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
@@ -455,6 +468,10 @@ impl EngineRegistry {
             (notify, status)
         };
         notify.notify_waiters();
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_millis(),
+            "workspace engine ready"
+        );
         self.client_status.workspace_ready(&root).await;
         self.client_status.active_workspace_changed(status).await;
         self.spawn_project_status_monitor(id, root, project_status);
@@ -497,9 +514,15 @@ impl EngineRegistry {
     }
 
     /// Replaces a starting slot with a failure and wakes waiters.
-    async fn mark_failed(&self, id: EngineId, root: PathBuf, error: String) {
+    async fn mark_failed(&self, id: EngineId, root: PathBuf, error: &anyhow::Error) {
+        let status_error = Arc::<str>::from(format!("{error:#}"));
+        tracing::error!(
+            engine_id = id.index(),
+            root = %root.display(),
+            error = %status_error,
+            "rust-glancer engine failed to initialize"
+        );
         let status_root = root.clone();
-        let status_error = Arc::<str>::from(error);
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
             let notify = inner.engine(id).and_then(EngineSlot::notify);
@@ -581,6 +604,8 @@ impl EngineRegistry {
         .await?;
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
+        tracing::debug!("requesting workspace engine initialization");
+        let started = Instant::now();
         engine_client
             .call_unconditional(
                 "initialize",
@@ -592,7 +617,11 @@ impl EngineRegistry {
             )
             .await?;
 
-        tracing::info!(root = %root.display(), "started rust-glancer engine");
+        tracing::info!(
+            root = %root.display(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "engine initialize RPC completed"
+        );
         Ok((engine, exit_monitor))
     }
 

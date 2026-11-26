@@ -11,6 +11,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use anyhow::Context as _;
@@ -202,8 +203,9 @@ impl Backend {
 }
 
 impl LanguageServer for Backend {
-    #[tracing::instrument(skip_all, fields(rg.method = "initialize"))]
+    #[tracing::instrument(skip_all, fields(rg.method = "initialize"), err(level = "debug"))]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        tracing::info!("received LSP initialize request");
         let workspace_folders = Self::workspace_folders(&params).map_err(|error| {
             Error::invalid_params(format!("invalid workspace folder: {error:#}"))
         })?;
@@ -220,8 +222,18 @@ impl LanguageServer for Backend {
         .map_err(|error| Error::invalid_params(error.to_string()))?;
         // Keep relative configuration paths anchored to the editor folders, then use Cargo's
         // roots for analysis and watching so a member folder shares the whole workspace's state.
+        tracing::debug!(
+            folder_count = workspace_folders.len(),
+            "resolving Cargo workspace roots"
+        );
+        let discovery_started = Instant::now();
         let workspace_roots = EngineRegistry::resolve_workspace_folders(&workspace_folders)
             .map_err(methods::internal_error)?;
+        tracing::debug!(
+            workspace_count = workspace_roots.len(),
+            elapsed_ms = discovery_started.elapsed().as_millis(),
+            "resolved Cargo workspace roots"
+        );
         let client_capabilities =
             EngineClientCapabilities::from_lsp_client_capabilities(&params.capabilities);
         let client_status_capabilities =
@@ -239,6 +251,10 @@ impl LanguageServer for Backend {
             config,
             self.editor.clone(),
             client_status_capabilities,
+        );
+        tracing::debug!(
+            workspace_count = workspace_roots.len(),
+            "starting workspace watchers"
         );
         let project_watcher = ProjectWatcher::spawn(
             workspace_roots,
@@ -259,7 +275,9 @@ impl LanguageServer for Backend {
                 data: None,
             })?;
 
-        Ok(methods::initialize())
+        let result = methods::initialize();
+        tracing::debug!("LSP initialize handler completed");
+        Ok(result)
     }
 
     #[tracing::instrument(skip_all, fields(rg.method = "initialized"))]

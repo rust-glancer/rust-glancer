@@ -38,6 +38,8 @@ const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
 // The notify debouncer expires paths independently, so a large checkout can produce a stream of
 // batches one tick apart. Wait for a global quiet period before asking the engine to rebuild.
 const WATCH_SETTLE: Duration = Duration::from_millis(600);
+const SLOW_SETTLE_LOG_INTERVAL: Duration = Duration::from_secs(5);
+const SETTLE_LOG_TARGET: &str = "rg_lsp_server::project_watcher::settle";
 
 type ProjectDebouncer = Debouncer<RecommendedWatcher, NoCache>;
 
@@ -120,6 +122,7 @@ impl WorkspaceWatcher {
         })?;
 
         let forwarder_root = root.clone();
+        tracing::debug!(root = %root.display(), "scanning initial watched project paths");
         let mut snapshot = ProjectPathSnapshot::scan(&forwarder_root);
         let forwarder = tokio::spawn(async move {
             while let Some(result) = receiver.recv().await {
@@ -130,7 +133,8 @@ impl WorkspaceWatcher {
                 let changes = registry
                     .begin_external_project_changes(&forwarder_root)
                     .await;
-                let results = Self::collect_settled_results(result, &mut receiver).await;
+                let results =
+                    Self::collect_settled_results(&forwarder_root, result, &mut receiver).await;
                 Self::forward_watcher_results(
                     &mut snapshot,
                     &forwarder_root,
@@ -215,19 +219,47 @@ impl WorkspaceWatcher {
     }
 
     async fn collect_settled_results(
+        root: &NormalizedPathBuf,
         first: DebounceEventResult,
         receiver: &mut mpsc::UnboundedReceiver<DebounceEventResult>,
     ) -> Vec<DebounceEventResult> {
         let mut results = vec![first];
+        let started =
+            tracing::enabled!(target: SETTLE_LOG_TARGET, tracing::Level::DEBUG).then(Instant::now);
+        let mut last_report = None;
 
         // Reset the wait after every result. This turns notify's per-path debounce stream into one
         // workspace-level update after a checkout or agent write burst has settled.
-        loop {
-            match tokio::time::timeout(WATCH_SETTLE, receiver.recv()).await {
-                Ok(Some(result)) => results.push(result),
-                Ok(None) | Err(_) => return results,
+        while let Ok(Some(result)) = tokio::time::timeout(WATCH_SETTLE, receiver.recv()).await {
+            results.push(result);
+            if let Some(started) = started {
+                let elapsed = started.elapsed();
+                if elapsed.saturating_sub(last_report.unwrap_or_default())
+                    >= SLOW_SETTLE_LOG_INTERVAL
+                {
+                    tracing::debug!(
+                        target: SETTLE_LOG_TARGET,
+                        root = %root.display(),
+                        elapsed_ms = elapsed.as_millis(),
+                        batches = results.len(),
+                        "workspace watcher is still receiving changes"
+                    );
+                    last_report = Some(elapsed);
+                }
             }
         }
+        if let Some(started) = started
+            && last_report.is_some()
+        {
+            tracing::debug!(
+                target: SETTLE_LOG_TARGET,
+                root = %root.display(),
+                elapsed_ms = started.elapsed().as_millis(),
+                batches = results.len(),
+                "finished waiting for workspace watcher changes"
+            );
+        }
+        results
     }
 
     /// Turn one settled native-event burst into a saved-project update.
@@ -479,6 +511,7 @@ impl ProjectPathSnapshot {
         }
 
         tracing::debug!(
+            root = %root.display(),
             files_seen,
             project_files_seen = identities.len(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -737,7 +770,7 @@ mod tests {
             .recv()
             .await
             .expect("first watcher result should be available");
-        let results = WorkspaceWatcher::collect_settled_results(first, &mut receiver).await;
+        let results = WorkspaceWatcher::collect_settled_results(&root, first, &mut receiver).await;
         let paths = WorkspaceWatcher::changed_paths_for_results(&mut snapshot, &root, results);
         let account =
             NormalizedPathBuf::from_absolute(account).expect("account fixture should normalize");

@@ -19,6 +19,7 @@ use crate::{
     LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, ModuleResolutionView,
     NameBinding, NameBindingProvenance, NameBindingsView, NameResolutionEnv, NameResolver,
     Namespace, NamespaceSet,
+    build::progress::{LOG_TARGET, ResolutionProgress},
     profile::{ImportResolutionMetrics, metric},
 };
 
@@ -154,7 +155,16 @@ impl ImportCollector {
     pub fn collect<E: ImportCollectionEnv>(
         &mut self,
         env: &E,
+        scopes: Vec<(ModuleRef, ItemScopeBuilder)>,
+    ) -> anyhow::Result<ImportCollectionOutput> {
+        self.collect_with_progress(env, scopes, None)
+    }
+
+    pub(crate) fn collect_with_progress<E: ImportCollectionEnv>(
+        &mut self,
+        env: &E,
         mut scopes: Vec<(ModuleRef, ItemScopeBuilder)>,
+        mut diagnostics: Option<&mut ResolutionProgress>,
     ) -> anyhow::Result<ImportCollectionOutput> {
         self.stats = ImportApplicationStats::default();
         // 1. Take the scope buffers back from the builders and register newly appended imports.
@@ -211,18 +221,37 @@ impl ImportCollector {
         // A registered source stays selected even if later lookup would choose another prefix.
         for glob in 0..self.globs.len() {
             self.scan_glob(env, glob)?;
-            self.propagate(env)?;
+            self.propagate(env, diagnostics.as_deref_mut())?;
         }
 
         // 4. Retry only imports that still need answers. Insertions are visible immediately, so
         // `use foo::Item; use crate::source as foo;` can resolve on the next pass. Each insertion
         // also drains glob forwarding before the next directive looks at the scopes.
+        let mut pass = 0usize;
         loop {
             env.check_cancelled()?;
+            pass += 1;
             let candidates = mem::take(&mut pending);
+            let candidate_count = candidates.len();
             let mut progress = false;
-            for id in candidates {
+            for (visited, id) in candidates.into_iter().enumerate() {
                 env.check_cancelled()?;
+                // One pass can contain most of a large crate's imports. Sample within the pass
+                // so diagnostics still name import resolution while it is making slow progress.
+                if let Some(diagnostics) = diagnostics.as_deref_mut()
+                    && visited.is_multiple_of(1024)
+                    && let Some(elapsed) = diagnostics.elapsed_at_checkpoint()
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        elapsed_ms = elapsed.as_millis(),
+                        pass,
+                        pending_imports = pending.len() + candidate_count - visited,
+                        evaluated_imports = self.stats.imports_evaluated,
+                        forwarded_bindings = self.stats.glob_bindings_emitted,
+                        "resolving pending imports"
+                    );
+                }
                 self.stats.imports_evaluated += 1;
                 let directive = &self.directives[id];
                 let owner = directive.module;
@@ -246,7 +275,7 @@ impl ImportCollector {
                         }
                         self.directives[id].state = ImportState::Resolved;
                         self.scan_glob(env, glob)?;
-                        self.propagate(env)?;
+                        self.propagate(env, diagnostics.as_deref_mut())?;
                         progress = true;
                     } else {
                         pending.push(id);
@@ -308,7 +337,7 @@ impl ImportCollector {
                                     reference.import,
                                     0,
                                 )?;
-                                self.propagate(env)?;
+                                self.propagate(env, diagnostics.as_deref_mut())?;
                             }
                         }
                     }
@@ -529,11 +558,27 @@ impl ImportCollector {
     /// With `b: use a::*` and `c: use b::*`, inserting `a::Item` updates `b::Item`, queues
     /// that changed slot, then updates `c::Item`. An unchanged destination queues nothing, so
     /// ordinary cyclic globs stop once they already contain the same selected answers.
-    fn propagate<E: ImportCollectionEnv>(&mut self, env: &E) -> anyhow::Result<()> {
+    fn propagate<E: ImportCollectionEnv>(
+        &mut self,
+        env: &E,
+        mut diagnostics: Option<&mut ResolutionProgress>,
+    ) -> anyhow::Result<()> {
         let mut processed = 0usize;
         while let Some((source, name, namespace, depth)) = self.changes.pop_front() {
             if processed.is_multiple_of(1024) {
                 env.check_cancelled()?;
+                if processed != 0
+                    && let Some(diagnostics) = diagnostics.as_deref_mut()
+                    && let Some(elapsed) = diagnostics.elapsed_at_checkpoint()
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        elapsed_ms = elapsed.as_millis(),
+                        pending_changes = self.changes.len() + 1,
+                        processed_changes = processed,
+                        "forwarding glob import changes"
+                    );
+                }
             }
             processed += 1;
             if depth >= GLOB_PROPAGATION_LIMIT {

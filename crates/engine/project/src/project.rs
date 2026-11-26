@@ -4,6 +4,7 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use rg_ir_model::FileId;
@@ -45,6 +46,9 @@ impl Project {
     }
 
     pub(crate) fn collect_at(&self, point: ProjectMemoryPurgePoint) {
+        let boundary = point.label();
+        tracing::debug!(target: "rg_project::cache", boundary, "collecting project query cache");
+        let started = Instant::now();
         let result = self
             .queries
             .lock()
@@ -55,8 +59,14 @@ impl Project {
                 ajika::ErrorKind::Persistence(error) => Some(error.kind()),
                 _ => None,
             };
-            tracing::warn!(%error, ?persistence_kind, boundary = point.label(), "query storage maintenance failed");
+            tracing::warn!(%error, ?persistence_kind, boundary, "query storage maintenance failed");
         }
+        tracing::debug!(
+            target: "rg_project::cache",
+            boundary,
+            elapsed_ms = started.elapsed().as_millis(),
+            "finished collecting project query cache"
+        );
         self.memory_hooks.purge(point);
     }
 

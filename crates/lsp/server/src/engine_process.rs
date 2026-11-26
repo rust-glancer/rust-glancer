@@ -11,7 +11,7 @@ use std::{
     path::Path,
     process::{ExitStatus, Stdio},
     sync::{Arc, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -83,6 +83,11 @@ impl EngineProcess {
         // Spawn the engine subprocess.
         let mut child =
             Self::spawn_worker(engine_addr, notifications_addr, workspace_root, &engine_id)?;
+        tracing::debug!(
+            pid = child.id(),
+            "spawned engine process; awaiting RPC connection"
+        );
+        let connection_started = Instant::now();
         Self::spawn_stderr_forwarder(&mut child, &engine_id);
         let child = Arc::new(Mutex::new(child));
         let exit_monitor = EngineProcessExitMonitor::new(Arc::downgrade(&child));
@@ -139,6 +144,10 @@ impl EngineProcess {
                     .context("while attempting to accept engine RPC connection")?;
             let engine_service_client =
                 EngineServiceClient::new(TarpcClientConfig::default(), engine_transport).spawn();
+            tracing::debug!(
+                elapsed_ms = connection_started.elapsed().as_millis(),
+                "engine RPC connected"
+            );
             EngineClient::new(engine_service_client)
         };
 

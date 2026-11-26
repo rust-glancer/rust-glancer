@@ -28,6 +28,7 @@ use super::{
         PendingMacroExpansionLimitReport, apply_expansion_attempts,
         apply_pending_macro_source_files, collect_expansion_attempts, expand_expansion_attempts,
     },
+    progress::{LOG_TARGET, ResolutionProgress},
     resolution_env::BuildResolutionEnv,
     target::TargetCrateSources,
 };
@@ -86,16 +87,37 @@ pub(super) fn resolve_crate<E>(
 where
     E: CrateResolutionEnv + MacroDefinitionEnv,
 {
+    let span = tracing::debug_span!(
+        target: LOG_TARGET,
+        "resolve_crate",
+        rg.package_slot = state.crate_ref.package.0,
+        rg.crate_id = state.crate_ref.crate_id.0,
+        rg.crate_name = %state.crate_name,
+    );
+    let _entered = span.enter();
     metric::MACRO_RECURSION_LIMIT.record_count(MAX_MACRO_EXPANSION_DEPTH);
 
     // Import scheduling belongs to this crate; recursion belongs to each invocation's ancestry.
     let mut macro_runtime = MacroExpansionRuntime::new();
     let mut macro_source_file_resolutions = MacroSourceFileResolutions::new();
     let mut import_collector = ImportCollector::default();
+    let mut progress = ResolutionProgress::start();
     let mut import_resolution_runs = 0;
 
     'construction: loop {
         sources.check_cancelled()?;
+        if let Some(progress) = &mut progress
+            && let Some(elapsed) = progress.elapsed_at_checkpoint()
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                elapsed_ms = elapsed.as_millis(),
+                round = import_resolution_runs + 1,
+                modules = state.def_map_builder.module_count(),
+                macro_directives = state.macro_directives.len(),
+                "refreshing crate scopes"
+            );
+        }
         metric::ROUNDS.inc();
         let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
         collect_imports(
@@ -103,6 +125,7 @@ where
             state,
             &mut import_collector,
             &mut import_resolution_runs,
+            progress.as_mut(),
         )?;
         timer.finish();
         let mut next_scan_start = None;
@@ -111,7 +134,7 @@ where
 
         // Advance a bounded burst of direct expansions before refreshing imports. A recursive
         // chain cannot keep an independent call waiting for a generated `use` indefinitely.
-        for _ in 0..MAX_EXPANSION_BATCH_PASSES {
+        for pass in 1..=MAX_EXPANSION_BATCH_PASSES {
             sources.check_cancelled()?;
             metric::EXPANSION_PASSES.inc();
 
@@ -136,11 +159,22 @@ where
                 )?
             };
             timer.finish();
-
             if expansion_attempts
                 .iter()
                 .any(|attempt| attempt.needs_expansion())
             {
+                if let Some(progress) = &mut progress
+                    && let Some(elapsed) = progress.elapsed_at_checkpoint()
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        elapsed_ms = elapsed.as_millis(),
+                        round = import_resolution_runs,
+                        pass,
+                        expansion_attempts = expansion_attempts.len(),
+                        "expanding item macros"
+                    );
+                }
                 // The runtime owns the worker pool and creates it lazily, so projects without
                 // expandable declarative macros do not pay its setup cost.
                 expand_expansion_attempts(&mut macro_runtime, &mut expansion_attempts)?;
@@ -253,6 +287,7 @@ fn collect_imports<E: CrateResolutionEnv>(
     state: &mut CrateBuilder,
     import_collector: &mut ImportCollector,
     import_resolution_runs: &mut usize,
+    progress: Option<&mut ResolutionProgress>,
 ) -> anyhow::Result<()> {
     metric::IMPORT_RESOLUTION_RUNS.inc();
     *import_resolution_runs += 1;
@@ -271,7 +306,11 @@ fn collect_imports<E: CrateResolutionEnv>(
             ));
         }
     }
-    let result = import_collector.collect(&BuildResolutionEnv::new(dependencies, state), scopes)?;
+    let result = import_collector.collect_with_progress(
+        &BuildResolutionEnv::new(dependencies, state),
+        scopes,
+        progress,
+    )?;
     record_import_resolution_run(state.crate_ref, *import_resolution_runs, result.metrics);
     for module in result.modules {
         state.def_map_builder.apply_module_imports(

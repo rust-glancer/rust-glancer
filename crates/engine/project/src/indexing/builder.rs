@@ -67,6 +67,7 @@ impl ProjectBuilder {
     pub fn build(mut self) -> anyhow::Result<Project> {
         let mut queries = ProjectQueries::open(&self.workspace, self.reuse_cache)
             .context("open project query storage")?;
+        tracing::debug!("registering saved project inputs");
         let state = queries
             .update_saved(|database| {
                 let targets = database.update_inputs(|update| {
