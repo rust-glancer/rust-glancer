@@ -193,6 +193,7 @@ impl DocumentOwner {
     }
 
     fn run_locate_project(cwd: &Path, manifest_path: &Path) -> std::io::Result<Output> {
+        tracing::debug!(cwd = %cwd.display(), manifest_path = %manifest_path.display(), "running cargo locate-project");
         Command::new("cargo")
             .current_dir(cwd)
             .arg("locate-project")

@@ -130,6 +130,7 @@ impl WorkspaceWatcher {
                 let changes = registry
                     .begin_external_project_changes(&forwarder_root)
                     .await;
+                tracing::debug!(root = %forwarder_root.display(), "waiting for watched project changes to settle");
                 let results = Self::collect_settled_results(result, &mut receiver).await;
                 Self::forward_watcher_results(
                     &mut snapshot,
@@ -308,6 +309,7 @@ impl WorkspaceWatcher {
 
             let paths = snapshot.changed_paths_after_rescan(root);
             tracing::debug!(
+                root = %root.display(),
                 batches = batch_count,
                 events = event_count,
                 errors = errors.len(),
@@ -340,29 +342,17 @@ impl WorkspaceWatcher {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        if paths.is_empty() {
-            tracing::trace!(
-                batches = batch_count,
-                events = event_count,
-                raw_paths = raw_path_count,
-                ignored_paths,
-                unchanged_paths,
-                relevant_paths = 0usize,
-                need_rescan = false,
-                "processed settled project watcher results"
-            );
-        } else {
-            tracing::debug!(
-                batches = batch_count,
-                events = event_count,
-                raw_paths = raw_path_count,
-                ignored_paths,
-                unchanged_paths,
-                relevant_paths = paths.len(),
-                need_rescan = false,
-                "processed settled project watcher results"
-            );
-        }
+        tracing::debug!(
+            root = %root.display(),
+            batches = batch_count,
+            events = event_count,
+            raw_paths = raw_path_count,
+            ignored_paths,
+            unchanged_paths,
+            relevant_paths = paths.len(),
+            need_rescan = false,
+            "processed settled project watcher results"
+        );
         paths
     }
 }

@@ -54,14 +54,21 @@ impl WorkspaceProgressState {
         ));
         self.next_sequence += 1;
 
+        tracing::debug!(root = %root.display(), ?token, "requesting workspace indexing progress token");
         match lsp_client.create_work_done_progress(token.clone()).await {
             Ok(()) => {
+                tracing::debug!(
+                    root = %root.display(),
+                    ?token,
+                    "editor acknowledged workspace indexing progress token"
+                );
                 let progress = lsp_client.progress(token, title).begin().await;
                 self.progress_by_root.insert(root.to_path_buf(), progress);
             }
             Err(error) => {
                 tracing::debug!(
                     root = %root.display(),
+                    ?token,
                     error = %error,
                     "failed to create workspace indexing progress"
                 );

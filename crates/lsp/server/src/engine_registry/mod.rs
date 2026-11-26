@@ -361,8 +361,7 @@ impl EngineRegistry {
         let (engine, exit_monitor) = match spawned {
             Ok(engine) => engine,
             Err(error) => {
-                self.mark_failed(start.id, start.root, error.to_string())
-                    .await;
+                self.mark_failed(start.id, start.root, &error).await;
                 return Err(error);
             }
         };
@@ -381,8 +380,7 @@ impl EngineRegistry {
                     engine_client.shutdown(request_context).await
                 })
                 .await;
-            self.mark_failed(start.id, start.root, error.to_string())
-                .await;
+            self.mark_failed(start.id, start.root, &error).await;
             return Err(error);
         }
 
@@ -497,9 +495,15 @@ impl EngineRegistry {
     }
 
     /// Replaces a starting slot with a failure and wakes waiters.
-    async fn mark_failed(&self, id: EngineId, root: PathBuf, error: String) {
+    async fn mark_failed(&self, id: EngineId, root: PathBuf, error: &anyhow::Error) {
+        let status_error = Arc::<str>::from(format!("{error:#}"));
+        tracing::error!(
+            engine_id = id.index(),
+            root = %root.display(),
+            error = %status_error,
+            "rust-glancer engine failed to initialize"
+        );
         let status_root = root.clone();
-        let status_error = Arc::<str>::from(error);
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
             let notify = inner.engine(id).and_then(EngineSlot::notify);
@@ -592,7 +596,7 @@ impl EngineRegistry {
             )
             .await?;
 
-        tracing::info!(root = %root.display(), "started rust-glancer engine");
+        tracing::info!(root = %root.display(), "engine initialize RPC completed");
         Ok((engine, exit_monitor))
     }
 

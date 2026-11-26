@@ -202,8 +202,9 @@ impl Backend {
 }
 
 impl LanguageServer for Backend {
-    #[tracing::instrument(skip_all, fields(rg.method = "initialize"))]
+    #[tracing::instrument(skip_all, fields(rg.method = "initialize"), err(level = "debug"))]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        tracing::info!("received LSP initialize request");
         let workspace_folders = Self::workspace_folders(&params).map_err(|error| {
             Error::invalid_params(format!("invalid workspace folder: {error:#}"))
         })?;

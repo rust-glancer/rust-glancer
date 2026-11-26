@@ -13,6 +13,11 @@ use crate::{
     state::{ProjectGenerationId, ProjectState},
 };
 
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(rg.workspace = %workspace.workspace_root().display())
+)]
 pub(crate) fn build_state(
     database: &mut QueryDatabase,
     workspace: WorkspaceMetadata,
@@ -23,6 +28,7 @@ pub(crate) fn build_state(
     let (sources, reports) = database.run(|db| {
         // Targets appear in dependency-first order. Concurrent demands share Ajika's completed
         // results while a target's import fixed point keeps its unfinished scopes local.
+        tracing::debug!(target_count = targets.len(), "indexing saved declarations");
         let timer = metric::DECLARATIONS.start_timer();
         let profile = ProfileThreadContext::capture();
         let declarations = db.parallel_map(&targets, |db, &target| {
@@ -36,6 +42,7 @@ pub(crate) fn build_state(
         timer.finish();
         // Warm replay can capture inputs while checking old dependencies. Validate the resulting
         // view inside the operation, before Ajika can checkpoint it.
+        tracing::debug!("validating saved sources");
         let timer = metric::SOURCE_VALIDATION.start_timer();
         SourceInput::validate_saved(&inputs, &db.interner())?;
         timer.finish();
@@ -49,6 +56,7 @@ pub(crate) fn build_state(
             .iter()
             .filter_map(|metadata| metadata.macro_expansion_limit.clone())
             .collect::<Vec<_>>();
+        tracing::debug!("finalizing saved query operation");
         Ok((sources, reports))
     })?;
     operation.finish();

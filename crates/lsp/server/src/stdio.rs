@@ -52,6 +52,7 @@ pub async fn serve_stdio() -> anyhow::Result<()> {
     );
 
     Server::new(stdin, stdout, socket).serve(service).await;
+    tracing::info!("rust-glancer LSP stdio transport closed");
 
     Ok(())
 }
