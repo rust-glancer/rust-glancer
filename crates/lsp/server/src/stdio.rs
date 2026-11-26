@@ -67,18 +67,18 @@ pub async fn serve_stdio() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Observe the pipe after a handler returns. The transport owns framing and can finish without
-/// returning its write error to the caller, so report the first nonempty flush and failures here.
-struct StdioOutput {
-    stdout: Stdout,
-    first_output: FirstOutput,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FirstOutput {
     Waiting,
     Written,
     Flushed,
+}
+
+/// Observe the pipe after a handler returns. The transport owns framing and can finish without
+/// returning its write error to the caller, so report the first nonempty flush and failures here.
+struct StdioOutput {
+    stdout: Stdout,
+    first_output: FirstOutput,
 }
 
 impl AsyncWrite for StdioOutput {

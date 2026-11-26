@@ -15,13 +15,13 @@ const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const TARGET_SAMPLE_SIZE: usize = 3;
 
 #[derive(Default)]
-pub(super) struct IndexingProgress(Mutex<TargetProgress>);
-
-#[derive(Default)]
 struct TargetProgress {
     completed: usize,
     active: HashMap<CrateRef, (Instant, &'static str)>,
 }
+
+#[derive(Default)]
+pub(super) struct IndexingProgress(Mutex<TargetProgress>);
 
 impl IndexingProgress {
     /// The reporter waits independently of the query workers so it can show the active targets
