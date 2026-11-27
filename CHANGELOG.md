@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/rust-glancer/rust-glancer/compare/v0.5.2...v0.5.3) (2026-11-27)
+
+
+### Performance Improvements
+
+* Faster compile ([#329](https://github.com/rust-glancer/rust-glancer/issues/329)) ([d7753f0](https://github.com/rust-glancer/rust-glancer/commit/d7753f06d1e79e1f70ef6e598b00619cac12a111))
+
 ## [0.5.2](https://github.com/rust-glancer/rust-glancer/compare/v0.5.1...v0.5.2) (2026-11-26)
 
 
