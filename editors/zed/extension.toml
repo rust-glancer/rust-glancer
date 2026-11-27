@@ -1,7 +1,7 @@
 id = "rust-glancer"
 name = "Rust Glancer"
 description = "Low-memory Rust language server"
-version = "0.5.2" # x-release-please-version
+version = "0.5.3" # x-release-please-version
 schema_version = 1
 authors = ["Igor Aleksanov <popzxc@yandex.ru>"]
 repository = "https://github.com/rust-glancer/rust-glancer"
