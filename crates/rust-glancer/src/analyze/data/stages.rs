@@ -1,8 +1,7 @@
 use std::time::Duration;
 
+use rg_report::{ReportSectionBuilder, ReportTableBuilder};
 use serde::Serialize;
-
-use crate::report::{ReportSectionBuilder, ReportTableBuilder};
 
 /// Timings collected before the project pipeline starts.
 #[derive(Debug, Clone, Copy, Serialize)]

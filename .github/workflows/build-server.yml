@@ -35,6 +35,8 @@ jobs:
           rustc -vV | sed -n 's/^host: /target=/p' >> "$GITHUB_OUTPUT"
       - name: Build rust-glancer
         env:
+          # This job builds the server once. The shared Cargo cache excludes incremental state.
+          CARGO_INCREMENTAL: "0"
           RUST_TARGET: ${{ steps.host.outputs.target }}
         shell: bash
         run: cargo build --release --locked -p rust-glancer --target "$RUST_TARGET"

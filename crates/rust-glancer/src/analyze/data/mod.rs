@@ -5,11 +5,11 @@ mod stages;
 
 use rg_profile::ProfileSnapshot;
 use rg_project::Project;
+use rg_report::ReportDocument;
 use serde::Serialize;
 
 pub(crate) use self::stages::AnalysisSetupReport;
 use self::{memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport};
-use crate::report::ReportDocument;
 
 /// Machine-readable result of one `analyze` run.
 #[derive(Debug, Serialize)]

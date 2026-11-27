@@ -26,11 +26,13 @@ members = [
   "crates/lib/text",
   "crates/lib/arena",
   "crates/lib/profile",
+  "crates/lib/report",
   "crates/lib/std",
   "crates/lib/std-derive",
   "crates/lib/wincode-utils",
   "crates/lib/test-fixture",
   "crates/tools/codegen",
+  "crates/tools/compare-lsp",
 ]
 exclude = [
   "test_targets/simple_crate",
@@ -159,18 +161,76 @@ rg_project = { path = "crates/engine/project" }
 rg_text = { path = "crates/lib/text" }
 rg_arena = { path = "crates/lib/arena" }
 rg_profile = { path = "crates/lib/profile" }
+rg_report = { path = "crates/lib/report" }
 rg_std = { path = "crates/lib/std" }
 rg_std_derive = { path = "crates/lib/std-derive" }
 rg_wincode_utils = { path = "crates/lib/wincode-utils" }
 test_fixture = { path = "crates/lib/test-fixture" }
 rg_codegen = { path = "crates/tools/codegen" }
+rg_compare_lsp = { path = "crates/tools/compare-lsp" }
+
+# Keep source locations in development backtraces and offer full symbols for debugger sessions.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[profile.debugging.package."*"]
+debug = true
+
+# Keep the parser, declaration indexes, and type solver non-incremental so rustc can inline
+# their small helpers across crates. Give LLVM one unit per crate to optimize.
+[profile.release]
+codegen-units = 1
+
+# Cache the crates rebuilt by a body-analysis edit. Multiple units let rustc reuse
+# code within the edited crate, too.
+[profile.release.package]
+rg_analysis = { incremental = true, codegen-units = 4 }
+rg_body_ir = { incremental = true, codegen-units = 4 }
+rg_ir_view = { incremental = true, codegen-units = 4 }
+rg_lsp_engine = { incremental = true, codegen-units = 4 }
+rg_project = { incremental = true, codegen-units = 4 }
+rust-glancer = { incremental = true, codegen-units = 16 }
+# The LSP transport and comparison command generate large amounts of protocol code.
+# More units let LLVM compile that code in parallel within each crate.
+rg_compare_lsp = { codegen-units = 16 }
+rg_lsp_server = { codegen-units = 16 }
+# Ajika builds Zstd even though the project cache uses LZ4.
+zstd-sys = { opt-level = 0 }
 
 # Published binaries can take longer to build to optimize across crate boundaries.
-# Keep this separate from `release`, which is also used for local performance work.
 [profile.dist]
 inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+# Cargo inherits package overrides as well. Restore the published settings for these crates.
+[profile.dist.package]
+rg_compare_lsp = { codegen-units = 1 }
+rg_lsp_server = { codegen-units = 1 }
+rg_analysis = { incremental = false, codegen-units = 1 }
+rg_body_ir = { incremental = false, codegen-units = 1 }
+rg_ir_view = { incremental = false, codegen-units = 1 }
+rg_lsp_engine = { incremental = false, codegen-units = 1 }
+rg_project = { incremental = false, codegen-units = 1 }
+rust-glancer = { incremental = false, codegen-units = 1 }
+zstd-sys = { opt-level = 3 }
+
 [profile.bench]
 debug = true
+codegen-units = 16
+
+[profile.bench.package]
+rg_analysis = { incremental = false, codegen-units = 16 }
+rg_body_ir = { incremental = false, codegen-units = 16 }
+rg_ir_view = { incremental = false, codegen-units = 16 }
+rg_lsp_engine = { incremental = false, codegen-units = 16 }
+rg_project = { incremental = false, codegen-units = 16 }
+rust-glancer = { incremental = false, codegen-units = 16 }
+zstd-sys = { opt-level = 3 }

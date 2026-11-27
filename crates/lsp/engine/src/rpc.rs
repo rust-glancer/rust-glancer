@@ -7,7 +7,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context as _;
-use futures::prelude::*;
+use futures::{future::BoxFuture, prelude::*};
 use rg_lsp_proto::{EngineService, NotificationsServiceClient};
 use tarpc::{
     client::Config as TarpcClientConfig,
@@ -22,53 +22,56 @@ use crate::{Service, memory::MemoryControl, service::ServiceNotificationsSink};
 ///
 /// The LSP server owns process lifetime and binds the loopback sockets. The child connects back to
 /// those sockets so stdout remains reserved for the parent LSP server's JSON-RPC stream.
-pub async fn run_rpc(
+/// Boxing the future here keeps the RPC transport's concrete types inside this crate.
+pub fn run_rpc(
     memory_control: Arc<dyn MemoryControl>,
     engine_addr: SocketAddr,
     notifications_addr: SocketAddr,
-) -> anyhow::Result<()> {
-    // Initialize the notifications RPC client.
-    let notifications_client = {
-        // The LSP server hosts this side so the engine can report progress, diagnostics, and logs
-        // without knowing anything about editor-facing protocols.
-        let mut transport = tcp::connect(notifications_addr, Json::default);
-        transport.config_mut().max_frame_length(usize::MAX);
-        let transport = transport
-            .await
-            .context("while attempting to connect to LSP notifications RPC")?;
-        NotificationsServiceClient::new(TarpcClientConfig::default(), transport).spawn()
-    };
+) -> BoxFuture<'static, anyhow::Result<()>> {
+    Box::pin(async move {
+        // Initialize the notifications RPC client.
+        let notifications_client = {
+            // The LSP server hosts this side so the engine can report progress, diagnostics, and logs
+            // without knowing anything about editor-facing protocols.
+            let mut transport = tcp::connect(notifications_addr, Json::default);
+            transport.config_mut().max_frame_length(usize::MAX);
+            let transport = transport
+                .await
+                .context("while attempting to connect to LSP notifications RPC")?;
+            NotificationsServiceClient::new(TarpcClientConfig::default(), transport).spawn()
+        };
 
-    // Initialize the service.
-    let service = {
-        // Notifications are routed through the notifications client. This keeps the analysis
-        // engine and diagnostics subsystem independent from how the LSP server publishes them.
-        let notifications = ServiceNotificationsSink::new(notifications_client);
-        Service::spawn(memory_control, notifications)
-    };
+        // Initialize the service.
+        let service = {
+            // Notifications are routed through the notifications client. This keeps the analysis
+            // engine and diagnostics subsystem independent from how the LSP server publishes them.
+            let notifications = ServiceNotificationsSink::new(notifications_client);
+            Service::spawn(memory_control, notifications)
+        };
 
-    // Initialize transport for engine service.
-    let engine_transport = {
-        // The LSP server binds the socket and then acts as the RPC caller. The engine service only
-        // connects back and serves requests over the initialized transport.
-        let mut transport = tcp::connect(engine_addr, Json::default);
-        transport.config_mut().max_frame_length(usize::MAX);
-        transport
-            .await
-            .context("while attempting to connect to LSP engine RPC")?
-    };
+        // Initialize transport for engine service.
+        let engine_transport = {
+            // The LSP server binds the socket and then acts as the RPC caller. The engine service only
+            // connects back and serves requests over the initialized transport.
+            let mut transport = tcp::connect(engine_addr, Json::default);
+            transport.config_mut().max_frame_length(usize::MAX);
+            transport
+                .await
+                .context("while attempting to connect to LSP engine RPC")?
+        };
 
-    // Serve the engine RPC API.
-    {
-        // Each response future gets its own task so tarpc can continue receiving requests. The
-        // analysis commands produced by those tasks still serialize on the engine lane.
-        BaseChannel::with_defaults(engine_transport)
-            .execute(service.serve())
-            .for_each(|response| async move {
-                tokio::spawn(response);
-            })
-            .await;
-    }
+        // Serve the engine RPC API.
+        {
+            // Each response future gets its own task so tarpc can continue receiving requests. The
+            // analysis commands produced by those tasks still serialize on the engine lane.
+            BaseChannel::with_defaults(engine_transport)
+                .execute(service.serve())
+                .for_each(|response| async move {
+                    tokio::spawn(response);
+                })
+                .await;
+        }
 
-    Ok(())
+        Ok(())
+    })
 }

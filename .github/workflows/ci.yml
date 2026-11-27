@@ -68,6 +68,9 @@ jobs:
         with:
           tool: cargo-nextest@0.9.132
       - name: Run tests
+        env:
+          # The test runner builds once, and the shared Cargo cache omits incremental state.
+          CARGO_INCREMENTAL: "0"
         run: cargo nextest run --workspace
 
   test-targets:

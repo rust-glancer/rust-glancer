@@ -1,17 +1,12 @@
 use std::{net::SocketAddr, path::PathBuf, sync::OnceLock};
 
-use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 
 mod analyze;
-mod compare_lsp;
 mod logging;
 mod memory;
-mod report;
 mod start_engine;
 mod start_server;
-
-use self::compare_lsp::CliFixture;
 
 /// Command-line interface for the `rust-glancer` binary.
 #[derive(Debug, Parser)]
@@ -61,17 +56,7 @@ enum Command {
         format: self::analyze::OutputFormat,
     },
     /// Benchmark editor workloads or run a compatibility sweep.
-    CompareLsp {
-        fixture: Option<CliFixture>,
-        /// Override the fixture root. Defaults to the selected fixture's configured root.
-        #[clap(long, requires = "fixture")]
-        path: Option<PathBuf>,
-        /// Render the comparison report for humans or CI tooling.
-        #[clap(long, value_enum)]
-        format: Option<self::compare_lsp::OutputFormat>,
-        #[command(flatten)]
-        benchmark: self::compare_lsp::BenchmarkArgs,
-    },
+    CompareLsp(rg_compare_lsp::CompareLspArgs),
     /// Regenerate checked-in parser and syntax files.
     Codegen {
         #[arg(value_enum, default_value_t = rg_codegen::CodegenCommand::All)]
@@ -108,18 +93,9 @@ fn main() -> anyhow::Result<()> {
             logging::init_plain_tracing();
             analyze::analyze(path, profile, memory, load, target, format)
         }
-        Command::CompareLsp {
-            fixture,
-            path,
-            format,
-            benchmark,
-        } => {
+        Command::CompareLsp(args) => {
             logging::init_plain_tracing();
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("while attempting to build LSP comparison Tokio runtime")?;
-            runtime.block_on(compare_lsp::run(fixture, path, format, benchmark))
+            args.run()
         }
         Command::Codegen { command, check } => {
             command.run(check);

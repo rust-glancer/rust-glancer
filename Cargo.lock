@@ -1905,6 +1905,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_compare_lsp"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "gen-lsp-types",
+ "rg_lsp_proto",
+ "rg_report",
+ "rg_std",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-lsp-server",
+ "tracing",
+]
+
+[[package]]
 name = "rg_def_map"
 version = "0.0.0"
 dependencies = [
@@ -2141,6 +2160,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_report"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rg_semantic_ir"
 version = "0.0.0"
 dependencies = [
@@ -2175,7 +2202,6 @@ dependencies = [
 name = "rg_std"
 version = "0.0.0"
 dependencies = [
- "gen-lsp-types",
  "rg_std_derive",
  "wincode",
 ]
@@ -2289,16 +2315,15 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
- "futures",
- "gen-lsp-types",
  "libmimalloc-sys",
  "mimalloc",
  "rg_codegen",
+ "rg_compare_lsp",
  "rg_lsp_engine",
- "rg_lsp_proto",
  "rg_lsp_server",
  "rg_profile",
  "rg_project",
+ "rg_report",
  "rg_std",
  "rg_workspace",
  "serde",
@@ -2306,8 +2331,6 @@ dependencies = [
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
  "tokio",
- "tower",
- "tower-lsp-server",
  "tracing",
  "tracing-subscriber",
 ]

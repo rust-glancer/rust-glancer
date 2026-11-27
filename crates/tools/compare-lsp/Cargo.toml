@@ -1,0 +1,28 @@
+[package]
+name = "rg_compare_lsp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "Editor benchmarks and compatibility comparisons over LSP."
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
+gen-lsp-types = { workspace = true, features = ["url"] }
+rg_lsp_proto.workspace = true
+rg_report.workspace = true
+rg_std.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tower.workspace = true
+tower-lsp-server = { workspace = true, features = ["url-url"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

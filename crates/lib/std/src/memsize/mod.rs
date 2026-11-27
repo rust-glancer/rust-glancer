@@ -10,7 +10,6 @@ use std::{
 };
 
 mod default_impls;
-mod gen_lsp_types_impls;
 #[cfg(test)]
 mod tests;
 
