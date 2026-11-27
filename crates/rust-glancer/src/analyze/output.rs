@@ -6,9 +6,9 @@ use std::{
 };
 
 use anyhow::Context as _;
+use rg_report::{self as report, ReportDocument};
 
 use super::{config::OutputFormat, data::AnalyzeReport};
-use crate::report::{self, ReportDocument};
 
 pub(crate) fn write_report(
     analyze_report: &AnalyzeReport,

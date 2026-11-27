@@ -1,9 +1,8 @@
 use rg_profile::{ProfileDescriptor, ProfileMemoryRecord, ProfileMemorySnapshot};
 use rg_project::Project;
+use rg_report::{ReportSectionBuilder, ReportTableBuilder};
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use serde::Serialize;
-
-use crate::report::{ReportSectionBuilder, ReportTableBuilder};
 
 const TOP_MEMORY_ROWS: usize = 12;
 

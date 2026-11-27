@@ -18,13 +18,13 @@ use rg_profile::{
     ProfileInstrumentKind, ProfileKeyedCounter, ProfileKeyedDuration, ProfileMeasurement,
     ProfileReportSort, ProfileSnapshot, ProfileUnit, ProfileValue,
 };
-use serde::Serialize;
-
-use super::stages::duration_ms;
-use crate::report::{
+use rg_report::{
     ReportAlign, ReportDocumentBuilder, ReportFieldsBuilder, ReportRowBuilder,
     ReportSectionBuilder, ReportUnit, ReportValue,
 };
+use serde::Serialize;
+
+use super::stages::duration_ms;
 
 /// Serializable view of one captured profile run.
 ///
@@ -649,9 +649,9 @@ mod tests {
         ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
         test_support::ProfileTest,
     };
+    use rg_report::{ReportBlock, ReportUnit};
 
     use super::*;
-    use crate::report::{ReportBlock, ReportUnit};
 
     #[test]
     fn captures_dynamic_profile_snapshot_for_json_report() {
@@ -698,8 +698,7 @@ mod tests {
             "keyed entries should be retained in the JSON-facing report"
         );
 
-        let document =
-            report.append_sections(crate::report::ReportDocument::builder("profile_test"));
+        let document = report.append_sections(rg_report::ReportDocument::builder("profile_test"));
         let document = document.build();
         let counter_section = document
             .sections
@@ -710,11 +709,11 @@ mod tests {
             counter_section
                 .blocks
                 .iter()
-                .any(|block| matches!(block, crate::report::ReportBlock::Fields { .. })),
+                .any(|block| matches!(block, rg_report::ReportBlock::Fields { .. })),
             "scalar profile entries should render as report fields"
         );
         let counter_description = counter_section.blocks.iter().find_map(|block| match block {
-            crate::report::ReportBlock::Fields { fields, .. } => fields
+            rg_report::ReportBlock::Fields { fields, .. } => fields
                 .iter()
                 .find(|field| field.key == "test_scope_counter")
                 .and_then(|field| field.description.as_deref()),
@@ -734,11 +733,11 @@ mod tests {
             table_section
                 .blocks
                 .iter()
-                .any(|block| matches!(block, crate::report::ReportBlock::Table { .. })),
+                .any(|block| matches!(block, rg_report::ReportBlock::Table { .. })),
             "keyed profile entries should render as report tables"
         );
         let table_description = table_section.blocks.iter().find_map(|block| match block {
-            crate::report::ReportBlock::Table {
+            rg_report::ReportBlock::Table {
                 key, description, ..
             } if key == "test_scope_detail_by_key" => description.as_deref(),
             _ => None,
@@ -804,8 +803,7 @@ mod tests {
             "declared checkpoint units should survive report capture",
         );
 
-        let document =
-            report.append_sections(crate::report::ReportDocument::builder("profile_test"));
+        let document = report.append_sections(rg_report::ReportDocument::builder("profile_test"));
         let document = document.build();
         let table_columns = document
             .sections

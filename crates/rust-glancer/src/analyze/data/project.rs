@@ -1,7 +1,6 @@
 use rg_project::Project;
+use rg_report::{ReportFieldsBuilder, ReportSectionBuilder};
 use serde::Serialize;
-
-use crate::report::{ReportFieldsBuilder, ReportSectionBuilder};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProjectReport {
